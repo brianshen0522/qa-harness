@@ -614,6 +614,8 @@ model TestRun {
   triggeredById     String    @map("triggered_by")
   startedAt         DateTime  @default(now()) @map("started_at")
   endedAt           DateTime? @map("ended_at")
+  /// Set once retention has removed this run's screenshots (§5.1).
+  evidencePurgedAt  DateTime? @map("evidence_purged_at")
 
   target   QaTarget       @relation(fields: [targetId], references: [id], onDelete: Cascade)
   queue    RunCaseQueue[]

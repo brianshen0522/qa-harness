@@ -691,3 +691,205 @@ export type GenerationEvent =
 export interface GenerationCancelResult {
   cancelled: boolean;
 }
+
+// ---------- 執行與結果（spec §4.5–4.7） ----------
+
+/** `paused` keeps the run alive while it waits for a model to come back. */
+export type RunStatus = "queued" | "running" | "paused" | "succeeded" | "failed" | "aborted";
+/** Where a case sits in this run's queue. */
+export type QueueStatus = "queued" | "running" | "done" | "skipped";
+export type Verdict = "pass" | "fail" | "blocked" | "skipped";
+export type Severity = "critical" | "major" | "minor" | "info";
+export type FindingStatus = "open" | "converted_to_case" | "converted_to_proposal" | "dismissed";
+
+export type VerdictCounts = Record<Verdict, number>;
+
+/** One request/response the executor made against an `api` target. */
+export interface HttpLog {
+  method: string;
+  url: string;
+  requestHeaders: Record<string, string>;
+  requestBody: string | null;
+  status: number | null;
+  statusText: string;
+  responseHeaders: Record<string, string>;
+  responseBody: string;
+  durationMs: number;
+  error?: string;
+}
+
+/** What a result carries as proof; keys are resolved through the evidence endpoint. */
+export interface ResultEvidence {
+  screenshots?: string[];
+  httpLogs?: HttpLog[];
+  evidenceRefs?: string[];
+}
+
+export interface TestResultRow {
+  id: string;
+  verdict: Verdict;
+  /** The failure looks like the feature changed rather than broke (§4.4). */
+  possiblyChanged: boolean;
+  llmReasoning: string;
+  reproSteps: string[];
+  stepCount: number;
+  durationMs: number;
+  evidence: ResultEvidence;
+  /** Human review, kept beside the model's verdict rather than replacing it. */
+  humanVerdict: Verdict | null;
+  humanNote: string | null;
+  reviewedById: string | null;
+  reviewedAt: string | null;
+}
+
+/** `GET /targets/:id/runs` — newest first. */
+export interface RunListItem {
+  id: string;
+  status: RunStatus;
+  startedAt: string;
+  endedAt: string | null;
+  stepCount: number;
+  sandboxName: string | null;
+  viewUrl: string | null;
+  pausedReason: string | null;
+  error: string | null;
+  triggeredById: string;
+  verdicts: VerdictCounts;
+  _count: { results: number; findings: number };
+}
+
+export interface RunFindingRow {
+  id: string;
+  testCaseId: string | null;
+  severity: Severity;
+  title: string;
+  description: string;
+  status: FindingStatus;
+  createdAt: string;
+  feature: { id: string; name: string } | null;
+}
+
+/** One row of the run's queue, with the case as it was used and its result. */
+export interface RunCase {
+  caseId: string;
+  order: number;
+  queueStatus: QueueStatus;
+  /** Null until the case starts; pinned from the case's version at that moment. */
+  caseVersion: number | null;
+  /** The case was edited after this run used it (§4.5). */
+  editedAfterUse: boolean;
+  testCase: {
+    id: string;
+    title: string;
+    priority: Priority;
+    type: CaseType;
+    currentVersion: number;
+    precondition: string;
+    steps: string[];
+    expected: string;
+    feature: { id: string; name: string } | null;
+  };
+  result: TestResultRow | null;
+}
+
+export interface RunFeatureRate {
+  id: string | null;
+  name: string;
+  pass: number;
+  total: number;
+}
+
+/** `GET /runs/:runId` — everything the live page and the results page need. */
+export interface RunDetail {
+  run: {
+    id: string;
+    targetId: string;
+    status: RunStatus;
+    sandboxId: string | null;
+    sandboxName: string | null;
+    /** noVNC url for the shared live view; loopback only (§4.6). */
+    viewUrl: string | null;
+    stepCount: number;
+    pausedReason: string | null;
+    error: string | null;
+    triggeredById: string;
+    startedAt: string;
+    endedAt: string | null;
+    myRole: Role;
+    target: { id: string; name: string; kind: TargetKind; projectId: string };
+  };
+  verdicts: VerdictCounts;
+  cases: RunCase[];
+  findings: RunFindingRow[];
+  features: RunFeatureRate[];
+}
+
+/** `GET /runs/:runId/steps` — the persisted step rows, in sequence. */
+export interface RunStepRow {
+  id: string;
+  seq: number;
+  testCaseId: string | null;
+  phase: AgentPhase;
+  action: { type: string; params: Record<string, unknown> };
+  intent: string;
+  observation: string;
+  screenshotKey: string | null;
+  /** `detail` carries the executor's own payload, e.g. the HTTP status and body. */
+  result: { ok: boolean; durationMs: number; error?: string; detail?: Record<string, unknown> } | null;
+  modelUsed: string | null;
+  durationMs: number;
+  createdAt: string;
+}
+
+export interface StartRunResult {
+  runId: string;
+  total: number;
+}
+
+export interface AbortRunResult {
+  aborted: boolean;
+}
+
+export interface SkipCaseResult {
+  skipped: true;
+}
+
+export interface AddCaseResult {
+  added: true;
+  total: number;
+}
+
+/** One `data:` payload of `GET /targets/:id/runs/stream`; replayed in full on connect. */
+export type RunEvent =
+  | { type: "run_started"; runId: string; target: string; kind: TargetKind; total: number }
+  | { type: "sandbox"; sandboxId: string | null; name: string | null; viewUrl: string | null; note: string }
+  | { type: "case_started"; caseId: string; title: string; index: number; total: number; caseVersion: number }
+  | {
+      type: "step";
+      caseId: string;
+      seq: number;
+      phase: AgentPhase;
+      action: { type: string; params: Record<string, unknown> };
+      intent: string;
+      observation: string;
+      result: { ok: boolean; durationMs: number; error?: string };
+      model: string;
+      screenshotKey: string | null;
+    }
+  | { type: "finding"; id: string; caseId: string | null; severity: Severity; title: string; description: string }
+  | {
+      type: "case_finished";
+      caseId: string;
+      verdict: Verdict;
+      reasoning: string;
+      possiblyChanged: boolean;
+      stepCount: number;
+      durationMs: number;
+    }
+  | { type: "case_skipped"; caseId: string; title: string }
+  | { type: "case_added"; caseId: string; title: string; total: number }
+  /** No usable LLM; the run keeps its progress and resumes by itself. */
+  | { type: "paused"; reason: string; message: string }
+  | { type: "resumed"; message: string }
+  | { type: "run_finished"; runId: string; status: RunStatus; counts: Record<string, number>; durationMs: number }
+  | { type: "error"; message: string };

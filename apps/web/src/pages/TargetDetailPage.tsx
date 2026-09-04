@@ -9,15 +9,17 @@ import { ConfigForm, configToDraft, draftToConfig, type ConfigDraft } from "../c
 import { DiscussionPanel } from "../components/DiscussionPanel";
 import { HandoffPanel } from "../components/HandoffPanel";
 import { TestCaseList } from "../components/TestCaseList";
+import { RunPanel } from "../components/RunPanel";
 import { ROLES, ROLE_LABEL, hasRole } from "../lib/roles";
 
-type TabKey = "overview" | "discussion" | "handoff" | "cases";
+type TabKey = "overview" | "discussion" | "handoff" | "cases" | "runs";
 
 const TABS: { key: TabKey; label: string }[] = [
   { key: "overview", label: "總覽" },
   { key: "discussion", label: "討論區" },
   { key: "handoff", label: "交接" },
   { key: "cases", label: "測試清單" },
+  { key: "runs", label: "執行" },
 ];
 
 export default function TargetDetailPage() {
@@ -25,7 +27,9 @@ export default function TargetDetailPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const tabParam = searchParams.get("tab");
   const tab: TabKey =
-    tabParam === "discussion" || tabParam === "handoff" || tabParam === "cases" ? tabParam : "overview";
+    tabParam === "discussion" || tabParam === "handoff" || tabParam === "cases" || tabParam === "runs"
+      ? tabParam
+      : "overview";
   const setTab = (key: TabKey) => setSearchParams(key === "overview" ? {} : { tab: key }, { replace: true });
   const qc = useQueryClient();
   const navigate = useNavigate();
@@ -133,6 +137,7 @@ export default function TargetDetailPage() {
       {tab === "discussion" && <DiscussionPanel scope="target" entityId={id} myRole={t.myRole} locked={running} />}
       {tab === "handoff" && <HandoffPanel scope="target" entityId={id} myRole={t.myRole} locked={running} />}
       {tab === "cases" && <TestCaseList targetId={id} />}
+      {tab === "runs" && <RunPanel targetId={id} kind={t.kind} myRole={t.myRole} />}
 
       {tab === "overview" && (
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)]">

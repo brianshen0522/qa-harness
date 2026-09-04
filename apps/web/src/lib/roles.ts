@@ -1,4 +1,5 @@
 import type {
+  AgentPhase,
   CaseStatus,
   CaseSource,
   CaseType,
@@ -9,11 +10,16 @@ import type {
   LlmHealth,
   LlmPauseReason,
   LlmPurpose,
+  FindingStatus,
   Priority,
+  QueueStatus,
+  RunStatus,
+  Severity,
   ProposalStatus,
   Role,
   TargetKind,
   TargetStatus,
+  Verdict,
 } from "../api/types";
 
 const RANK: Record<Role, number> = { viewer: 0, editor: 1, owner: 2 };
@@ -259,4 +265,117 @@ export function formatDuration(ms: number | null | undefined): string {
   if (seconds < 60) return `${seconds.toFixed(1)} 秒`;
   const minutes = Math.floor(seconds / 60);
   return `${minutes} 分 ${Math.round(seconds - minutes * 60)} 秒`;
+}
+
+// ---------- 執行與結果（spec §4.5–4.7） ----------
+
+export const RUN_STATUS_LABEL: Record<RunStatus, string> = {
+  queued: "排隊中",
+  running: "執行中",
+  paused: "等待 LLM",
+  succeeded: "已完成",
+  failed: "失敗",
+  aborted: "已中止",
+};
+
+export const RUN_STATUS_TONE: Record<RunStatus, "gray" | "blue" | "amber" | "green" | "red"> = {
+  queued: "gray",
+  running: "blue",
+  paused: "amber",
+  succeeded: "green",
+  failed: "red",
+  aborted: "gray",
+};
+
+/** A run in one of these states still has (or is about to have) a live stream. */
+export const ACTIVE_RUN_STATUSES: RunStatus[] = ["queued", "running", "paused"];
+
+export const VERDICTS: Verdict[] = ["pass", "fail", "blocked", "skipped"];
+
+export const VERDICT_LABEL: Record<Verdict, string> = {
+  pass: "通過",
+  fail: "失敗",
+  blocked: "受阻",
+  skipped: "略過",
+};
+
+export const VERDICT_TONE: Record<Verdict, "green" | "red" | "amber" | "gray"> = {
+  pass: "green",
+  fail: "red",
+  blocked: "amber",
+  skipped: "gray",
+};
+
+export const QUEUE_STATUS_LABEL: Record<QueueStatus, string> = {
+  queued: "等待中",
+  running: "執行中",
+  done: "已完成",
+  skipped: "已跳過",
+};
+
+export const QUEUE_STATUS_TONE: Record<QueueStatus, "gray" | "blue" | "green"> = {
+  queued: "gray",
+  running: "blue",
+  done: "green",
+  skipped: "gray",
+};
+
+/** 執行代理每一步所處的階段（§4.6 三層進度的第二層）。 */
+export const PHASES: AgentPhase[] = ["setup", "executing", "verifying", "judging"];
+
+export const PHASE_LABEL: Record<AgentPhase, string> = {
+  setup: "準備",
+  executing: "執行",
+  verifying: "驗證",
+  judging: "判定",
+};
+
+export const PHASE_TONE: Record<AgentPhase, "blue" | "purple" | "amber" | "green"> = {
+  setup: "blue",
+  executing: "purple",
+  verifying: "amber",
+  judging: "green",
+};
+
+export const SEVERITY_LABEL: Record<Severity, string> = {
+  critical: "嚴重",
+  major: "重大",
+  minor: "輕微",
+  info: "提示",
+};
+
+export const SEVERITY_TONE: Record<Severity, "red" | "amber" | "blue" | "gray"> = {
+  critical: "red",
+  major: "amber",
+  minor: "blue",
+  info: "gray",
+};
+
+export const FINDING_STATUSES: FindingStatus[] = ["open", "converted_to_case", "converted_to_proposal", "dismissed"];
+
+export const FINDING_STATUS_LABEL: Record<FindingStatus, string> = {
+  open: "待處理",
+  converted_to_case: "已轉為測試案例",
+  converted_to_proposal: "已轉為變更提案",
+  dismissed: "已忽略",
+};
+
+export const FINDING_STATUS_TONE: Record<FindingStatus, "amber" | "blue" | "purple" | "gray"> = {
+  open: "amber",
+  converted_to_case: "blue",
+  converted_to_proposal: "purple",
+  dismissed: "gray",
+};
+
+/** 動作參數壓成一行，長字串截短，給 step 卡片用。 */
+export function formatActionParams(params: Record<string, unknown> | undefined): string {
+  const entries = Object.entries(params ?? {});
+  if (entries.length === 0) return "（無參數）";
+  return entries
+    .map(([k, v]) => {
+      const text =
+        v === null || v === undefined ? "null" : typeof v === "object" ? JSON.stringify(v) : String(v);
+      return `${k}=${text.length > 120 ? `${text.slice(0, 120)}…` : text}`;
+    })
+    .join("  ");
 }

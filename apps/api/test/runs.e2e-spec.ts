@@ -7,6 +7,7 @@ import { LlmGatewayService } from "../src/llm/llm-gateway.service";
 import { LlmHealthService } from "../src/llm/llm-health.service";
 import { LlmProviderError, type LlmProviderAdapter, type LlmRequest } from "../src/llm/providers";
 import { RunService } from "../src/runs/run.service";
+import { RetentionService } from "../src/runs/retention.service";
 
 /** Spec §4.5 / §4.6: run a case list, judge each case, keep evidence, stay steerable. */
 describe("test runs (e2e)", () => {
@@ -393,6 +394,36 @@ describe("test runs (e2e)", () => {
     const target = await prisma.qaTarget.findUniqueOrThrow({ where: { id: targetId } });
     expect(target.status).toBe("idle");
   });
+
+  it("clears screenshots once a run is past the retention window, keeping the transcript", async () => {
+    // Pick a run that actually produced a transcript, not the orphan closed above.
+    const run = await prisma.testRun.findFirstOrThrow({
+      where: { targetId, endedAt: { not: null }, steps: { some: {} }, results: { some: {} } },
+      orderBy: { startedAt: "desc" },
+    });
+    // Pretend the run is older than the retention window.
+    await prisma.sandboxSettings.update({ where: { id: 1 }, data: { retentionDays: 1 } });
+    await prisma.testRun.update({
+      where: { id: run.id },
+      data: { endedAt: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000) },
+    });
+    await prisma.runStep.updateMany({ where: { runId: run.id }, data: { screenshotKey: "runs/x/y.png" } });
+
+    const swept = await app.get(RetentionService).sweep();
+    expect(swept.runs).toBeGreaterThanOrEqual(1);
+
+    const after = await prisma.testRun.findUniqueOrThrow({ where: { id: run.id } });
+    expect(after.evidencePurgedAt).not.toBeNull();
+    const steps = await prisma.runStep.findMany({ where: { runId: run.id } });
+    expect(steps.length).toBeGreaterThan(0); // the transcript survives
+    expect(steps.every((s) => s.screenshotKey === null)).toBe(true);
+    const results = await prisma.testResult.findMany({ where: { runId: run.id } });
+    expect(results.length).toBeGreaterThan(0); // so do the verdicts
+
+    // A second sweep does not redo work already done.
+    expect((await app.get(RetentionService).sweep()).runs).toBe(0);
+    await prisma.sandboxSettings.update({ where: { id: 1 }, data: { retentionDays: 30 } });
+  }, 60_000);
 
   it("writes an audit trail", async () => {
     const actions = (await prisma.auditLog.findMany()).map((a) => a.action);

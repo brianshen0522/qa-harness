@@ -4,6 +4,7 @@ import { RunService } from "./run.service";
 import { RunQueryService } from "./run-query.service";
 import { EvidenceService } from "./evidence.service";
 import { HttpExecutorService } from "./http-executor.service";
+import { RetentionService } from "./retention.service";
 import { LlmModule } from "../llm/llm.module";
 import { SandboxModule } from "../sandbox/sandbox.module";
 import { TargetsModule } from "../targets/targets.module";
@@ -11,7 +12,7 @@ import { TargetsModule } from "../targets/targets.module";
 @Module({
   imports: [LlmModule, SandboxModule, TargetsModule],
   controllers: [RunsController],
-  providers: [RunService, RunQueryService, EvidenceService, HttpExecutorService],
-  exports: [RunService, RunQueryService, EvidenceService],
+  providers: [RunService, RunQueryService, EvidenceService, HttpExecutorService, RetentionService],
+  exports: [RunService, RunQueryService, EvidenceService, RetentionService],
 })
 export class RunsModule {}

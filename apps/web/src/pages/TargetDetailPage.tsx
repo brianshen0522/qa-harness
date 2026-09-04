@@ -11,14 +11,16 @@ import { HandoffPanel } from "../components/HandoffPanel";
 import { TestCaseList } from "../components/TestCaseList";
 import { RunPanel } from "../components/RunPanel";
 import { ChangePanel } from "../components/ChangePanel";
+import { ExplorePanel } from "../components/ExplorePanel";
 import { ROLES, ROLE_LABEL, hasRole } from "../lib/roles";
 
-type TabKey = "overview" | "discussion" | "handoff" | "cases" | "changes" | "runs";
+type TabKey = "overview" | "discussion" | "handoff" | "explore" | "cases" | "changes" | "runs";
 
 const TABS: { key: TabKey; label: string }[] = [
   { key: "overview", label: "總覽" },
   { key: "discussion", label: "討論區" },
   { key: "handoff", label: "交接" },
+  { key: "explore", label: "探索" },
   { key: "cases", label: "測試清單" },
   { key: "changes", label: "變更" },
   { key: "runs", label: "執行" },
@@ -30,7 +32,7 @@ export default function TargetDetailPage() {
   const tabParam = searchParams.get("tab");
   const tab: TabKey =
     tabParam === "discussion" || tabParam === "handoff" || tabParam === "cases" ||
-    tabParam === "changes" || tabParam === "runs"
+    tabParam === "changes" || tabParam === "runs" || tabParam === "explore"
       ? tabParam
       : "overview";
   const setTab = (key: TabKey) => setSearchParams(key === "overview" ? {} : { tab: key }, { replace: true });
@@ -139,6 +141,7 @@ export default function TargetDetailPage() {
 
       {tab === "discussion" && <DiscussionPanel scope="target" entityId={id} myRole={t.myRole} locked={running} />}
       {tab === "handoff" && <HandoffPanel scope="target" entityId={id} myRole={t.myRole} locked={running} />}
+      {tab === "explore" && <ExplorePanel targetId={id} myRole={t.myRole} kind={t.kind} />}
       {tab === "cases" && <TestCaseList targetId={id} />}
       {tab === "changes" && (
         <ChangePanel scope="target" entityId={id} myRole={t.myRole} description={t.description ?? ""} running={running} />

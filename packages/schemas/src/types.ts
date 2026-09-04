@@ -114,6 +114,25 @@ export interface HandoffDocument {
   detected_secrets?: string[];
 }
 
+export interface ExplorationScenario {
+  title: string;
+  rationale: string;
+  risk?: "high" | "medium" | "low";
+}
+
+export interface ExplorationFinding {
+  severity: "critical" | "major" | "minor" | "info";
+  title: string;
+  description: string;
+}
+
+/** A deep, read-only look at one page (explore mode); never mutates the target. */
+export interface ExplorationNotes {
+  schema_version: "1.0";
+  scenarios: ExplorationScenario[];
+  findings: ExplorationFinding[];
+}
+
 export interface SchemaTypeMap {
   discussion_turn: DiscussionTurn;
   feature_list: FeatureList;
@@ -123,4 +142,5 @@ export interface SchemaTypeMap {
   case_verdict: CaseVerdict;
   finding: Finding;
   handoff_document: HandoffDocument;
+  exploration_notes: ExplorationNotes;
 }

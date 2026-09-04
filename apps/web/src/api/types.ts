@@ -1019,3 +1019,105 @@ export interface CaseHistoryEntry {
   createdAt: string;
   change: { id: string; summary: string; source: ChangeSource | null } | null;
 }
+
+// ---------- explore mode (§4.3 探索優先) ----------
+
+export interface TargetIdentity {
+  id: string;
+  name: string;
+  role: string;
+  credentialKeys: string[];
+  loginConfig: Record<string, unknown>;
+  isAnonymous: boolean;
+  order: number;
+}
+
+export interface IdentityList {
+  identities: TargetIdentity[];
+  credentialKeys: string[];
+}
+
+export type ExplorationStatus = "running" | "paused" | "succeeded" | "failed";
+
+export interface ExploreStats {
+  identities: number;
+  routes: number;
+  reachablePairs: number;
+  rwdIssues: number;
+  findings: number;
+  suspiciousAccess: number;
+  casesGenerated: number;
+  coverage: { crawled: number; withForms: number; synthesized: number };
+}
+
+export interface ExploreRunRow {
+  id: string;
+  status: ExplorationStatus;
+  stats: ExploreStats;
+  llmCalls: number;
+  startedAt: string;
+  endedAt: string | null;
+  error: string | null;
+}
+
+export type AccessState = "granted" | "denied" | "untested";
+
+export interface PermissionRow {
+  routeKey: string;
+  title: string;
+  access: Record<string, AccessState>;
+}
+
+export interface ExploreDetail {
+  run: {
+    id: string;
+    status: ExplorationStatus;
+    stats: ExploreStats;
+    config: Record<string, unknown>;
+    pausedReason: string | null;
+    error: string | null;
+    llmCalls: number;
+    startedAt: string;
+    endedAt: string | null;
+    target: { id: string; name: string };
+    myRole: Role;
+  };
+  identities: { id: string; name: string; role: string; isAnonymous: boolean }[];
+  nodes: {
+    id: string;
+    routeKey: string;
+    sampleUrl: string;
+    title: string;
+    kind: string;
+    depth: number;
+    reachableBy: string[];
+    deniedFor: string[];
+    screenshotKey: string | null;
+  }[];
+  edges: { from: string; to: string | null; kind: string; label: string }[];
+  matrix: { identities: string[]; rows: PermissionRow[]; suspicious: PermissionRow[] };
+  observations: {
+    id: string;
+    nodeId: string | null;
+    kind: "rwd_issue" | "finding" | "deep_note";
+    severity: string | null;
+    breakpoint: string | null;
+    note: string;
+    data: Record<string, unknown>;
+    screenshotKey: string | null;
+  }[];
+}
+
+/** Live SSE payload from POST /targets/:id/explore. */
+export type ExploreEvent =
+  | { type: "started"; runId: string; target: string; identities: string[] }
+  | { type: "phase"; phase: "crawl" | "rwd" | "synthesis"; message: string }
+  | { type: "login"; identity: string; ok: boolean; message: string }
+  | { type: "visit"; identity: string; routeKey: string; depth: number; denied: boolean; nodes: number }
+  | { type: "rwd"; routeKey: string; breakpoint: string; issues: number }
+  | { type: "matrix"; routes: number; suspicious: number }
+  | { type: "synth"; routeKey: string; cases: number }
+  | { type: "paused"; reason: string; message: string }
+  | { type: "resumed"; message: string }
+  | { type: "error"; message: string }
+  | { type: "finished"; runId: string; stats: ExploreStats; durationMs: number };

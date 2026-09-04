@@ -1,0 +1,40 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "qa-harness/exploration_notes",
+  "title": "exploration_notes",
+  "description": "Deep, read-only look at one page: scenarios worth testing and any visible defect. The explorer never submits or mutates; it only observes.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "scenarios", "findings"],
+  "properties": {
+    "schema_version": { "type": "string", "const": "1.0" },
+    "scenarios": {
+      "type": "array",
+      "description": "情境：這個頁面值得測的狀況，之後會變成測試案例的素材。",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["title", "rationale"],
+        "properties": {
+          "title": { "type": "string", "minLength": 1 },
+          "rationale": { "type": "string" },
+          "risk": { "type": "string", "enum": ["high", "medium", "low"] }
+        }
+      }
+    },
+    "findings": {
+      "type": "array",
+      "description": "當下就看得出來的問題（版面壞掉、錯誤訊息、明顯不一致）。沒有就給空陣列。",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["severity", "title", "description"],
+        "properties": {
+          "severity": { "type": "string", "enum": ["critical", "major", "minor", "info"] },
+          "title": { "type": "string", "minLength": 1 },
+          "description": { "type": "string" }
+        }
+      }
+    }
+  }
+}

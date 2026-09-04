@@ -26,6 +26,8 @@ if [ "${START_BROWSER:-1}" = "1" ]; then
     --no-sandbox --disable-dev-shm-usage --disable-gpu \
     --no-first-run --no-default-browser-check --disable-infobars \
     --disable-features=TranslateUI,ChromeWhatsNewUI \
+    --disable-session-crashed-bubble --hide-crash-restore-bubble \
+    --remote-debugging-port=9222 --remote-allow-origins=* \
     --start-maximized --window-position=0,0 \
     --window-size="${SCREEN_WIDTH},${SCREEN_HEIGHT}" \
     "${START_URL:-about:blank}" >/tmp/chromium.log 2>&1 &

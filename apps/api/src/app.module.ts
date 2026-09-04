@@ -16,6 +16,7 @@ import { SandboxModule } from "./sandbox/sandbox.module";
 import { GenerationModule } from "./generation/generation.module";
 import { RunsModule } from "./runs/runs.module";
 import { ChangesModule } from "./changes/changes.module";
+import { ExploreModule } from "./explore/explore.module";
 
 @Module({
   imports: [
@@ -36,6 +37,7 @@ import { ChangesModule } from "./changes/changes.module";
     GenerationModule,
     RunsModule,
     ChangesModule,
+    ExploreModule,
   ],
 })
 export class AppModule {}

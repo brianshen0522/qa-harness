@@ -1,6 +1,20 @@
 import { Injectable, Logger } from "@nestjs/common";
 import type { ActionType } from "@qa-harness/schemas";
 
+export interface PageProbe {
+  url: string;
+  path: string;
+  title: string;
+  headings: string[];
+  links: { href: string; text: string; visible: boolean }[];
+  forms: { action: string | null; method: string; fields: { name: string | null; type: string; required: boolean; label: string | null }[] }[];
+  controls: { text: string; role: string; disabled: boolean }[];
+  landmarks: string[];
+  scrollWidth: number;
+  clientWidth: number;
+  textLength: number;
+}
+
 export interface ActionResult {
   ok: boolean;
   action: string;
@@ -18,6 +32,9 @@ export const CONTAINER_ACTIONS: ReadonlySet<string> = new Set([
   "type", "key", "scroll", "navigate", "run_command", "cursor",
   // Driven by the worker around a case, never proposed by the model.
   "record_start", "record_stop",
+  // Deterministic DOM + navigation for the explorer (CDP-backed), also worker-only.
+  "dom_snapshot", "cdp_navigate", "cdp_fill", "cdp_click", "cdp_current", "cdp_reset",
+  "set_viewport", "clear_viewport",
 ]);
 
 /** Actions the worker resolves without touching the container. */
@@ -51,6 +68,45 @@ export class ComputerService {
 
   async stopRecording(port: number): Promise<ActionResult> {
     return this.perform(port, "record_stop", {}, 40_000);
+  }
+
+  /** Read the rendered DOM (links, forms, controls, headings, layout metrics). */
+  async domSnapshot(port: number): Promise<PageProbe | null> {
+    const res = await this.perform(port, "dom_snapshot", {}, 30_000);
+    return res.ok ? ((res.detail as { page?: PageProbe }).page ?? null) : null;
+  }
+
+  /** Navigate via CDP and return the fresh probe; more reliable than the URL bar. */
+  async cdpNavigate(port: number, url: string, waitMs?: number): Promise<PageProbe | null> {
+    const res = await this.perform(port, "cdp_navigate", { url, wait_ms: waitMs }, 60_000);
+    return res.ok ? ((res.detail as { page?: PageProbe }).page ?? null) : null;
+  }
+
+  async cdpFill(port: number, field: string | number, value: string): Promise<ActionResult> {
+    return this.perform(port, "cdp_fill", { field, value }, 15_000);
+  }
+
+  /** Click a link/button by visible text; result says whether the URL changed. */
+  async cdpClick(port: number, text: string, opts: { exact?: boolean; waitMs?: number } = {}): Promise<ActionResult> {
+    return this.perform(port, "cdp_click", { text, exact: opts.exact, wait_ms: opts.waitMs }, 30_000);
+  }
+
+  async cdpCurrent(port: number): Promise<{ url: string; path: string; title: string } | null> {
+    const res = await this.perform(port, "cdp_current", {}, 10_000);
+    return res.ok ? (res.detail as { url: string; path: string; title: string }) : null;
+  }
+
+  async setViewport(port: number, width: number, height: number, mobile?: boolean): Promise<ActionResult> {
+    return this.perform(port, "set_viewport", { width, height, mobile }, 15_000);
+  }
+
+  async clearViewport(port: number): Promise<ActionResult> {
+    return this.perform(port, "clear_viewport", {}, 10_000);
+  }
+
+  /** Clear cookies + storage so the next identity starts from a clean session. */
+  async cdpReset(port: number): Promise<ActionResult> {
+    return this.perform(port, "cdp_reset", {}, 15_000);
   }
 
   /** Pulls the finished mp4 out of the container. Null when there is nothing to fetch. */

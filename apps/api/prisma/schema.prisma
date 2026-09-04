@@ -161,6 +161,8 @@ model QaTarget {
   testRuns         TestRun[]
   changeProposals  ChangeProposal[]
   changeLogs       ChangeLog[]
+  identities       TargetIdentity[]
+  explorationRuns  ExplorationRun[]
 
   @@map("qa_targets")
 }
@@ -838,4 +840,155 @@ model ChangeLog {
   @@index([projectId, appliedAt])
   @@index([targetId, appliedAt])
   @@map("change_logs")
+}
+
+// ---------- Explore-first mode (§4.3 探索優先) ----------
+
+/// A named "who is using the system" — a role plus the credential fields that
+/// log it in. Explicit identities are what make the permission matrix possible:
+/// the crawler runs once per identity, and access is compared, not guessed.
+model TargetIdentity {
+  id             String   @id @default(uuid())
+  targetId       String   @map("target_id")
+  name           String
+  /// Free-form role label the model reasons with (e.g. "admin", "member", "guest").
+  role           String   @default("user")
+  /// Names of the target credentials that log this identity in ({{name}} refs).
+  credentialKeys String[] @map("credential_keys")
+  /// How to authenticate in the browser, when it is not the default form flow.
+  loginConfig    Json     @default("{}") @map("login_config")
+  /// A guest identity crawls without logging in at all.
+  isAnonymous    Boolean  @default(false) @map("is_anonymous")
+  order          Int      @default(0)
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  target       QaTarget          @relation(fields: [targetId], references: [id], onDelete: Cascade)
+  observations SiteObservation[]
+
+  @@unique([targetId, name])
+  @@map("target_identities")
+}
+
+enum ExplorationStatus {
+  running
+  paused
+  succeeded
+  failed
+}
+
+enum ExplorationPhase {
+  crawl
+  rwd
+  synthesis
+}
+
+/// One full sweep of a target: crawl per identity, RWD scan, then synthesis.
+model ExplorationRun {
+  id            String            @id @default(uuid())
+  targetId      String            @map("target_id")
+  status        ExplorationStatus @default(running)
+  /// Budgets, breakpoints, depth cap, whether to do deep agent dives — the knobs.
+  config        Json              @default("{}")
+  /// Live progress, so a paused run resumes and a late viewer can catch up.
+  progress      Json?
+  pausedReason  String?           @map("paused_reason")
+  error         String?
+  /// Counts and the coverage summary, filled in as it goes.
+  stats         Json              @default("{}")
+  /// How many model calls the deep-探索 and synthesis stages have spent.
+  llmCalls      Int               @default(0) @map("llm_calls")
+  triggeredById String            @map("triggered_by")
+  startedAt     DateTime          @default(now()) @map("started_at")
+  endedAt       DateTime?         @map("ended_at")
+
+  target       QaTarget          @relation(fields: [targetId], references: [id], onDelete: Cascade)
+  nodes        SiteNode[]
+  edges        SiteEdge[]
+  observations SiteObservation[]
+
+  @@index([targetId, startedAt])
+  @@map("exploration_runs")
+}
+
+/// One normalized route in the site map. `/todos/1` and `/todos/2` collapse to
+/// `/todos/:id`, or the crawl never ends.
+model SiteNode {
+  id          String   @id @default(uuid())
+  runId       String   @map("run_id")
+  /// Normalized path with dynamic segments turned into :params.
+  routeKey    String   @map("route_key")
+  /// A representative concrete path that reached this node.
+  sampleUrl   String   @map("sample_url")
+  title       String   @default("")
+  /// Which identities could reach this node at all (permission matrix, §4.4-ish).
+  reachableBy String[] @map("reachable_by")
+  /// role labels that got an explicit "denied / redirected to login" here.
+  deniedFor   String[] @map("denied_for")
+  kind        String   @default("page")
+  depth       Int      @default(0)
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  run          ExplorationRun    @relation(fields: [runId], references: [id], onDelete: Cascade)
+  observations SiteObservation[]
+  outEdges     SiteEdge[]        @relation("edge_from")
+  inEdges      SiteEdge[]        @relation("edge_to")
+
+  @@unique([runId, routeKey])
+  @@index([runId])
+  @@map("site_nodes")
+}
+
+/// A link or control that led from one node to another.
+model SiteEdge {
+  id        String   @id @default(uuid())
+  runId     String   @map("run_id")
+  fromId    String   @map("from_id")
+  toId      String?  @map("to_id")
+  /// "link" | "control" | "form" — how the transition happens.
+  kind      String   @default("link")
+  label     String   @default("")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  run  ExplorationRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  from SiteNode       @relation("edge_from", fields: [fromId], references: [id], onDelete: Cascade)
+  to   SiteNode?      @relation("edge_to", fields: [toId], references: [id], onDelete: SetNull)
+
+  @@index([runId])
+  @@map("site_edges")
+}
+
+enum ObservationKind {
+  page_snapshot
+  rwd_issue
+  access_denied
+  access_granted
+  finding
+  deep_note
+}
+
+/// Everything learned about one node, by one identity, at one breakpoint: the
+/// DOM probe, a screenshot, an RWD problem, an access result, a stray finding.
+model SiteObservation {
+  id            String          @id @default(uuid())
+  runId         String          @map("run_id")
+  nodeId        String?         @map("node_id")
+  identityId    String?         @map("identity_id")
+  kind          ObservationKind
+  /// e.g. "1280x800" for a viewport, null when not size-specific.
+  breakpoint    String?
+  /// The DOM probe, layout metrics, or finding detail — shape depends on kind.
+  data          Json            @default("{}")
+  screenshotKey String?         @map("screenshot_key")
+  /// critical/major/minor/info for rwd_issue and finding kinds.
+  severity      String?
+  note          String          @default("")
+  createdAt     DateTime        @default(now()) @map("created_at")
+
+  run      ExplorationRun  @relation(fields: [runId], references: [id], onDelete: Cascade)
+  node     SiteNode?       @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+  identity TargetIdentity? @relation(fields: [identityId], references: [id], onDelete: SetNull)
+
+  @@index([runId, kind])
+  @@index([nodeId])
+  @@map("site_observations")
 }

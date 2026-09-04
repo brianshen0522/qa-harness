@@ -7,13 +7,17 @@ Agent Worker can drive the desktop. Standard library only, so the image builds
 without a package index.
 """
 import base64
+import hashlib
 import json
 import os
 import shlex
 import signal
+import socket
+import struct
 import subprocess
 import threading
 import time
+import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 DISPLAY = os.environ.get("DISPLAY", ":99")
@@ -53,6 +57,380 @@ def clamp(v, lo, hi):
 
 
 # ---------- actions ----------
+
+CDP_PORT = int(os.environ.get("CDP_PORT", "9222"))
+
+
+class CdpError(RuntimeError):
+    pass
+
+
+class Cdp:
+    """
+    A tiny Chrome DevTools Protocol client over a hand-rolled WebSocket, so the
+    agent can read the real DOM and drive the page reliably. Stdlib only, to keep
+    the image buildable without a package index. One connection to one page
+    target, guarded by a lock because the agent is threaded.
+    """
+
+    def __init__(self):
+        self._sock = None
+        self._id = 0
+        self._lock = threading.Lock()
+        self._target_id = None
+
+    # ----- connection -----
+
+    def _http_targets(self):
+        with urllib.request.urlopen(f"http://127.0.0.1:{CDP_PORT}/json", timeout=5) as r:
+            return json.loads(r.read().decode())
+
+    def _pick_page(self):
+        pages = [t for t in self._http_targets() if t.get("type") == "page"]
+        if not pages:
+            raise CdpError("no page target in Chrome")
+        # Prefer a real page over the about:blank/newtab shell if both exist.
+        real = [p for p in pages if not p.get("url", "").startswith("about:")]
+        return (real or pages)[0]
+
+    def _connect(self):
+        page = self._pick_page()
+        self._target_id = page["id"]
+        ws_url = page["webSocketDebuggerUrl"]
+        # ws://127.0.0.1:9222/devtools/page/<id>
+        _, _, rest = ws_url.partition("://")
+        hostport, _, path = rest.partition("/")
+        host, _, port = hostport.partition(":")
+        port = int(port or 80)
+
+        sock = socket.create_connection((host, port), timeout=10)
+        key = base64.b64encode(os.urandom(16)).decode()
+        handshake = (
+            f"GET /{path} HTTP/1.1\r\n"
+            f"Host: {host}:{port}\r\n"
+            "Upgrade: websocket\r\n"
+            "Connection: Upgrade\r\n"
+            f"Sec-WebSocket-Key: {key}\r\n"
+            "Sec-WebSocket-Version: 13\r\n\r\n"
+        )
+        sock.sendall(handshake.encode())
+        resp = b""
+        while b"\r\n\r\n" not in resp:
+            chunk = sock.recv(4096)
+            if not chunk:
+                raise CdpError("Chrome closed the socket during the handshake")
+            resp += chunk
+        if b" 101 " not in resp.split(b"\r\n", 1)[0]:
+            raise CdpError(f"unexpected handshake response: {resp[:80]!r}")
+        self._sock = sock
+        self._buf = resp.split(b"\r\n\r\n", 1)[1]
+
+    def _ensure(self):
+        if self._sock is None:
+            self._connect()
+
+    def _reset(self):
+        try:
+            if self._sock:
+                self._sock.close()
+        except OSError:
+            pass
+        self._sock = None
+        self._buf = b""
+
+    # ----- websocket framing (client masks; server does not) -----
+
+    def _send_frame(self, payload: bytes):
+        header = bytearray([0x81])  # FIN + text
+        n = len(payload)
+        mask = os.urandom(4)
+        if n < 126:
+            header.append(0x80 | n)
+        elif n < 65536:
+            header.append(0x80 | 126)
+            header += struct.pack(">H", n)
+        else:
+            header.append(0x80 | 127)
+            header += struct.pack(">Q", n)
+        header += mask
+        masked = bytes(b ^ mask[i % 4] for i, b in enumerate(payload))
+        self._sock.sendall(bytes(header) + masked)
+
+    def _recv_exact(self, n: int) -> bytes:
+        while len(self._buf) < n:
+            chunk = self._sock.recv(65536)
+            if not chunk:
+                raise CdpError("Chrome closed the connection")
+            self._buf += chunk
+        out, self._buf = self._buf[:n], self._buf[n:]
+        return out
+
+    def _recv_frame(self) -> bytes:
+        b0, b1 = self._recv_exact(2)
+        opcode = b0 & 0x0F
+        length = b1 & 0x7F
+        if length == 126:
+            length = struct.unpack(">H", self._recv_exact(2))[0]
+        elif length == 127:
+            length = struct.unpack(">Q", self._recv_exact(8))[0]
+        data = self._recv_exact(length)
+        if opcode == 0x8:  # close
+            raise CdpError("Chrome sent a close frame")
+        if opcode in (0x9, 0xA):  # ping/pong: ignore and read the next frame
+            return self._recv_frame()
+        return data
+
+    # ----- commands -----
+
+    def call(self, method: str, params: dict = None, timeout: float = 30.0) -> dict:
+        with self._lock:
+            for attempt in (1, 2):
+                try:
+                    self._ensure()
+                    self._id += 1
+                    mid = self._id
+                    self._send_frame(json.dumps({"id": mid, "method": method, "params": params or {}}).encode())
+                    deadline = time.time() + timeout
+                    while time.time() < deadline:
+                        msg = json.loads(self._recv_frame().decode("utf-8", "replace"))
+                        if msg.get("id") == mid:
+                            if "error" in msg:
+                                raise CdpError(msg["error"].get("message", str(msg["error"])))
+                            return msg.get("result", {})
+                        # Events (Page.loadEventFired etc.) are skipped here.
+                    raise CdpError(f"timed out waiting for {method}")
+                except (OSError, CdpError) as exc:
+                    self._reset()
+                    if attempt == 2:
+                        raise CdpError(f"{method}: {exc}")
+        raise CdpError("unreachable")
+
+    def evaluate(self, expression: str, timeout: float = 30.0):
+        result = self.call(
+            "Runtime.evaluate",
+            {"expression": expression, "returnByValue": True, "awaitPromise": True},
+            timeout=timeout,
+        )
+        if result.get("exceptionDetails"):
+            exc = result["exceptionDetails"]
+            raise CdpError(exc.get("exception", {}).get("description") or exc.get("text", "JS exception"))
+        return result.get("result", {}).get("value")
+
+
+_cdp = Cdp()
+
+# React controls its inputs, so assigning .value does nothing the framework sees.
+# Going through the native setter and firing input/change is what actually sticks.
+FILL_JS = r"""
+(() => {
+  const SELECTOR = %s, VALUE = %s;
+  const nodes = [...document.querySelectorAll('input, textarea, select')].filter((el) => {
+    const r = el.getBoundingClientRect();
+    return r.width > 0 || r.height > 0;
+  });
+  let el = null;
+  if (typeof SELECTOR === 'number') {
+    el = nodes[SELECTOR] || null;
+  } else {
+    const needle = String(SELECTOR).toLowerCase();
+    el = nodes.find((n) =>
+      [n.name, n.id, n.getAttribute('type'), n.getAttribute('placeholder'), n.getAttribute('aria-label')]
+        .filter(Boolean).some((a) => a.toLowerCase().includes(needle))) || null;
+  }
+  if (!el) return { ok: false, error: 'no matching field' };
+  const proto = el.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype
+    : el.tagName === 'SELECT' ? HTMLSelectElement.prototype : HTMLInputElement.prototype;
+  const setter = Object.getOwnPropertyDescriptor(proto, 'value').set;
+  el.focus();
+  setter.call(el, VALUE);
+  el.dispatchEvent(new Event('input', { bubbles: true }));
+  el.dispatchEvent(new Event('change', { bubbles: true }));
+  return { ok: true, name: el.name || el.id || null, type: el.getAttribute('type') || el.tagName.toLowerCase() };
+})()
+"""
+
+
+def act_cdp_fill(p):
+    selector = p.get("field")
+    if selector is None:
+        raise ValueError("fill needs a field (index or name/type/placeholder substring)")
+    value = p.get("value", "")
+    res = _cdp.evaluate(FILL_JS % (json.dumps(selector), json.dumps(str(value))))
+    if not res or not res.get("ok"):
+        raise CdpError((res or {}).get("error", "fill failed"))
+    return res
+
+
+# Clicks a link, button or role=button by its visible text. Returns whether the
+# URL changed, so the crawler can tell navigation from an in-place update.
+CLICK_JS = r"""
+(() => {
+  const NEEDLE = %s.toLowerCase(), EXACT = %s;
+  const before = location.href;
+  const cands = [...document.querySelectorAll('a, button, [role="button"], [role="tab"], [role="menuitem"], input[type="submit"]')];
+  const vis = (el) => { const r = el.getBoundingClientRect(); return (r.width > 0 || r.height > 0); };
+  const text = (el) => (el.innerText || el.value || el.textContent || '').trim().toLowerCase();
+  let el = cands.find((c) => vis(c) && (EXACT ? text(c) === NEEDLE : text(c).includes(NEEDLE)));
+  if (!el) return { ok: false, error: 'no matching control' };
+  el.scrollIntoView({ block: 'center' });
+  el.click();
+  return { ok: true, before, text: (el.innerText || el.value || '').trim().slice(0, 80) };
+})()
+"""
+
+
+def act_cdp_click(p):
+    text = p.get("text")
+    if not text:
+        raise ValueError("click needs text")
+    res = _cdp.evaluate(CLICK_JS % (json.dumps(str(text)), json.dumps(bool(p.get("exact", False)))))
+    if not res or not res.get("ok"):
+        raise CdpError((res or {}).get("error", "click failed"))
+    settle_for_spa(p.get("wait_ms"))
+    after = _cdp.evaluate("location.href")
+    res["navigated"] = after != res.get("before")
+    res["url"] = after
+    return res
+
+
+def act_cdp_reset(_):
+    """Clear cookies and storage so the next identity starts from a clean session.
+    Without this, one identity's login leaks into the next and the permission
+    matrix is a lie."""
+    _cdp.call("Network.enable")
+    _cdp.call("Network.clearBrowserCookies")
+    _cdp.call("Network.clearBrowserCache")
+    try:
+        origin = _cdp.evaluate("location.origin")
+        if origin:
+            _cdp.call("Storage.clearDataForOrigin", {
+                "origin": origin,
+                "storageTypes": "local_storage,indexeddb,websql,service_workers,cache_storage",
+            })
+    except CdpError:
+        pass
+    return {"cleared": True}
+
+
+def act_cdp_current(_):
+    """Just the URL and title, cheap, for the crawler to track where a click went."""
+    return _cdp.evaluate("({url: location.href, path: location.pathname + location.search, title: document.title})")
+
+
+
+
+# The page probe: everything about the current page we can read deterministically.
+# Runs in the page so it sees the rendered DOM, not the initial HTML.
+PAGE_PROBE_JS = r"""
+(() => {
+  const seen = new Set();
+  const visible = (el) => {
+    const r = el.getBoundingClientRect();
+    if (r.width === 0 && r.height === 0) return false;
+    const s = getComputedStyle(el);
+    return s.visibility !== 'hidden' && s.display !== 'none' && Number(s.opacity) > 0;
+  };
+  const txt = (el) => (el.innerText || el.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 120);
+  const links = [];
+  for (const a of document.querySelectorAll('a[href]')) {
+    const href = a.href;
+    if (!href || href.startsWith('javascript:')) continue;
+    const key = href + '|' + txt(a);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    links.push({ href, text: txt(a), visible: visible(a) });
+  }
+  const forms = [...document.querySelectorAll('form')].map((f) => ({
+    action: f.action || null,
+    method: (f.method || 'get').toLowerCase(),
+    fields: [...f.querySelectorAll('input,select,textarea')].map((el) => ({
+      name: el.name || el.id || null,
+      type: (el.getAttribute('type') || el.tagName.toLowerCase()),
+      required: el.required || false,
+      label: (el.getAttribute('aria-label') || el.getAttribute('placeholder') || '').slice(0, 80) || null,
+    })),
+  }));
+  // Interactive controls that are not links or form submits: the SPA hangs a lot
+  // of navigation off buttons and role=button, so they matter for the map.
+  const controls = [];
+  const cseen = new Set();
+  for (const el of document.querySelectorAll('button, [role="button"], [role="tab"], [role="menuitem"]')) {
+    if (!visible(el)) continue;
+    const t = txt(el);
+    if (!t || cseen.has(t)) continue;
+    cseen.add(t);
+    controls.push({ text: t, role: el.getAttribute('role') || 'button', disabled: el.disabled || false });
+  }
+  const landmarks = [...document.querySelectorAll('[role], nav, main, header, footer, aside')]
+    .map((el) => el.getAttribute('role') || el.tagName.toLowerCase());
+  const headings = [...document.querySelectorAll('h1,h2,h3')].map((h) => txt(h)).filter(Boolean).slice(0, 30);
+  const body = document.body;
+  return {
+    url: location.href,
+    path: location.pathname + location.search + location.hash,
+    title: document.title,
+    headings,
+    links,
+    forms,
+    controls,
+    landmarks: [...new Set(landmarks)],
+    // Cheap layout signals for the RWD scan (stage C).
+    scrollWidth: body ? body.scrollWidth : 0,
+    clientWidth: document.documentElement.clientWidth,
+    textLength: (body ? (body.innerText || '') : '').length,
+  };
+})()
+"""
+
+
+def act_dom_snapshot(_):
+    data = _cdp.evaluate(PAGE_PROBE_JS)
+    if data is None:
+        raise CdpError("page probe returned nothing")
+    return {"page": data}
+
+
+def act_cdp_navigate(p):
+    url = p.get("url")
+    if not url:
+        raise ValueError("navigate needs a url")
+    _cdp.call("Page.enable")
+    _cdp.call("Page.navigate", {"url": url}, timeout=45)
+    # Wait for the SPA to actually paint something, not just for the document.
+    settle_for_spa(p.get("wait_ms"))
+    return act_dom_snapshot(None)
+
+
+def act_set_viewport(p):
+    """RWD scan (stage C): override the layout viewport without resizing Xvfb."""
+    width = clamp(p.get("width") or WIDTH, 200, 4096)
+    height = clamp(p.get("height") or HEIGHT, 200, 4096)
+    mobile = bool(p.get("mobile", width < 768))
+    _cdp.call("Emulation.setDeviceMetricsOverride", {
+        "width": width, "height": height, "deviceScaleFactor": 1, "mobile": mobile,
+    })
+    settle(400)
+    return {"width": width, "height": height, "mobile": mobile}
+
+
+def act_clear_viewport(_):
+    _cdp.call("Emulation.clearDeviceMetricsOverride")
+    return {"cleared": True}
+
+
+def settle_for_spa(wait_ms=None):
+    """Give a client-rendered page time to mount; polls rather than fixed-sleeps."""
+    time.sleep((wait_ms or 600) / 1000)
+    for _ in range(20):
+        try:
+            ready = _cdp.evaluate("document.readyState === 'complete' && document.body && document.body.innerText.length > 0")
+            if ready:
+                break
+        except CdpError:
+            pass
+        time.sleep(0.25)
+
+
 
 def act_screenshot(_):
     path = "/tmp/shot.png"
@@ -238,6 +616,14 @@ ACTIONS = {
     "cursor": act_cursor,
     "record_start": act_record_start,
     "record_stop": act_record_stop,
+    "dom_snapshot": act_dom_snapshot,
+    "cdp_navigate": act_cdp_navigate,
+    "cdp_fill": act_cdp_fill,
+    "cdp_click": act_cdp_click,
+    "cdp_current": act_cdp_current,
+    "cdp_reset": act_cdp_reset,
+    "set_viewport": act_set_viewport,
+    "clear_viewport": act_clear_viewport,
 }
 
 

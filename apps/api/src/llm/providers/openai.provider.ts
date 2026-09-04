@@ -59,6 +59,10 @@ export class OpenAiProvider implements LlmProviderAdapter {
       // Explicit: some compatible gateways stream by default when the field is absent.
       stream: false,
       ...(req.temperature !== undefined ? { temperature: req.temperature } : {}),
+      // Not in every compatible server's vocabulary; those ignore the field.
+      ...(req.reasoningEffort
+        ? { reasoning_effort: req.reasoningEffort as OpenAI.ReasoningEffort }
+        : {}),
     };
 
     let nativeJson = false;
@@ -104,6 +108,15 @@ export class OpenAiProvider implements LlmProviderAdapter {
 
     const choice = completion.choices[0];
     if (!choice) throw new LlmProviderError("unknown", "Empty choices in response");
+    if (choice.finish_reason === "length" && !choice.message.content?.trim()) {
+      // The budget went entirely on reasoning. Saying so beats an unexplained
+      // blank reply, because the fix is a bigger budget or less thinking.
+      throw new LlmProviderError(
+        "bad_request",
+        `回應在寫出內容前就用完 token（completion=${completion.usage?.completion_tokens ?? "?"}），` +
+          "多半是思考佔滿了預算：調高 max tokens 或把 reasoning effort 調低。",
+      );
+    }
     if (choice.finish_reason === "content_filter") throw new LlmProviderError("refusal", "Content filtered");
     const refusal = (choice.message as { refusal?: string | null }).refusal;
     if (refusal) throw new LlmProviderError("refusal", refusal);

@@ -89,7 +89,12 @@ export class GenerationService implements OnModuleInit {
    * to subscribers, but the run does not depend on anyone listening: closing the
    * browser does not stop it.
    */
-  async start(targetId: string, userId: string, mode: GenerationMode): Promise<{ runId: string }> {
+  async start(
+    targetId: string,
+    userId: string,
+    mode: GenerationMode,
+    opts: { onlyFeatureIds?: string[] } = {},
+  ): Promise<{ runId: string }> {
     await this.perms.requireTarget(targetId, userId, Role.editor);
 
     const target = await this.prisma.qaTarget.findUniqueOrThrow({
@@ -103,8 +108,25 @@ export class GenerationService implements OnModuleInit {
     });
     if (inFlight) throw new ConflictException("已經有一個生成流程在進行中。");
 
+    // Regenerating one feature is not "replace the world": only that feature's
+    // generated cases go (§4.4 只針對受影響 feature 重生成).
+    const onlyFeatureIds = opts.onlyFeatureIds?.length
+      ? (
+          await this.prisma.feature.findMany({
+            where: { targetId, id: { in: opts.onlyFeatureIds } },
+            select: { id: true },
+          })
+        ).map((f) => f.id)
+      : [];
+    if (opts.onlyFeatureIds?.length && !onlyFeatureIds.length) {
+      throw new BadRequestException("指定的功能都不屬於這個 Target。");
+    }
+
     const run = await this.prisma.generationRun.create({
-      data: { targetId, mode, descriptionVersion: target.descriptionVersion, triggeredById: userId },
+      data: {
+        targetId, mode, descriptionVersion: target.descriptionVersion,
+        triggeredById: userId, onlyFeatureIds,
+      },
     });
     this.spawn(run.id, targetId, userId);
     return { runId: run.id };
@@ -207,6 +229,17 @@ export class GenerationService implements OnModuleInit {
       // ----- step 1: feature inventory -----
       let features = saved?.features ?? [];
       let lastModel = saved?.lastModel ?? null;
+      if (!features.length && run.onlyFeatureIds.length) {
+        // A targeted regeneration already knows which features it is about;
+        // asking the model to re-derive the inventory would only invite drift.
+        const rows = await this.prisma.feature.findMany({
+          where: { id: { in: run.onlyFeatureIds } },
+          orderBy: { order: "asc" },
+          select: { name: true, description: true },
+        });
+        features = rows.map((f) => ({ name: f.name, description: f.description }));
+        if (!features.length) throw new BadRequestException("要重生成的功能已經不存在了。");
+      }
       if (!features.length) {
         const res = await this.withLlm(record, run.id, () =>
           this.gateway.structured("generate", "feature_list", {
@@ -262,7 +295,9 @@ export class GenerationService implements OnModuleInit {
       this.publish(record, { type: "deduped", kept: kept.length, dropped });
       if (!kept.length) throw new BadRequestException("模型沒有產出任何測試案例。");
 
-      const persisted = await this.persist(record.targetId, userId, run.mode, run.descriptionVersion, features, kept);
+      const persisted = await this.persist(
+        record.targetId, userId, run.mode, run.descriptionVersion, features, kept, run.onlyFeatureIds,
+      );
       this.publish(record, { type: "saved", featureCount: persisted.featureCount, caseCount: persisted.caseCount });
 
       await this.prisma.generationRun.update({
@@ -412,9 +447,16 @@ export class GenerationService implements OnModuleInit {
     descriptionVersion: number,
     features: { name: string; description: string }[],
     cases: GeneratedCase[],
+    onlyFeatureIds: string[] = [],
   ) {
     return this.prisma.$transaction(async (tx) => {
-      if (mode === GenerationMode.replace) {
+      if (onlyFeatureIds.length) {
+        // Scoped regeneration: clear out only the generated cases of the features
+        // being redone, and leave everything else in the list untouched.
+        await tx.testCase.deleteMany({
+          where: { targetId, featureId: { in: onlyFeatureIds }, source: { not: CaseSource.manual } },
+        });
+      } else if (mode === GenerationMode.replace) {
         await tx.testCase.deleteMany({ where: { targetId, source: CaseSource.generated } });
         const orphanFeatures = await tx.feature.findMany({
           where: { targetId },

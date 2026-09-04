@@ -8,21 +8,24 @@ import { DescriptionEditor } from "../components/DescriptionEditor";
 import { ConfigForm, configToDraft, draftToConfig, type ConfigDraft } from "../components/ConfigForm";
 import { DiscussionPanel } from "../components/DiscussionPanel";
 import { HandoffPanel } from "../components/HandoffPanel";
+import { ChangePanel } from "../components/ChangePanel";
 import { KIND_LABEL, ROLES, ROLE_LABEL, formatDate, hasRole } from "../lib/roles";
 
-type TabKey = "overview" | "discussion" | "handoff";
+type TabKey = "overview" | "discussion" | "handoff" | "changes";
 
 const TABS: { key: TabKey; label: string }[] = [
   { key: "overview", label: "總覽" },
   { key: "discussion", label: "討論區" },
   { key: "handoff", label: "交接" },
+  { key: "changes", label: "變更" },
 ];
 
 export default function ProjectDetailPage() {
   const { id = "" } = useParams();
   const [searchParams, setSearchParams] = useSearchParams();
   const tabParam = searchParams.get("tab");
-  const tab: TabKey = tabParam === "discussion" || tabParam === "handoff" ? tabParam : "overview";
+  const tab: TabKey =
+    tabParam === "discussion" || tabParam === "handoff" || tabParam === "changes" ? tabParam : "overview";
   const setTab = (key: TabKey) => setSearchParams(key === "overview" ? {} : { tab: key }, { replace: true });
   const qc = useQueryClient();
   const navigate = useNavigate();
@@ -124,6 +127,9 @@ export default function ProjectDetailPage() {
 
       {tab === "discussion" && <DiscussionPanel scope="project" entityId={id} myRole={p.myRole} />}
       {tab === "handoff" && <HandoffPanel scope="project" entityId={id} myRole={p.myRole} />}
+      {tab === "changes" && (
+        <ChangePanel scope="project" entityId={id} myRole={p.myRole} description={p.description ?? ""} />
+      )}
 
       {tab === "overview" && (
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)]">

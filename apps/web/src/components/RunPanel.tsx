@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, apiEventSource } from "../api/client";
 import type {
@@ -1111,7 +1112,20 @@ function ResultsView({
               )}
             </div>
 
-            <FindingsPanel findings={d.findings} cases={d.cases} canEdit={canEdit} onChanged={invalidate} />
+            <ChangeDetection
+              runId={d.run.id}
+              targetId={targetId}
+              count={d.cases.filter((c) => c.result?.possiblyChanged).length}
+              canEdit={canEdit}
+            />
+
+            <FindingsPanel
+              findings={d.findings}
+              cases={d.cases}
+              targetId={targetId}
+              canEdit={canEdit}
+              onChanged={invalidate}
+            />
           </>
         )}
       </div>
@@ -1208,7 +1222,7 @@ function ResultCase({
       )}
       {result?.possiblyChanged && (
         <p className="mt-2 rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-xs text-amber-800">
-          這條的失敗看起來像是功能改了，而不是壞了。變更提案功能還沒上線，先在這裡標記出來。
+          這條的失敗看起來像是功能改了，而不是壞了。可以在下面建立變更提案，一次處理這次執行裡所有這類案例。
         </p>
       )}
       {item.editedAfterUse && (
@@ -1408,14 +1422,59 @@ function Snippet({ label, children }: { label: string; children: ReactNode }) {
   );
 }
 
+/**
+ * Spec §4.4 被動偵測: a failure that looks like the feature moved is a change to
+ * discuss, not a bug to file. This is the way into that flow.
+ */
+function ChangeDetection({
+  runId,
+  targetId,
+  count,
+  canEdit,
+}: {
+  runId: string;
+  targetId: string;
+  count: number;
+  canEdit: boolean;
+}) {
+  const [created, setCreated] = useState(false);
+  const propose = useMutation({
+    mutationFn: () => api(`/runs/${runId}/change-proposal`, { method: "POST" }),
+    onSuccess: () => setCreated(true),
+  });
+  if (!count) return null;
+
+  return (
+    <div className="rounded-md border border-amber-200 bg-amber-50 p-3">
+      <p className="text-sm text-amber-900">
+        有 {count} 條案例的失敗像是功能被改掉或移除，而不是行為錯誤。
+      </p>
+      <div className="mt-2 flex items-center gap-2">
+        {created ? (
+          <Link to={`/targets/${targetId}?tab=changes`} className="text-sm font-medium text-blue-700 hover:underline">
+            提案已建立，去「變更」分頁逐項確認 →
+          </Link>
+        ) : (
+          <Button size="sm" onClick={() => propose.mutate()} disabled={!canEdit || propose.isPending}>
+            {propose.isPending ? "分析中…" : "建立變更提案"}
+          </Button>
+        )}
+      </div>
+      <ErrorText error={propose.error} />
+    </div>
+  );
+}
+
 function FindingsPanel({
   findings,
   cases,
+  targetId,
   canEdit,
   onChanged,
 }: {
   findings: RunFindingRow[];
   cases: RunCase[];
+  targetId: string;
   canEdit: boolean;
   onChanged: () => void;
 }) {
@@ -1423,6 +1482,10 @@ function FindingsPanel({
   const setStatus = useMutation({
     mutationFn: ({ id, status }: { id: string; status: FindingStatus }) =>
       api<RunFindingRow>(`/findings/${id}/status`, { method: "POST", body: { status } }),
+    onSuccess: onChanged,
+  });
+  const propose = useMutation({
+    mutationFn: (id: string) => api(`/findings/${id}/change-proposal`, { method: "POST" }),
     onSuccess: onChanged,
   });
 
@@ -1448,19 +1511,35 @@ function FindingsPanel({
                 發現於：{f.testCaseId ? (titles.get(f.testCaseId) ?? f.testCaseId) : "非特定案例"}
               </p>
               {canEdit && (
-                <div className="mt-2 w-52">
-                  <Select
-                    value={f.status}
-                    className="py-1 text-xs"
-                    disabled={setStatus.isPending}
-                    onChange={(e) => setStatus.mutate({ id: f.id, status: e.target.value as FindingStatus })}
-                  >
-                    {FINDING_STATUSES.map((s) => (
-                      <option key={s} value={s}>
-                        {FINDING_STATUS_LABEL[s]}
-                      </option>
-                    ))}
-                  </Select>
+                <div className="mt-2 flex items-center gap-2">
+                  <div className="w-52">
+                    <Select
+                      value={f.status}
+                      className="py-1 text-xs"
+                      disabled={setStatus.isPending}
+                      onChange={(e) => setStatus.mutate({ id: f.id, status: e.target.value as FindingStatus })}
+                    >
+                      {FINDING_STATUSES.map((s) => (
+                        <option key={s} value={s}>
+                          {FINDING_STATUS_LABEL[s]}
+                        </option>
+                      ))}
+                    </Select>
+                  </div>
+                  {f.status === "converted_to_proposal" ? (
+                    <Link to={`/targets/${targetId}?tab=changes`} className="text-xs text-blue-700 hover:underline">
+                      看變更提案 →
+                    </Link>
+                  ) : (
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      disabled={propose.isPending}
+                      onClick={() => propose.mutate(f.id)}
+                    >
+                      {propose.isPending ? "分析中…" : "轉為變更提案"}
+                    </Button>
+                  )}
                 </div>
               )}
             </li>

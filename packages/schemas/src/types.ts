@@ -43,6 +43,8 @@ export interface ChangeProposal {
   schema_version: "1.0";
   summary: string;
   description_diff: string;
+  /** Full replacement text; applying a diff would be fragile. */
+  description_after: string;
   feature_changes: {
     op: "add" | "modify" | "remove";
     feature_id?: string | null;

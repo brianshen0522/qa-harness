@@ -92,6 +92,8 @@ model Project {
   discussion          Discussion?
   attachments         ProjectAttachment[]
   handoffDocuments    HandoffDocument[]
+  changeProposals     ChangeProposal[]
+  changeLogs          ChangeLog[]
 
   @@map("projects")
 }
@@ -157,6 +159,8 @@ model QaTarget {
   testCases        TestCase[]
   generationRuns   GenerationRun[]
   testRuns         TestRun[]
+  changeProposals  ChangeProposal[]
+  changeLogs       ChangeLog[]
 
   @@map("qa_targets")
 }
@@ -571,6 +575,8 @@ model GenerationRun {
   pausedAt           DateTime?        @map("paused_at")
   /// Partial results, so a paused run picks up where it stopped.
   progress           Json?
+  /// When set, only these features are regenerated (§4.4 只針對受影響 feature 重生成).
+  onlyFeatureIds     String[]         @map("only_feature_ids")
   triggeredById      String           @map("triggered_by")
   startedAt          DateTime         @default(now()) @map("started_at")
   endedAt            DateTime?        @map("ended_at")
@@ -743,4 +749,84 @@ model RunFinding {
 
   @@index([runId, createdAt])
   @@map("run_findings")
+}
+
+// ---------- Change management (§4.4) ----------
+
+/// Where a proposal came from, so a stale description can be traced to its origin.
+enum ChangeSource {
+  discussion
+  handoff
+  manual
+  run_detection
+  finding
+}
+
+enum ProposalState {
+  pending
+  applied
+  rejected
+}
+
+/// The LLM only ever proposes; nothing here touches the live test list until a
+/// person accepts it, and they can accept part of it.
+model ChangeProposal {
+  id        String        @id @default(uuid())
+  scope     Scope
+  projectId String?       @map("project_id")
+  targetId  String?       @map("target_id")
+  source    ChangeSource
+  state     ProposalState @default(pending)
+  summary   String        @default("")
+
+  /// Human-readable diff of the description, and the text that would replace it.
+  descriptionDiff  String  @default("") @map("description_diff")
+  descriptionAfter String  @default("") @map("description_after")
+  /// Each entry carries its own id, so decisions reference items not positions.
+  featureChanges   Json    @default("[]") @map("feature_changes")
+  testCaseChanges  Json    @default("[]") @map("test_case_changes")
+  /// What prompted it: a discussion excerpt, a run id, a finding id.
+  originNote       String? @map("origin_note")
+  model            String?
+
+  createdById String    @map("created_by")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  decidedById String?   @map("decided_by")
+  decidedAt   DateTime? @map("decided_at")
+
+  project Project?    @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  target  QaTarget?   @relation(fields: [targetId], references: [id], onDelete: Cascade)
+  logs    ChangeLog[]
+
+  @@index([projectId, createdAt])
+  @@index([targetId, createdAt])
+  @@map("change_proposals")
+}
+
+/// The timeline (§4.4): what changed, when, by whom, and what it touched.
+model ChangeLog {
+  id         String       @id @default(uuid())
+  proposalId String       @map("proposal_id")
+  scope      Scope
+  projectId  String?      @map("project_id")
+  targetId   String?      @map("target_id")
+  source     ChangeSource
+
+  summary                 String
+  descriptionVersionAfter Int?     @map("description_version_after")
+  affectedFeatureIds      String[] @map("affected_feature_ids")
+  affectedTestCaseIds     String[] @map("affected_test_case_ids")
+  /// Per-item outcome, so a rejected item is still visible in the history.
+  decisions               Json     @default("{}")
+
+  appliedById String   @map("applied_by")
+  appliedAt   DateTime @default(now()) @map("applied_at")
+
+  proposal ChangeProposal @relation(fields: [proposalId], references: [id], onDelete: Cascade)
+  project  Project?       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  target   QaTarget?      @relation(fields: [targetId], references: [id], onDelete: Cascade)
+
+  @@index([projectId, appliedAt])
+  @@index([targetId, appliedAt])
+  @@map("change_logs")
 }

@@ -14,6 +14,8 @@ import { TestCasesService } from "./test-cases.service";
 
 class GenerateDto {
   @IsOptional() @IsEnum(GenerationMode) mode?: GenerationMode;
+  /** Regenerate just these features, after a change proposal was applied (§4.4). */
+  @IsOptional() @IsArray() @IsUUID("4", { each: true }) onlyFeatureIds?: string[];
 }
 class CaseDto {
   @IsString() @MinLength(1) @MaxLength(500) title!: string;
@@ -75,7 +77,9 @@ export class GenerationController {
     @Res() res: Response,
   ) {
     // Permission and conflict errors surface as a normal HTTP status.
-    await this.generation.start(id, user.id, dto.mode ?? GenerationMode.replace);
+    await this.generation.start(id, user.id, dto.mode ?? GenerationMode.replace, {
+      onlyFeatureIds: dto.onlyFeatureIds,
+    });
     this.streamRun(id, req, res);
   }
 

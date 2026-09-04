@@ -488,4 +488,39 @@ describe("test case generation and list (e2e)", () => {
     const actions = (await prisma.auditLog.findMany()).map((a) => a.action);
     expect(actions).toEqual(expect.arrayContaining(["generation.run", "testcase.create", "testcase.update", "testcase.delete", "feature.delete"]));
   });
+
+  /** §4.4: after a change is applied, only the features it touched are redone. */
+  it("regenerates just the features it was given", async () => {
+    stubGenerator(["登入", "購物車"], (name) => [caseFor(name, 1), caseFor(name, 2)]);
+    const first = await generate(owner, "replace");
+    expect(first.events.at(-1)?.type).toBe("finished");
+
+    const cart = await prisma.feature.findFirstOrThrow({ where: { targetId, name: "購物車" } });
+    const loginCases = await prisma.testCase.findMany({
+      where: { targetId, feature: { name: "登入" } },
+      select: { id: true },
+    });
+
+    // The model now answers with different cases; only 購物車 should change.
+    stubGenerator(["購物車"], (name) => [caseFor(`${name}改版`, 9)]);
+    const second = await fetch(`http://127.0.0.1:${port}/api/targets/${targetId}/generate`, {
+      method: "POST",
+      headers: { cookie: owner, "content-type": "application/json" },
+      body: JSON.stringify({ mode: "append", onlyFeatureIds: [cart.id] }),
+    });
+    await second.text(); // drain the stream so the run completes
+
+    const after = await prisma.testCase.findMany({
+      where: { targetId },
+      include: { feature: { select: { name: true } } },
+    });
+    // Untouched feature keeps its exact cases.
+    expect(after.filter((c) => c.feature?.name === "登入").map((c) => c.id).sort())
+      .toEqual(loginCases.map((c) => c.id).sort());
+    // The regenerated feature was replaced, not appended to.
+    const cartTitles = after.filter((c) => c.feature?.name === "購物車").map((c) => c.title);
+    expect(cartTitles).toHaveLength(1);
+    expect(cartTitles[0]).toContain("改版");
+  });
+
 });

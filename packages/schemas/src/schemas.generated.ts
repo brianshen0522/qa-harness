@@ -76,6 +76,7 @@ export const change_proposalSchema = {
     "schema_version",
     "summary",
     "description_diff",
+    "description_after",
     "feature_changes",
     "test_case_changes"
   ],
@@ -89,7 +90,11 @@ export const change_proposalSchema = {
     },
     "description_diff": {
       "type": "string",
-      "description": "Unified diff of the description, or empty string."
+      "description": "給人看的描述前後差異（unified diff 或條列說明）。沒有描述變動時給空字串。"
+    },
+    "description_after": {
+      "type": "string",
+      "description": "套用後完整的描述內容。描述沒有變動時給空字串。"
     },
     "feature_changes": {
       "type": "array",

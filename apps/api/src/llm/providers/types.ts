@@ -17,6 +17,13 @@ export interface LlmRequest {
   /** When set, the provider is asked for JSON matching this schema (native mode when supported). */
   jsonSchema?: { name: string; schema: Record<string, unknown> };
   timeoutMs?: number;
+  /**
+   * How much the model should think before answering, for endpoints that expose
+   * it. Thinking is billed against the same token budget as the answer and the
+   * same wall clock, so a big structured request can spend its whole budget
+   * reasoning and return nothing. Providers that do not understand it ignore it.
+   */
+  reasoningEffort?: "none" | "minimal" | "low" | "medium" | "high";
 }
 
 export interface LlmResponse {

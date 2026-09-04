@@ -893,3 +893,99 @@ export type RunEvent =
   | { type: "resumed"; message: string }
   | { type: "run_finished"; runId: string; status: RunStatus; counts: Record<string, number>; durationMs: number }
   | { type: "error"; message: string };
+
+// ---------- change management (§4.4) ----------
+
+export type ChangeSource = "discussion" | "handoff" | "manual" | "run_detection" | "finding";
+export type ProposalState = "pending" | "applied" | "rejected";
+export type FeatureOp = "add" | "modify" | "remove";
+export type CaseOp = "add" | "modify" | "mark_outdated" | "deprecate";
+
+export interface CaseSnapshot {
+  title: string;
+  precondition: string;
+  steps: string[];
+  expected: string;
+  priority: Priority;
+  type: CaseType;
+  featureName: string | null;
+  status?: CaseStatus;
+}
+
+export interface FeatureChangeItem {
+  id: string;
+  op: FeatureOp;
+  featureId: string | null;
+  name: string;
+  description: string;
+  before: { name: string; description: string } | null;
+  reason: string;
+  /** Set when the model referred to something that is no longer there. */
+  unresolved?: string;
+}
+
+export interface CaseChangeItem {
+  id: string;
+  op: CaseOp;
+  caseId: string | null;
+  featureRef: string;
+  before: CaseSnapshot | null;
+  after: CaseSnapshot | null;
+  diff: string;
+  reason: string;
+  unresolved?: string;
+}
+
+export interface ChangeProposal {
+  id: string;
+  scope: Scope;
+  projectId: string | null;
+  targetId: string | null;
+  source: ChangeSource;
+  state: ProposalState;
+  summary: string;
+  descriptionDiff: string;
+  descriptionAfter: string;
+  hasDescriptionChange: boolean;
+  featureChanges: FeatureChangeItem[];
+  caseChanges: CaseChangeItem[];
+  counts: { features: number; cases: number; unresolved: number };
+  originNote: string | null;
+  model: string | null;
+  createdAt: string;
+  decidedAt: string | null;
+}
+
+export interface ChangeProposalList {
+  canEdit: boolean;
+  running: boolean;
+  proposals: ChangeProposal[];
+}
+
+export interface ChangeApplyResult {
+  changeId: string;
+  descriptionVersionAfter: number | null;
+  affectedFeatureIds: string[];
+  affectedTestCaseIds: string[];
+  /** Only these features need their cases regenerating. */
+  regenerableFeatureIds: string[];
+}
+
+export interface ChangeLogEntry {
+  id: string;
+  proposalId: string;
+  source: ChangeSource;
+  summary: string;
+  descriptionVersionAfter: number | null;
+  featureCount: number;
+  caseCount: number;
+  appliedAt: string;
+  appliedBy: string;
+}
+
+export interface CaseHistoryEntry {
+  version: number;
+  content: Record<string, unknown>;
+  createdAt: string;
+  change: { id: string; summary: string; source: ChangeSource | null } | null;
+}

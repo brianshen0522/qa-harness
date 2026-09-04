@@ -15,6 +15,7 @@ import { HandoffModule } from "./handoff/handoff.module";
 import { SandboxModule } from "./sandbox/sandbox.module";
 import { GenerationModule } from "./generation/generation.module";
 import { RunsModule } from "./runs/runs.module";
+import { ChangesModule } from "./changes/changes.module";
 
 @Module({
   imports: [
@@ -34,6 +35,7 @@ import { RunsModule } from "./runs/runs.module";
     SandboxModule,
     GenerationModule,
     RunsModule,
+    ChangesModule,
   ],
 })
 export class AppModule {}

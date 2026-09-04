@@ -1,9 +1,13 @@
 import type {
   AgentPhase,
+  CaseOp,
   CaseStatus,
   CaseSource,
   CaseType,
+  ChangeSource,
   Completeness,
+  FeatureOp,
+  ProposalState,
   GenerationMode,
   GenerationStatus,
   HandoffApplyMode,
@@ -379,3 +383,46 @@ export function formatActionParams(params: Record<string, unknown> | undefined):
     })
     .join("  ");
 }
+
+// ---------- change management (§4.4) ----------
+
+export const CHANGE_SOURCE_LABEL: Record<ChangeSource, string> = {
+  discussion: "討論區",
+  handoff: "Handoff 文件",
+  manual: "手動分析影響",
+  run_detection: "執行結果偵測",
+  finding: "執行中的 finding",
+};
+
+export const PROPOSAL_STATE_LABEL: Record<ProposalState, string> = {
+  pending: "待處理",
+  applied: "已套用",
+  rejected: "已拒絕",
+};
+
+export const PROPOSAL_STATE_TONE: Record<ProposalState, "amber" | "green" | "gray"> = {
+  pending: "amber",
+  applied: "green",
+  rejected: "gray",
+};
+
+export const FEATURE_OP_LABEL: Record<FeatureOp, string> = {
+  add: "新增功能",
+  modify: "修改功能",
+  remove: "移除功能",
+};
+
+export const CASE_OP_LABEL: Record<CaseOp, string> = {
+  add: "新增案例",
+  modify: "修改案例",
+  mark_outdated: "標為待處理",
+  deprecate: "停用案例",
+};
+
+export const CHANGE_OP_TONE: Record<FeatureOp | CaseOp, "green" | "blue" | "red" | "amber"> = {
+  add: "green",
+  modify: "blue",
+  remove: "red",
+  mark_outdated: "amber",
+  deprecate: "red",
+};

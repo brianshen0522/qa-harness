@@ -5,23 +5,63 @@
   "description": "Structured change proposal produced by the LLM. Never applied automatically.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version", "summary", "description_diff", "feature_changes", "test_case_changes"],
+  "required": [
+    "schema_version",
+    "summary",
+    "description_diff",
+    "description_after",
+    "feature_changes",
+    "test_case_changes"
+  ],
   "properties": {
-    "schema_version": { "type": "string", "const": "1.0" },
-    "summary": { "type": "string" },
-    "description_diff": { "type": "string", "description": "Unified diff of the description, or empty string." },
+    "schema_version": {
+      "type": "string",
+      "const": "1.0"
+    },
+    "summary": {
+      "type": "string"
+    },
+    "description_diff": {
+      "type": "string",
+      "description": "給人看的描述前後差異（unified diff 或條列說明）。沒有描述變動時給空字串。"
+    },
+    "description_after": {
+      "type": "string",
+      "description": "套用後完整的描述內容。描述沒有變動時給空字串。"
+    },
     "feature_changes": {
       "type": "array",
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["op", "reason"],
+        "required": [
+          "op",
+          "reason"
+        ],
         "properties": {
-          "op": { "type": "string", "enum": ["add", "modify", "remove"] },
-          "feature_id": { "type": ["string", "null"] },
-          "name": { "type": "string" },
-          "description": { "type": "string" },
-          "reason": { "type": "string" }
+          "op": {
+            "type": "string",
+            "enum": [
+              "add",
+              "modify",
+              "remove"
+            ]
+          },
+          "feature_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          }
         }
       }
     },
@@ -30,14 +70,46 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["op", "reason"],
+        "required": [
+          "op",
+          "reason"
+        ],
         "properties": {
-          "op": { "type": "string", "enum": ["add", "modify", "mark_outdated", "deprecate"] },
-          "case_id": { "type": ["string", "null"] },
-          "feature_ref": { "type": "string" },
-          "before": { "type": ["object", "null"], "additionalProperties": true },
-          "after": { "type": ["object", "null"], "additionalProperties": true },
-          "reason": { "type": "string" }
+          "op": {
+            "type": "string",
+            "enum": [
+              "add",
+              "modify",
+              "mark_outdated",
+              "deprecate"
+            ]
+          },
+          "case_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "feature_ref": {
+            "type": "string"
+          },
+          "before": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "additionalProperties": true
+          },
+          "after": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "additionalProperties": true
+          },
+          "reason": {
+            "type": "string"
+          }
         }
       }
     }

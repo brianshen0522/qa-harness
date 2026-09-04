@@ -94,6 +94,7 @@ model Project {
   handoffDocuments    HandoffDocument[]
   changeProposals     ChangeProposal[]
   changeLogs          ChangeLog[]
+  skills              Skill[]
 
   @@map("projects")
 }
@@ -991,4 +992,32 @@ model SiteObservation {
   @@index([runId, kind])
   @@index([nodeId])
   @@map("site_observations")
+}
+
+// ---------- Skills (§3.2 / §4.8): reusable instructions injected into LLM prompts ----------
+
+enum SkillScope {
+  global
+  project
+}
+
+/// A named block of markdown guidance ("always check the cart badge updates",
+/// "our dates are DD/MM/YYYY") folded into the system prompt of generation and
+/// execution, so house rules do not have to be repeated in every description.
+model Skill {
+  id        String     @id @default(uuid())
+  scope     SkillScope @default(global)
+  projectId String?    @map("project_id")
+  name      String
+  content   String     @default("")
+  enabled   Boolean    @default(true)
+  order     Int        @default(0)
+  createdAt DateTime   @default(now()) @map("created_at")
+  updatedAt DateTime   @updatedAt @map("updated_at")
+
+  project Project? @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([scope, enabled])
+  @@index([projectId])
+  @@map("skills")
 }

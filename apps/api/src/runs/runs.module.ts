@@ -9,9 +9,10 @@ import { RetentionService } from "./retention.service";
 import { LlmModule } from "../llm/llm.module";
 import { SandboxModule } from "../sandbox/sandbox.module";
 import { TargetsModule } from "../targets/targets.module";
+import { SkillsModule } from "../skills/skills.module";
 
 @Module({
-  imports: [LlmModule, SandboxModule, TargetsModule],
+  imports: [LlmModule, SandboxModule, TargetsModule, SkillsModule],
   controllers: [RunsController],
   providers: [RunService, RunQueryService, FindingConversionService, EvidenceService, HttpExecutorService, RetentionService],
   exports: [RunService, RunQueryService, EvidenceService, RetentionService],

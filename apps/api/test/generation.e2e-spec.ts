@@ -44,10 +44,15 @@ describe("test case generation and list (e2e)", () => {
   let schemaUrl: string;
   let port = 0;
 
+  /** Systems the generate stub last saw, so tests can assert prompt injection. */
+  let seenSystems: string[] = [];
+
   /** Deterministic stand-in for the generate model, keyed on which schema is asked for. */
   function stubGenerator(features: string[], casesPerFeature: (name: string) => unknown[]) {
+    seenSystems = [];
     const adapter: LlmProviderAdapter = {
       async complete(_cfg, req) {
+        seenSystems.push(req.system ?? "");
         const asksForFeatures = req.jsonSchema?.name === "feature_list";
         const body = asksForFeatures
           ? { schema_version: "1.0", features: features.map((name) => ({ name, description: `${name} 的說明` })) }
@@ -487,6 +492,25 @@ describe("test case generation and list (e2e)", () => {
   it("writes an audit trail for generation and edits", async () => {
     const actions = (await prisma.auditLog.findMany()).map((a) => a.action);
     expect(actions).toEqual(expect.arrayContaining(["generation.run", "testcase.create", "testcase.update", "testcase.delete", "feature.delete"]));
+  });
+
+  it("folds enabled global skills into the generation prompt (§4.8)", async () => {
+    const skill = await prisma.skill.create({
+      data: { scope: "global", name: "日期格式", content: "日期一律 YYYY-MM-DD。", enabled: true, order: 0 },
+    });
+    const off = await prisma.skill.create({
+      data: { scope: "global", name: "停用的", content: "不該出現的內容ZZZ。", enabled: false, order: 1 },
+    });
+    try {
+      stubGenerator(["登入"], () => [caseFor("登入", 1)]);
+      const res = await generate(owner, "replace");
+      expect(res.events.at(-1)?.type).toBe("finished");
+      // Every generate call's system prompt carried the enabled skill, not the disabled one.
+      expect(seenSystems.some((sys) => sys.includes("日期一律 YYYY-MM-DD"))).toBe(true);
+      expect(seenSystems.every((sys) => !sys.includes("不該出現的內容ZZZ"))).toBe(true);
+    } finally {
+      await prisma.skill.deleteMany({ where: { id: { in: [skill.id, off.id] } } });
+    }
   });
 
   /** §4.4: after a change is applied, only the features it touched are redone. */

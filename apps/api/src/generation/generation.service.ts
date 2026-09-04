@@ -9,6 +9,7 @@ import { LlmExhaustedError, LlmGatewayService } from "../llm/llm-gateway.service
 import { LlmHealthService } from "../llm/llm-health.service";
 import { AuditService } from "../audit/audit.service";
 import { DiscoveryService, type DiscoveryResult } from "./discovery.service";
+import { SkillsService } from "../skills/skills.service";
 
 export type GenerationEvent =
   | { type: "started"; runId: string; target: string; kind: TargetKind; mode: GenerationMode; descriptionVersion: number }
@@ -68,6 +69,7 @@ export class GenerationService implements OnModuleInit {
     private readonly discovery: DiscoveryService,
     private readonly health: LlmHealthService,
     private readonly audit: AuditService,
+    private readonly skills: SkillsService,
   ) {}
 
   /**
@@ -225,6 +227,9 @@ export class GenerationService implements OnModuleInit {
       this.publish(record, { type: "discovery", ok: discovery.ok, source: discovery.source, note: discovery.note });
 
       const context = await this.buildRunContext(target, discovery);
+      // §4.5: house rules (global + project) fold into every generate prompt.
+      const skillsBlock = await this.skills.promptBlock(target.projectId);
+      const withSkills = (sys: string) => [skillsBlock, sys].filter(Boolean).join("\n\n");
 
       // ----- step 1: feature inventory -----
       let features = saved?.features ?? [];
@@ -243,7 +248,7 @@ export class GenerationService implements OnModuleInit {
       if (!features.length) {
         const res = await this.withLlm(record, run.id, () =>
           this.gateway.structured("generate", "feature_list", {
-            system: FEATURE_SYSTEM,
+            system: withSkills(FEATURE_SYSTEM),
             messages: [{ role: "user", content: context }],
             maxTokens: 4096,
           }),
@@ -265,7 +270,7 @@ export class GenerationService implements OnModuleInit {
 
         const res = await this.withLlm(record, run.id, () =>
           this.gateway.structured("generate", "test_case", {
-            system: caseSystem(target.kind),
+            system: withSkills(caseSystem(target.kind)),
             messages: [
               { role: "user", content: context },
               { role: "user", content: featurePrompt(feature, features) },

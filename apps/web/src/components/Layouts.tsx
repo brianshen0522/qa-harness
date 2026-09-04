@@ -69,6 +69,7 @@ export function AdminLayout() {
                 ["/admin/users", "使用者"],
                 ["/admin/llm", "LLM"],
                 ["/admin/sandbox", "Sandbox"],
+                ["/admin/skills", "Skills"],
                 ["/admin/audit", "稽核與用量"],
               ].map(([to, label]) => (
                 <NavLink

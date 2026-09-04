@@ -14,6 +14,7 @@ import type { ContentPart, LlmMessage } from "../llm/providers";
 import { SandboxService, parseResolution, toSandboxUrl } from "../sandbox/sandbox.service";
 import { ComputerService } from "../sandbox/computer.service";
 import { TargetsService } from "../targets/targets.service";
+import { SkillsService } from "../skills/skills.service";
 import { EvidenceService } from "./evidence.service";
 import { HttpExecutorService, fillCredentials, type HttpLog } from "./http-executor.service";
 import {
@@ -105,6 +106,7 @@ export class RunService implements OnModuleInit {
     private readonly evidence: EvidenceService,
     private readonly targets: TargetsService,
     private readonly audit: AuditService,
+    private readonly skills: SkillsService,
   ) {}
 
   /**
@@ -273,6 +275,8 @@ export class RunService implements OnModuleInit {
     const settings = await this.sandbox.settings();
     const target = await this.prisma.qaTarget.findUniqueOrThrow({ where: { id: record.targetId } });
     const credentials = await this.targets.decryptedCredentials(record.targetId);
+    // §4.5: global + project house rules fold into every case's system prompt.
+    const skillsBlock = await this.skills.promptBlock(target.projectId);
     const needsSandbox = target.kind !== "api";
 
     let sandboxId: string | null = null;
@@ -349,7 +353,7 @@ export class RunService implements OnModuleInit {
 
         record.currentCaseId = next.testCaseId;
         await this.runCase(record, {
-          target, targetPrompt, credentials, settings, agentPort,
+          target, targetPrompt, credentials, settings, agentPort, skillsBlock,
           queueRow: next, needsSandbox,
         });
 
@@ -382,6 +386,7 @@ export class RunService implements OnModuleInit {
       targetPrompt: TargetForPrompt;
       credentials: Record<string, string>;
       settings: { maxStepsPerCase: number; stepTimeoutSec: number; recordVideo: boolean };
+      skillsBlock: string;
       agentPort: number | null;
       queueRow: { testCaseId: string; testCase: { title: string; precondition: string; steps: Prisma.JsonValue; expected: string; priority: string; type: string; currentVersion: number; feature: { name: string } | null } };
       needsSandbox: boolean;
@@ -398,7 +403,7 @@ export class RunService implements OnModuleInit {
       type: testCase.type,
       featureName: testCase.feature?.name ?? null,
     };
-    const system = caseSystemPrompt(ctx.targetPrompt, forPrompt);
+    const system = [ctx.skillsBlock, caseSystemPrompt(ctx.targetPrompt, forPrompt)].filter(Boolean).join("\n\n");
     const stepTimeoutMs = Math.max(ctx.settings.stepTimeoutSec * 1000, 60_000);
     const maxSteps = ctx.settings.maxStepsPerCase;
 

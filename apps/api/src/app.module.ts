@@ -17,6 +17,7 @@ import { GenerationModule } from "./generation/generation.module";
 import { RunsModule } from "./runs/runs.module";
 import { ChangesModule } from "./changes/changes.module";
 import { ExploreModule } from "./explore/explore.module";
+import { SkillsModule } from "./skills/skills.module";
 
 @Module({
   imports: [
@@ -38,6 +39,7 @@ import { ExploreModule } from "./explore/explore.module";
     RunsModule,
     ChangesModule,
     ExploreModule,
+    SkillsModule,
   ],
 })
 export class AppModule {}

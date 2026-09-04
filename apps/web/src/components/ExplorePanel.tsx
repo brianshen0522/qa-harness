@@ -1,6 +1,6 @@
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, apiEventStream, errorMessage } from "../api/client";
+import { api, apiEventSource, apiEventStream, errorMessage } from "../api/client";
 import type {
   AccessState, ExploreDetail, ExploreEvent, ExploreRunRow, IdentityList, Role, TargetIdentity,
 } from "../api/types";
@@ -27,16 +27,81 @@ export function ExplorePanel({ targetId, myRole, kind }: { targetId: string; myR
   const [running, setRunning] = useState(false);
   const [startError, setStartError] = useState<unknown>(null);
   const qc = useQueryClient();
+  const sourceRef = useRef<EventSource | null>(null);
+  const attachedRef = useRef(false);
 
-  const latest = useQuery({ queryKey: latestKey(targetId), queryFn: () => api<ExploreDetail | null>(`/targets/${targetId}/explore/latest`) });
+  // Poll while a run is active so the site map / matrix / findings fill in as
+  // the crawl progresses — and so a page that is left and reopened is not stale.
+  const latest = useQuery({
+    queryKey: latestKey(targetId),
+    queryFn: () => api<ExploreDetail | null>(`/targets/${targetId}/explore/latest`),
+    refetchInterval: (q) => {
+      const s = (q.state.data as ExploreDetail | null)?.run.status;
+      return s === "running" || s === "paused" ? 4000 : false;
+    },
+  });
+  const activeRun = latest.data?.run.status === "running" || latest.data?.run.status === "paused";
+
+  useEffect(() => () => sourceRef.current?.close(), []);
+
+  /** Reconnect to the live feed of a run already in progress; the server replays. */
+  const attach = useCallback(() => {
+    if (sourceRef.current) return;
+    setLive([]);
+    const source = apiEventSource(`/targets/${targetId}/explore/stream`);
+    sourceRef.current = source;
+    let seen = 0;
+    source.onopen = () => {
+      seen = 0;
+      setLive([]);
+    };
+    source.onmessage = (e) => {
+      let event: ExploreEvent;
+      try {
+        event = JSON.parse(e.data as string) as ExploreEvent;
+      } catch {
+        return;
+      }
+      if (event.type === "error" && seen === 0) {
+        source.close();
+        sourceRef.current = null;
+        return;
+      }
+      seen++;
+      setLive((prev) => [...prev, event]);
+      if (event.type === "finished" || event.type === "error") {
+        source.close();
+        sourceRef.current = null;
+        void qc.invalidateQueries({ queryKey: latestKey(targetId) });
+        void qc.invalidateQueries({ queryKey: ["target", targetId, "test-cases"] });
+      }
+    };
+    source.onerror = () => {
+      if (source.readyState === EventSource.CLOSED) {
+        sourceRef.current = null;
+      }
+    };
+  }, [targetId, qc]);
+
+  // Coming back to a running exploration re-attaches to its feed, rather than
+  // looking idle while the crawl keeps going on the server.
+  useEffect(() => {
+    if (attachedRef.current || running || !activeRun) return;
+    attachedRef.current = true;
+    attach();
+  }, [activeRun, running, attach]);
 
   const run = async (body: Record<string, unknown>) => {
     setLive([]);
     setRunning(true);
     setStartError(null);
+    attachedRef.current = true; // this POST is the stream; don't also re-attach
     try {
       await apiEventStream<ExploreEvent>(`/targets/${targetId}/explore`, { body }, (e) => {
         setLive((prev) => [...prev, e]);
+        if (e.type === "visit" || e.type === "matrix" || e.type === "synth") {
+          void qc.invalidateQueries({ queryKey: latestKey(targetId) });
+        }
       });
     } catch (err) {
       setStartError(err);
@@ -51,11 +116,13 @@ export function ExplorePanel({ targetId, myRole, kind }: { targetId: string; myR
     return <Card title="探索模式"><Notice>探索模式目前只支援 web 類型的 Target。</Notice></Card>;
   }
 
+  const showFeed = running || activeRun || live.length > 0;
+
   return (
     <div className="space-y-4">
       <IdentitiesCard targetId={targetId} canEdit={canEdit} />
-      <StartCard canEdit={canEdit} running={running} onRun={run} error={startError} />
-      {(running || live.length > 0) && <LiveFeed events={live} running={running} />}
+      <StartCard canEdit={canEdit} running={running || !!activeRun} onRun={run} error={startError} />
+      {showFeed && <LiveFeed events={live} running={running || !!activeRun} />}
 
       {latest.isLoading && <Spinner />}
       {latest.data && <Results detail={latest.data} targetId={targetId} />}

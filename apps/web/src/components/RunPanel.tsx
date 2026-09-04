@@ -624,34 +624,81 @@ function LiveRun({
   const [openCase, setOpenCase] = useState<string | null>(null);
   const [addOpen, setAddOpen] = useState(false);
 
+  // Persisted state is the source of truth; the SSE stream only adds liveness.
+  // Both are polled so that returning to this tab (or a dropped stream) shows
+  // real progress from the server, never a blank reset. §4.6.
   const detail = useQuery({
     queryKey: runKey(runId ?? "none"),
     queryFn: () => api<RunDetail>(`/runs/${runId}`),
     enabled: !!runId,
+    refetchInterval: 4000,
   });
-
-  // The stream carries no HTTP status or response body, so for an `api` target
-  // the persisted step rows are polled to fill in what is happening right now.
+  // `api` runs have no screen, so the live view leans on the step rows for the
+  // request/response — poll all of them there. For web runs, fetching every
+  // step on a poll is wasteful, so persisted steps are pulled per expanded case.
   const steps = useQuery({
     queryKey: stepsKey(runId ?? "none"),
     queryFn: () => api<RunStepRow[]>(`/runs/${runId}/steps`),
     enabled: !!runId && kind === "api",
-    refetchInterval: live && kind === "api" ? 3000 : false,
+    refetchInterval: kind === "api" ? 4000 : false,
+  });
+  const openCaseSteps = useQuery({
+    queryKey: [...stepsKey(runId ?? "none"), openCase ?? "none"],
+    queryFn: () => api<RunStepRow[]>(`/runs/${runId}/steps?caseId=${openCase}`),
+    enabled: !!runId && kind !== "api" && !!openCase,
+    refetchInterval: 4000,
   });
 
-  const step = latestStep(state);
-  const current = state.currentCaseId;
+  const detailByCase = useMemo(
+    () => new Map((detail.data?.cases ?? []).map((c) => [c.caseId, c])),
+    [detail.data],
+  );
+
+  const current =
+    state.currentCaseId ?? detail.data?.cases.find((c) => c.queueStatus === "running")?.caseId ?? null;
 
   const queue: { caseId: string; title: string; order: number }[] = detail.data
     ? detail.data.cases.map((c) => ({ caseId: c.caseId, title: c.testCase.title, order: c.order }))
     : state.order.map((id, i) => ({ caseId: id, title: state.titles.get(id) ?? id, order: i }));
 
+  /** Merge live event state over persisted detail for one case. */
+  const caseView = (caseId: string) => {
+    const liveFin = state.finished.get(caseId);
+    const dc = detailByCase.get(caseId);
+    const liveSteps = state.stepsByCase.get(caseId) ?? [];
+    // Persisted steps only for the case currently expanded (fetched on demand).
+    const persisted = openCase === caseId ? (kind === "api" ? (steps.data ?? []).filter((s) => s.testCaseId === caseId) : openCaseSteps.data ?? []) : [];
+    const verdict = liveFin?.verdict ?? dc?.result?.verdict ?? null;
+    const status = verdict
+      ? "done"
+      : state.skipped.has(caseId) || dc?.queueStatus === "skipped"
+        ? "skipped"
+        : caseId === current
+          ? "running"
+          : "queued";
+    return {
+      status: status as "done" | "skipped" | "running" | "queued",
+      verdict,
+      reasoning: liveFin?.reasoning ?? dc?.result?.llmReasoning ?? "",
+      possiblyChanged: liveFin?.possiblyChanged ?? dc?.result?.possiblyChanged ?? false,
+      liveSteps,
+      persistedSteps: persisted,
+      stepCount: liveSteps.length || dc?.result?.stepCount || 0,
+    };
+  };
+
+  const step = latestStep(state);
+  // The latest action strip: live step, or the last persisted step after a remount.
+  const lastPersisted = (steps.data ?? []).at(-1) ?? null;
+
   const inRun = new Set(queue.map((q) => q.caseId));
   const viewUrl = state.sandbox?.viewUrl ?? detail.data?.run.viewUrl ?? null;
   const sandboxName = state.sandbox?.name ?? detail.data?.run.sandboxName ?? null;
-  const done = state.finished.size + state.skipped.size;
+  // Count done from whichever source knows more, so progress never regresses.
+  const persistedDone = detail.data?.cases.filter((c) => c.result).length ?? 0;
+  const done = Math.max(state.finished.size + state.skipped.size, persistedDone);
   const total = Math.max(state.total, queue.length);
-  const runningIndex = state.index || Math.min(done + 1, total);
+  const runningIndex = Math.max(state.index, Math.min(done + 1, total)) || Math.min(done + 1, total);
   const pct = total ? Math.round((done / total) * 100) : 0;
 
   const { width, collapsed, setCollapsed, onHandleDown } = useResizableSidebar("qa.run.sidebar");
@@ -714,21 +761,28 @@ function LiveRun({
       <div className="flex h-[calc(100vh-13rem)] min-h-[520px] items-stretch">
         <div className="flex min-w-0 flex-1 flex-col gap-2">
           {liveView}
-          {/* The latest action, always visible under the live view. */}
+          {/* The latest action, always visible under the live view. Live event
+              first, then the last persisted step so a remount is not blank. */}
           <div className="shrink-0 rounded-md border border-gray-200 bg-white px-3 py-2">
-            {step ? (
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="text-xs font-semibold text-gray-800">第 {step.seq} 步</span>
-                <code className="rounded bg-gray-100 px-1.5 py-0.5 text-xs font-medium text-gray-700">{step.action.type}</code>
-                <span className={`text-xs ${step.result.ok ? "text-green-700" : "text-red-600"}`}>
-                  {step.result.ok ? "成功" : "失敗"} · {step.result.durationMs}ms
-                </span>
-                {step.intent && <span className="min-w-0 flex-1 truncate text-sm text-gray-700">意圖：{step.intent}</span>}
-                {current && <span className="hidden truncate text-xs text-gray-400 md:inline">{state.titles.get(current) ?? ""}</span>}
-              </div>
-            ) : (
-              <span className="text-xs text-gray-400">還沒有步驟。</span>
-            )}
+            {(() => {
+              const s = step
+                ? { seq: step.seq, type: step.action.type, ok: step.result.ok, ms: step.result.durationMs, intent: step.intent }
+                : lastPersisted
+                  ? { seq: lastPersisted.seq, type: lastPersisted.action?.type ?? "", ok: lastPersisted.result?.ok ?? true, ms: lastPersisted.result?.durationMs ?? lastPersisted.durationMs, intent: lastPersisted.intent }
+                  : null;
+              if (!s) return <span className="text-xs text-gray-400">還沒有步驟。</span>;
+              return (
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-xs font-semibold text-gray-800">第 {s.seq} 步</span>
+                  <code className="rounded bg-gray-100 px-1.5 py-0.5 text-xs font-medium text-gray-700">{s.type}</code>
+                  <span className={`text-xs ${s.ok ? "text-green-700" : "text-red-600"}`}>
+                    {s.ok ? "成功" : "失敗"} · {s.ms}ms
+                  </span>
+                  {s.intent && <span className="min-w-0 flex-1 truncate text-sm text-gray-700">意圖：{s.intent}</span>}
+                  {current && <span className="hidden truncate text-xs text-gray-400 md:inline">{state.titles.get(current) ?? detailByCase.get(current)?.testCase.title ?? ""}</span>}
+                </div>
+              );
+            })()}
           </div>
         </div>
 
@@ -775,37 +829,37 @@ function LiveRun({
               ) : (
                 <ul className="divide-y divide-gray-100">
                   {queue.map((q) => {
-                    const finished = state.finished.get(q.caseId);
-                    const status = finished ? "done" : state.skipped.has(q.caseId) ? "skipped" : q.caseId === current ? "running" : "queued";
+                    const cv = caseView(q.caseId);
                     const open = openCase === q.caseId;
-                    const caseSteps = state.stepsByCase.get(q.caseId) ?? [];
                     return (
                       <li key={q.caseId} className={`py-2 ${q.caseId === current ? "-mx-3 border-l-2 border-blue-500 bg-blue-50/40 px-3" : ""}`}>
                         <div className="flex items-start gap-2">
                           <button type="button" className="min-w-0 flex-1 text-left" onClick={() => setOpenCase(open ? null : q.caseId)}>
                             <p className="truncate text-sm text-gray-800">{q.title}</p>
                             <p className="mt-0.5 flex flex-wrap items-center gap-1">
-                              <Badge tone={QUEUE_STATUS_TONE[status]}>{QUEUE_STATUS_LABEL[status]}</Badge>
-                              {finished && <Badge tone={VERDICT_TONE[finished.verdict]}>{VERDICT_LABEL[finished.verdict]}</Badge>}
-                              {finished?.possiblyChanged && <Badge tone="amber">可能已變更</Badge>}
-                              {caseSteps.length > 0 && <span className="text-xs text-gray-400">{caseSteps.length} 步</span>}
+                              <Badge tone={QUEUE_STATUS_TONE[cv.status]}>{QUEUE_STATUS_LABEL[cv.status]}</Badge>
+                              {cv.verdict && <Badge tone={VERDICT_TONE[cv.verdict]}>{VERDICT_LABEL[cv.verdict]}</Badge>}
+                              {cv.possiblyChanged && <Badge tone="amber">可能已變更</Badge>}
+                              {cv.stepCount > 0 && <span className="text-xs text-gray-400">{cv.stepCount} 步</span>}
                             </p>
                           </button>
-                          {status === "queued" && canEdit && (
+                          {cv.status === "queued" && canEdit && (
                             <Button variant="ghost" size="sm" onClick={() => onSkip(q.caseId)}>跳過</Button>
                           )}
                         </div>
                         {open && (
                           <div className="mt-2 space-y-2">
-                            {finished && (
+                            {cv.reasoning && (
                               <p className="rounded-md bg-gray-50 p-2 text-sm text-gray-700">
-                                <span className="mr-1 text-xs font-medium text-gray-500">理由</span>{finished.reasoning}
+                                <span className="mr-1 text-xs font-medium text-gray-500">理由</span>{cv.reasoning}
                               </p>
                             )}
-                            {caseSteps.length === 0 ? (
-                              <Empty>這條案例還沒有步驟。</Empty>
+                            {cv.liveSteps.length > 0 ? (
+                              cv.liveSteps.map((sc) => <LiveStepCard key={`${sc.caseId}-${sc.seq}`} step={sc} runId={runId} />)
+                            ) : cv.persistedSteps.length > 0 ? (
+                              cv.persistedSteps.map((sc) => <StepRow key={sc.id} step={sc} runId={runId ?? ""} />)
                             ) : (
-                              caseSteps.map((sc) => <LiveStepCard key={`${sc.caseId}-${sc.seq}`} step={sc} runId={runId} />)
+                              <Empty>這條案例還沒有步驟。</Empty>
                             )}
                           </div>
                         )}

@@ -10,10 +10,10 @@
 | 2. Admin 後台：LLM provider 設定 + 測試 + fallback；LLM Gateway | ✅ |
 | 3. Output Contract：所有 schema + 驗證 / 重試 / fallback | ✅ 含斷路器、探測復原與流程暫停續跑 |
 | 4. 討論區（引導式對談 + 完整度面板 + Target 提案）+ Context Handoff | ✅ |
-| 5. Test case 生成 pipeline | ⬜ |
+| 5. Test case 生成 pipeline（先 api 類型）+ features 結構 | ✅ |
 | 6. 變更管理 | ⬜ |
-| 7. Sandbox Manager + noVNC | ⬜ |
-| 8. Agent Worker + 執行中頁面 | ⬜ |
+| 7. Sandbox Manager + 容器 image + noVNC 串流 | ✅ |
+| 8. Agent Worker + web 類型執行 + 執行中頁面 | 🚧 agent loop 與 Admin 主控台完成；接 test case 與 Finding 待做 |
 | 9. 結果頁 + 人工覆核 | ⬜ |
 | 10. desktop、skills / MCP、用量、增量 Handoff | ⬜ |
 

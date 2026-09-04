@@ -2,6 +2,7 @@ import { Module } from "@nestjs/common";
 import { RunsController } from "./runs.controller";
 import { RunService } from "./run.service";
 import { RunQueryService } from "./run-query.service";
+import { FindingConversionService } from "./finding-conversion.service";
 import { EvidenceService } from "./evidence.service";
 import { HttpExecutorService } from "./http-executor.service";
 import { RetentionService } from "./retention.service";
@@ -12,7 +13,7 @@ import { TargetsModule } from "../targets/targets.module";
 @Module({
   imports: [LlmModule, SandboxModule, TargetsModule],
   controllers: [RunsController],
-  providers: [RunService, RunQueryService, EvidenceService, HttpExecutorService, RetentionService],
+  providers: [RunService, RunQueryService, FindingConversionService, EvidenceService, HttpExecutorService, RetentionService],
   exports: [RunService, RunQueryService, EvidenceService, RetentionService],
 })
 export class RunsModule {}

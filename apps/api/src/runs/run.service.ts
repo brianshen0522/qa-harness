@@ -8,7 +8,7 @@ import type { CaseVerdict, ExecutionStep } from "@qa-harness/schemas";
 import { PrismaService } from "../prisma/prisma.service";
 import { PermissionsService } from "../permissions/permissions.service";
 import { AuditService } from "../audit/audit.service";
-import { LlmExhaustedError, LlmGatewayService } from "../llm/llm-gateway.service";
+import { LlmExhaustedError, LlmGatewayService, type AttemptLog } from "../llm/llm-gateway.service";
 import { LlmHealthService } from "../llm/llm-health.service";
 import type { ContentPart, LlmMessage } from "../llm/providers";
 import { SandboxService, parseResolution, toSandboxUrl } from "../sandbox/sandbox.service";
@@ -53,7 +53,35 @@ interface ActiveRun {
   abort: AbortController;
   /** Cases the user asked to skip while the run is going. */
   skip: Set<string>;
+  /** Which models actually served this run, and where the chain fell over. */
+  llm: LlmUsage;
+  /** The case being executed, so a fallback can be pinned to where it happened. */
+  currentCaseId: string | null;
   finished: boolean;
+}
+
+/** §4.7 「使用的 model（含 fallback 切換紀錄）」. */
+export interface LlmUsage {
+  configs: {
+    configId: string;
+    configName: string;
+    models: string[];
+    calls: number;
+    failures: number;
+  }[];
+  switches: {
+    at: string;
+    fromConfigName: string;
+    toConfigName: string;
+    reason: string;
+    caseId: string | null;
+  }[];
+  /** Times every config in the chain was exhausted and the run had to wait. */
+  outages: { at: string; reason: string; caseId: string | null }[];
+}
+
+function emptyUsage(): LlmUsage {
+  return { configs: [], switches: [], outages: [] };
 }
 
 /** A finished run stays readable so a late subscriber still sees how it went. */
@@ -216,7 +244,8 @@ export class RunService implements OnModuleInit {
   private spawn(runId: string, targetId: string, targetName: string, kind: TargetKind, total: number) {
     const record: ActiveRun = {
       runId, targetId, events: [], subscribers: new Set(),
-      abort: new AbortController(), skip: new Set(), finished: false,
+      abort: new AbortController(), skip: new Set(),
+      llm: emptyUsage(), currentCaseId: null, finished: false,
     };
     this.active.set(targetId, record);
     this.publish(record, { type: "run_started", runId, target: targetName, kind, total });
@@ -318,6 +347,7 @@ export class RunService implements OnModuleInit {
           index: index + 1, total, caseVersion: next.testCase.currentVersion,
         });
 
+        record.currentCaseId = next.testCaseId;
         await this.runCase(record, {
           target, targetPrompt, credentials, settings, agentPort,
           queueRow: next, needsSandbox,
@@ -327,6 +357,8 @@ export class RunService implements OnModuleInit {
           where: { runId_testCaseId: { runId: record.runId, testCaseId: next.testCaseId } },
           data: { status: QueueStatus.done },
         });
+        record.currentCaseId = null;
+        await this.saveUsage(record);
       }
 
       const aborted = record.abort.signal.aborted;
@@ -349,7 +381,7 @@ export class RunService implements OnModuleInit {
       target: { id: string; kind: TargetKind; config: Prisma.JsonValue };
       targetPrompt: TargetForPrompt;
       credentials: Record<string, string>;
-      settings: { maxStepsPerCase: number; stepTimeoutSec: number };
+      settings: { maxStepsPerCase: number; stepTimeoutSec: number; recordVideo: boolean };
       agentPort: number | null;
       queueRow: { testCaseId: string; testCase: { title: string; precondition: string; steps: Prisma.JsonValue; expected: string; priority: string; type: string; currentVersion: number; feature: { name: string } | null } };
       needsSandbox: boolean;
@@ -369,6 +401,13 @@ export class RunService implements OnModuleInit {
     const system = caseSystemPrompt(ctx.targetPrompt, forPrompt);
     const stepTimeoutMs = Math.max(ctx.settings.stepTimeoutSec * 1000, 60_000);
     const maxSteps = ctx.settings.maxStepsPerCase;
+
+    // §4.7 錄影: one recording per case, so the video lines up with the verdict.
+    const recording = ctx.needsSandbox && ctx.agentPort !== null && ctx.settings.recordVideo;
+    if (recording) {
+      const started = await this.computer.startRecording(ctx.agentPort!);
+      if (!started.ok) this.log.warn(`recording did not start: ${started.error ?? "unknown"}`);
+    }
 
     const turns: { assistant: string; user: ContentPart[] }[] = [];
     const transcript: { seq: number; phase: string; intent: string; observation: string; action: unknown; result?: unknown }[] = [];
@@ -448,6 +487,10 @@ export class RunService implements OnModuleInit {
       });
     }
 
+    // Stop before judging: the judge call takes a while and nothing happens on
+    // screen during it, so recording through it would only pad the file.
+    const videoKey = recording ? await this.storeRecording(record.runId, ctx.queueRow.testCaseId, ctx.agentPort!) : null;
+
     // ----- judge -----
     const verdict = await this.judge(record, forPrompt, transcript, stopReason);
     const durationMs = Date.now() - caseStarted;
@@ -457,7 +500,7 @@ export class RunService implements OnModuleInit {
       reasoning: verdict?.reasoning ?? "無法取得判定（模型不可用）。",
       possiblyChanged: verdict?.possibly_changed ?? false,
       reproSteps: verdict?.repro_steps ?? [],
-      evidence: { screenshots, httpLogs, evidenceRefs: verdict?.evidence_refs ?? [] },
+      evidence: { screenshots, video: videoKey, httpLogs, evidenceRefs: verdict?.evidence_refs ?? [] },
       stepCount: seq,
       durationMs,
     });
@@ -470,6 +513,22 @@ export class RunService implements OnModuleInit {
       stepCount: seq,
       durationMs,
     });
+  }
+
+  /** Never throws: a missing video is a smaller loss than a lost verdict. */
+  private async storeRecording(runId: string, caseId: string, agentPort: number): Promise<string | null> {
+    try {
+      const stopped = await this.computer.stopRecording(agentPort);
+      if (!stopped.ok || !stopped.detail?.was_recording) return null;
+      const bytes = await this.computer.fetchRecording(agentPort);
+      if (!bytes) return null;
+      const stored = await this.evidence.putVideo(runId, caseId, bytes);
+      if (stored) this.log.log(`case ${caseId}: stored ${(stored.bytes / 1e6).toFixed(1)}MB recording`);
+      return stored?.key ?? null;
+    } catch (err) {
+      this.log.warn(`failed to store recording for case ${caseId}: ${(err as Error).message}`);
+      return null;
+    }
   }
 
   private async judge(
@@ -540,13 +599,26 @@ export class RunService implements OnModuleInit {
    * it, and the same step is retaken once a model returns. Null means the user
    * aborted while it waited.
    */
-  private async withLlm<T>(record: ActiveRun, call: () => Promise<T>): Promise<T | null> {
+  private async withLlm<T extends { attempts: AttemptLog[] }>(
+    record: ActiveRun,
+    call: () => Promise<T>,
+  ): Promise<T | null> {
     for (;;) {
       if (record.abort.signal.aborted) return null;
       try {
-        return await call();
+        const result = await call();
+        this.noteLlm(record, result.attempts);
+        return result;
       } catch (err) {
         if (!(err instanceof LlmExhaustedError) || !err.recoverable) throw err;
+        // Everything it tried on the way down still counts as usage.
+        this.noteLlm(record, err.attempts);
+        record.llm.outages.push({
+          at: new Date().toISOString(),
+          reason: err.message.slice(0, 300),
+          caseId: record.currentCaseId,
+        });
+        await this.saveUsage(record);
         await this.prisma.testRun.update({
           where: { id: record.runId },
           data: { status: RunStatus.paused, pausedReason: err.message.slice(0, 1000) },
@@ -567,6 +639,45 @@ export class RunService implements OnModuleInit {
         this.publish(record, { type: "resumed", message: "LLM 已恢復，從中斷的那一步繼續。" });
       }
     }
+  }
+
+  /**
+   * Folds one gateway call's attempts into the run's usage record. A run that
+   * quietly finished on the third config looks identical to one that never
+   * faltered unless the hand-off is written down somewhere.
+   */
+  private noteLlm(record: ActiveRun, attempts: AttemptLog[]) {
+    let previous: AttemptLog | null = null;
+    for (const a of attempts) {
+      let entry = record.llm.configs.find((c) => c.configId === a.configId);
+      if (!entry) {
+        entry = { configId: a.configId, configName: a.configName, models: [], calls: 0, failures: 0 };
+        record.llm.configs.push(entry);
+      }
+      if (a.model && !entry.models.includes(a.model)) entry.models.push(a.model);
+      entry.calls++;
+      if (a.outcome !== "ok") entry.failures++;
+
+      if (previous && previous.configId !== a.configId) {
+        record.llm.switches.push({
+          at: new Date().toISOString(),
+          fromConfigName: previous.configName,
+          toConfigName: a.configName,
+          reason: previous.error?.slice(0, 300) ?? previous.outcome,
+          caseId: record.currentCaseId,
+        });
+      }
+      previous = a;
+    }
+  }
+
+  private saveUsage(record: ActiveRun) {
+    return this.prisma.testRun
+      .update({
+        where: { id: record.runId },
+        data: { llmUsage: record.llm as unknown as Prisma.InputJsonValue },
+      })
+      .catch(() => undefined);
   }
 
   // ---------- persistence ----------
@@ -653,7 +764,10 @@ export class RunService implements OnModuleInit {
 
     await this.prisma.testRun.update({
       where: { id: record.runId },
-      data: { status, pausedReason: null, endedAt: new Date() },
+      data: {
+        status, pausedReason: null, endedAt: new Date(),
+        llmUsage: record.llm as unknown as Prisma.InputJsonValue,
+      },
     });
     this.publish(record, {
       type: "run_finished", runId: record.runId, status, counts, durationMs: Date.now() - startedAt,

@@ -1,14 +1,17 @@
 import {
   Body, Controller, Get, Param, Post, Query, Req, Res, UseGuards,
 } from "@nestjs/common";
-import { ArrayNotEmpty, IsArray, IsEnum, IsOptional, IsString, IsUUID, MaxLength } from "class-validator";
-import { FindingStatus, Verdict } from "@prisma/client";
+import {
+  ArrayNotEmpty, IsArray, IsEnum, IsOptional, IsString, IsUUID, MaxLength, MinLength,
+} from "class-validator";
+import { CaseType, FindingStatus, Priority, Verdict } from "@prisma/client";
 import type { Request, Response } from "express";
 import { UserAuthGuard } from "../auth/guards/user-auth.guard";
 import { CurrentUser } from "../common/decorators";
 import type { UserPrincipal } from "../common/types";
 import { RunService } from "./run.service";
 import { RunQueryService } from "./run-query.service";
+import { FindingConversionService } from "./finding-conversion.service";
 
 class StartRunDto {
   @IsOptional() @IsArray() @IsUUID("4", { each: true }) caseIds?: string[];
@@ -23,6 +26,16 @@ class ReviewDto {
 class FindingStatusDto {
   @IsEnum(FindingStatus) status!: FindingStatus;
 }
+class ConvertFindingDto {
+  @IsString() @MinLength(1) @MaxLength(500) title!: string;
+  @IsOptional() @IsString() @MaxLength(5000) precondition?: string;
+  @IsArray() @ArrayNotEmpty() @IsString({ each: true }) steps!: string[];
+  @IsString() @MinLength(1) @MaxLength(5000) expected!: string;
+  @IsOptional() @IsEnum(Priority) priority?: Priority;
+  @IsOptional() @IsEnum(CaseType) type?: CaseType;
+  @IsOptional() @IsUUID() featureId?: string | null;
+  @IsOptional() @IsString() @MaxLength(200) featureName?: string | null;
+}
 
 @Controller()
 @UseGuards(UserAuthGuard)
@@ -30,6 +43,7 @@ export class RunsController {
   constructor(
     private readonly runs: RunService,
     private readonly query: RunQueryService,
+    private readonly findings2case: FindingConversionService,
   ) {}
 
   // ---------- running ----------
@@ -130,6 +144,31 @@ export class RunsController {
   @Post("results/:resultId/review")
   review(@CurrentUser() user: UserPrincipal, @Param("resultId") resultId: string, @Body() dto: ReviewDto) {
     return this.query.review(resultId, user.id, dto.verdict, dto.note);
+  }
+
+  /** §4.7: draft a regression case from a finding; nothing is written yet. */
+  @Post("findings/:findingId/test-case/draft")
+  draftCase(@CurrentUser() user: UserPrincipal, @Param("findingId") findingId: string) {
+    return this.findings2case.draft(findingId, user.id);
+  }
+
+  /** Saves the draft the reviewer confirmed (and possibly edited). */
+  @Post("findings/:findingId/test-case")
+  convertCase(
+    @CurrentUser() user: UserPrincipal,
+    @Param("findingId") findingId: string,
+    @Body() dto: ConvertFindingDto,
+  ) {
+    return this.findings2case.convert(findingId, user.id, {
+      title: dto.title,
+      precondition: dto.precondition ?? "",
+      steps: dto.steps,
+      expected: dto.expected,
+      priority: dto.priority ?? Priority.P2,
+      type: dto.type ?? "negative",
+      featureId: dto.featureId ?? null,
+      featureName: dto.featureName ?? null,
+    });
   }
 
   @Post("findings/:findingId/status")

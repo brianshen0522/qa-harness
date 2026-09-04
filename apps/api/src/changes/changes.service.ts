@@ -199,7 +199,7 @@ export class ChangesService {
     });
     await this.prisma.runFinding.update({
       where: { id: findingId },
-      data: { status: FindingStatus.converted_to_proposal },
+      data: { status: FindingStatus.converted_to_proposal, convertedProposalId: proposal.id },
     });
     return proposal;
   }

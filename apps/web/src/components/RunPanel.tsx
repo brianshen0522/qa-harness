@@ -11,18 +11,22 @@ import type {
   RunCase,
   RunDetail,
   RunEvent,
+  FindingCaseDraft,
   RunFindingRow,
+  RunLlmUsage,
   RunListItem,
   RunStepRow,
   SkipCaseResult,
   StartRunResult,
+  CaseType,
+  Priority,
   TargetKind,
   TestCase,
   TestCaseListData,
   TestResultRow,
   Verdict,
 } from "../api/types";
-import { Badge, Button, Card, Dialog, Empty, ErrorText, Notice, Select, Spinner, Table, Textarea } from "./ui";
+import { Badge, Button, Card, Dialog, Empty, ErrorText, Field, Input, Notice, Select, Spinner, Table, Textarea } from "./ui";
 import {
   ACTIVE_RUN_STATUSES,
   CASE_TYPE_LABEL,
@@ -30,9 +34,11 @@ import {
   FINDING_STATUSES,
   FINDING_STATUS_LABEL,
   FINDING_STATUS_TONE,
+  CASE_TYPES,
   PHASES,
   PHASE_LABEL,
   PHASE_TONE,
+  PRIORITIES,
   QUEUE_STATUS_LABEL,
   QUEUE_STATUS_TONE,
   RUN_STATUS_LABEL,
@@ -1153,12 +1159,59 @@ function RunSummary({ run, models }: { run: RunDetail; models: string[] }) {
           </span>
         ))}
       </div>
-      <p className="mt-2 text-xs text-gray-500">
-        使用的模型：{models.length ? models.join("、") : "-"}
-        {models.length > 1 && <span className="ml-1 text-amber-700">（過程中有切換 fallback）</span>}
-      </p>
+      <LlmUsageBlock usage={r.llmUsage} fallbackModels={models} />
       {r.pausedReason && <p className="mt-1 text-xs text-amber-700">曾經等待 LLM：{pauseReasonLabel(r.pausedReason)}</p>}
       {r.error && <p className="mt-1 text-xs text-red-600">{r.error}</p>}
+    </div>
+  );
+}
+
+/**
+ * §4.7 「使用的 model（含 fallback 切換紀錄）」. A run that quietly finished on the
+ * third config in the chain should not look like one that never faltered.
+ */
+function LlmUsageBlock({ usage, fallbackModels }: { usage: RunLlmUsage | null; fallbackModels: string[] }) {
+  const [open, setOpen] = useState(false);
+  if (!usage?.configs.length) {
+    return (
+      <p className="mt-2 text-xs text-gray-500">
+        使用的模型：{fallbackModels.length ? fallbackModels.join("、") : "-"}
+      </p>
+    );
+  }
+  const switches = usage.switches.length;
+  const outages = usage.outages.length;
+  return (
+    <div className="mt-2">
+      <div className="flex flex-wrap items-center gap-2 text-xs text-gray-500">
+        <span>
+          使用的模型：
+          {usage.configs.map((c) => `${c.configName}（${c.models.join("/") || "?"}，${c.calls} 次呼叫${c.failures ? `、${c.failures} 次失敗` : ""}）`).join("、")}
+        </span>
+        {(switches > 0 || outages > 0) && (
+          <button type="button" className="font-medium text-amber-700 hover:underline" onClick={() => setOpen((v) => !v)}>
+            {switches > 0 && `切換 fallback ${switches} 次`}
+            {switches > 0 && outages > 0 && "，"}
+            {outages > 0 && `全部不可用 ${outages} 次`}
+            {open ? "（收合）" : "（展開）"}
+          </button>
+        )}
+      </div>
+      {open && (
+        <ul className="mt-1 space-y-1 border-l-2 border-amber-200 pl-2">
+          {usage.switches.map((sw, i) => (
+            <li key={`s${i}`} className="text-xs text-gray-600">
+              {formatDate(sw.at)}　{sw.fromConfigName} → {sw.toConfigName}
+              <span className="ml-1 text-gray-400">（{sw.reason}）</span>
+            </li>
+          ))}
+          {usage.outages.map((o, i) => (
+            <li key={`o${i}`} className="text-xs text-amber-700">
+              {formatDate(o.at)}　全部設定都不可用，執行暫停等待：{o.reason}
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }
@@ -1280,6 +1333,18 @@ function ResultCase({
             )}
           </div>
 
+          {result?.evidence.video && (
+            <div>
+              <p className="mb-1 text-xs font-medium text-gray-500">錄影</p>
+              <video
+                controls
+                preload="metadata"
+                className="w-full rounded border border-gray-200 bg-black"
+                src={evidenceUrl(runId, result.evidence.video)}
+              />
+            </div>
+          )}
+
           {result && <HttpLogsBlock logs={result.evidence.httpLogs ?? []} />}
           {result && (result.evidence.evidenceRefs?.length ?? 0) > 0 && (
             <p className="text-xs text-gray-500">證據參照：{result.evidence.evidenceRefs!.join("、")}</p>
@@ -1344,6 +1409,112 @@ function ReviewControls({ result, onReviewed }: { result: TestResultRow; onRevie
       )}
       <ErrorText error={review.error} />
     </div>
+  );
+}
+
+/**
+ * §4.7: a finding turns into a test case in one click, but the model's draft is
+ * shown first. A finding is an observation; making it a permanent test is a
+ * decision, and the person making it should see what they are signing.
+ */
+function FindingToCaseDialog({
+  findingId,
+  onClose,
+  onSaved,
+}: {
+  findingId: string;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [draft, setDraft] = useState<FindingCaseDraft | null>(null);
+  const drafted = useMutation({
+    mutationFn: () => api<FindingCaseDraft>(`/findings/${findingId}/test-case/draft`, { method: "POST" }),
+    onSuccess: setDraft,
+  });
+  const save = useMutation({
+    mutationFn: (body: FindingCaseDraft) =>
+      api(`/findings/${findingId}/test-case`, {
+        method: "POST",
+        body: {
+          title: body.title,
+          precondition: body.precondition,
+          steps: body.steps,
+          expected: body.expected,
+          priority: body.priority,
+          type: body.type,
+          featureId: body.featureId,
+          featureName: body.featureName,
+        },
+      }),
+    onSuccess: onSaved,
+  });
+
+  useEffect(() => {
+    drafted.mutate();
+    // Drafting once per open is the point; re-running on every render is not.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [findingId]);
+
+  const patch = (fields: Partial<FindingCaseDraft>) => setDraft((d) => (d ? { ...d, ...fields } : d));
+
+  return (
+    <Dialog open title="把 finding 轉成測試案例" onClose={onClose}>
+      {drafted.isPending && <Spinner label="模型正在草擬案例…" />}
+      <ErrorText error={drafted.error} />
+      {draft && (
+        <div className="space-y-2">
+          <Field label="標題">
+            <Input value={draft.title} onChange={(e) => patch({ title: e.target.value })} />
+          </Field>
+          <Field label="前置條件">
+            <Input value={draft.precondition} onChange={(e) => patch({ precondition: e.target.value })} />
+          </Field>
+          <Field label="步驟" hint="一行一個步驟">
+            <Textarea
+              rows={5}
+              value={draft.steps.join("\n")}
+              onChange={(e) => patch({ steps: e.target.value.split("\n").map((x) => x.trim()).filter(Boolean) })}
+            />
+          </Field>
+          <Field label="預期結果" hint="寫「修好之後應該是什麼樣子」，不是重述錯誤">
+            <Textarea rows={2} value={draft.expected} onChange={(e) => patch({ expected: e.target.value })} />
+          </Field>
+          <div className="grid grid-cols-3 gap-2">
+            <Field label="優先級">
+              <Select value={draft.priority} onChange={(e) => patch({ priority: e.target.value as Priority })}>
+                {PRIORITIES.map((p) => (
+                  <option key={p} value={p}>{p}</option>
+                ))}
+              </Select>
+            </Field>
+            <Field label="類型">
+              <Select value={draft.type} onChange={(e) => patch({ type: e.target.value as CaseType })}>
+                {CASE_TYPES.map((t) => (
+                  <option key={t} value={t}>{CASE_TYPE_LABEL[t]}</option>
+                ))}
+              </Select>
+            </Field>
+            <Field label="所屬功能">
+              <Input
+                value={draft.featureName ?? ""}
+                onChange={(e) => patch({ featureName: e.target.value, featureId: null })}
+                placeholder="留空則不歸類"
+              />
+            </Field>
+          </div>
+          <p className="text-xs text-gray-400">由 {draft.model} 草擬，存檔前可以直接改。</p>
+          <div className="flex items-center gap-2">
+            <Button disabled={save.isPending} onClick={() => save.mutate(draft)}>
+              {save.isPending ? "建立中…" : "建立測試案例"}
+            </Button>
+            <Button variant="ghost" onClick={onClose}>
+              取消
+            </Button>
+          </div>
+          <ErrorText error={save.error} />
+        </div>
+      )}
+    </Dialog>
   );
 }
 
@@ -1488,11 +1659,22 @@ function FindingsPanel({
     mutationFn: (id: string) => api(`/findings/${id}/change-proposal`, { method: "POST" }),
     onSuccess: onChanged,
   });
+  const [drafting, setDrafting] = useState<string | null>(null);
 
   return (
     <div>
       <p className="mb-2 text-xs font-medium text-gray-500">Finding（{findings.length}）</p>
       <ErrorText error={setStatus.error} />
+      {drafting && (
+        <FindingToCaseDialog
+          findingId={drafting}
+          onClose={() => setDrafting(null)}
+          onSaved={() => {
+            setDrafting(null);
+            onChanged();
+          }}
+        />
+      )}
       {findings.length === 0 ? (
         <Empty>這次執行沒有額外發現。</Empty>
       ) : (
@@ -1526,7 +1708,7 @@ function FindingsPanel({
                       ))}
                     </Select>
                   </div>
-                  {f.status === "converted_to_proposal" ? (
+                  {f.convertedProposalId ? (
                     <Link to={`/targets/${targetId}?tab=changes`} className="text-xs text-blue-700 hover:underline">
                       看變更提案 →
                     </Link>
@@ -1534,10 +1716,19 @@ function FindingsPanel({
                     <Button
                       variant="secondary"
                       size="sm"
-                      disabled={propose.isPending}
+                      disabled={propose.isPending || !!f.convertedCaseId}
                       onClick={() => propose.mutate(f.id)}
                     >
                       {propose.isPending ? "分析中…" : "轉為變更提案"}
+                    </Button>
+                  )}
+                  {f.convertedCaseId ? (
+                    <Link to={`/targets/${targetId}?tab=cases`} className="text-xs text-blue-700 hover:underline">
+                      看測試案例 →
+                    </Link>
+                  ) : (
+                    <Button variant="secondary" size="sm" onClick={() => setDrafting(f.id)}>
+                      轉為測試案例
                     </Button>
                   )}
                 </div>

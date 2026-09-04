@@ -1,5 +1,5 @@
 import { Body, Controller, Get, Put, Query, UseGuards } from "@nestjs/common";
-import { IsInt, IsNumber, IsOptional, IsString, Min } from "class-validator";
+import { IsBoolean, IsInt, IsNumber, IsOptional, IsString, Min } from "class-validator";
 import { AdminAuthGuard } from "../auth/guards/admin-auth.guard";
 import { CurrentAdmin } from "../common/decorators";
 import type { AdminPrincipal } from "../common/types";
@@ -15,6 +15,7 @@ class SandboxSettingsDto {
   @IsOptional() @IsInt() @Min(1) maxStepsPerCase?: number;
   @IsOptional() @IsInt() @Min(5) stepTimeoutSec?: number;
   @IsOptional() @IsInt() @Min(1) retentionDays?: number;
+  @IsOptional() @IsBoolean() recordVideo?: boolean;
 }
 
 @Controller("admin")

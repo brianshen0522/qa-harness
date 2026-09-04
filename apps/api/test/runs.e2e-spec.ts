@@ -62,6 +62,16 @@ describe("test runs (e2e)", () => {
     return { calls: () => call };
   }
 
+  /** Answers the `test_case` schema, which is what drafting from a finding asks for. */
+  function stubCaseWriter(caseBody: Record<string, unknown>) {
+    const adapter: LlmProviderAdapter = {
+      async complete() {
+        return json({ schema_version: "1.0", cases: [caseBody] });
+      },
+    };
+    app.get(LlmGatewayService).setProviders({ anthropic: adapter, openai: adapter, ollama: adapter });
+  }
+
   const json = (body: unknown) => ({
     text: JSON.stringify(body),
     model: "stub-exec",
@@ -88,7 +98,7 @@ describe("test runs (e2e)", () => {
       data: {
         name: "stub", provider: "anthropic", model: "stub",
         purposes: ["discuss", "generate", "execute"], supportsVision: true,
-        fallbackEntries: { create: [{ purpose: "execute", order: 0 }] },
+        fallbackEntries: { create: [{ purpose: "execute", order: 0 }, { purpose: "generate", order: 0 }] },
       },
     });
 
@@ -233,6 +243,121 @@ describe("test runs (e2e)", () => {
     const updated = await api(app).post(`/api/findings/${findings.body[0].id}/status`).set("Cookie", editor)
       .send({ status: "dismissed" }).expect(201);
     expect(updated.body.status).toBe("dismissed");
+  }, 60_000);
+
+  it("turns a finding into a regression case after the reviewer confirms it (§4.7)", async () => {
+    stubModel((call) =>
+      call === 1
+        ? { type: "report_finding", params: { severity: "critical", title: "刪除後列表沒有更新", description: "刪掉的項目還在" } }
+        : null,
+    );
+    await api(app).post(`/api/targets/${targetId}/runs`).set("Cookie", editor)
+      .send({ caseIds: [caseIds[0]] }).expect(201);
+    const run = await waitForRun(["succeeded", "failed"]);
+    const finding = (await api(app).get(`/api/runs/${run.id}/findings`).set("Cookie", viewer).expect(200)).body[0];
+
+    // The model drafts; nothing is written yet.
+    const before = await prisma.testCase.count({ where: { targetId } });
+    stubCaseWriter({
+      feature_ref: "刪除待辦",
+      title: "刪除待辦後列表不應再顯示該項目",
+      precondition: "已建立一筆待辦",
+      steps: ["建立待辦", "刪除它", "重新讀取列表"],
+      expected: "列表裡沒有那一筆",
+      priority: "P0",
+      type: "negative",
+    });
+    const draft = await api(app).post(`/api/findings/${finding.id}/test-case/draft`)
+      .set("Cookie", editor).expect(201);
+    expect(draft.body.title).toContain("刪除待辦後");
+    expect(draft.body.steps).toHaveLength(3);
+    expect(await prisma.testCase.count({ where: { targetId } })).toBe(before);
+
+    // A viewer cannot draft or save.
+    await api(app).post(`/api/findings/${finding.id}/test-case/draft`).set("Cookie", viewer).expect(403);
+
+    // The reviewer edits before saving, and the edit is what lands.
+    const saved = await api(app).post(`/api/findings/${finding.id}/test-case`).set("Cookie", editor)
+      .send({ ...draft.body, expected: "列表裡沒有那一筆，且總數少一" }).expect(201);
+    expect(saved.body.source).toBe("finding");
+    expect(saved.body.expected).toBe("列表裡沒有那一筆，且總數少一");
+
+    const created = await prisma.testCase.findUniqueOrThrow({
+      where: { id: saved.body.id },
+      include: { feature: true, versions: true },
+    });
+    expect(created.feature?.name).toBe("刪除待辦");
+    expect(created.versions).toHaveLength(1);
+
+    const after = await prisma.runFinding.findUniqueOrThrow({ where: { id: finding.id } });
+    expect(after.status).toBe("converted_to_case");
+    expect(after.convertedCaseId).toBe(created.id);
+
+    // Converting the same finding twice would quietly duplicate the case.
+    await api(app).post(`/api/findings/${finding.id}/test-case`).set("Cookie", editor)
+      .send({ ...draft.body }).expect(400);
+  }, 60_000);
+
+  it("refuses a confirmed draft with no steps", async () => {
+    stubModel((call) =>
+      call === 1 ? { type: "report_finding", params: { severity: "minor", title: "小問題", description: "" } } : null,
+    );
+    await api(app).post(`/api/targets/${targetId}/runs`).set("Cookie", editor)
+      .send({ caseIds: [caseIds[0]] }).expect(201);
+    const run = await waitForRun(["succeeded", "failed"]);
+    const finding = (await api(app).get(`/api/runs/${run.id}/findings`).set("Cookie", viewer).expect(200)).body[0];
+    await api(app).post(`/api/findings/${finding.id}/test-case`).set("Cookie", editor)
+      .send({ title: "沒有步驟", steps: [], expected: "x" }).expect(400);
+  }, 60_000);
+
+  it("records which models served the run and where the chain fell over (§4.7)", async () => {
+    // A second config, so there is something to fall over to.
+    const second = await prisma.llmConfig.create({
+      data: {
+        name: "backup", provider: "openai", model: "stub-backup",
+        purposes: ["execute"], supportsVision: true,
+      },
+    });
+    await prisma.llmFallbackChain.create({ data: { purpose: "execute", llmConfigId: second.id, order: 1 } });
+
+    let firstCalls = 0;
+    const flaky: LlmProviderAdapter = {
+      async complete(cfg, req) {
+        // The primary fails the first call of the run, then behaves.
+        if (cfg.model !== "stub-backup" && firstCalls++ === 0) {
+          throw new LlmProviderError("server", "primary is having a moment", 502);
+        }
+        if (req.jsonSchema?.name === "case_verdict") {
+          return json({
+            schema_version: "1.0", verdict: "pass", reasoning: "ok",
+            evidence_refs: [], repro_steps: [], possibly_changed: false,
+          });
+        }
+        return json({
+          schema_version: "1.0", phase: "judging", observation: "看完了", intent: "收工",
+          action: { type: "done", params: { summary: "做完了" } },
+        });
+      },
+    };
+    app.get(LlmGatewayService).setProviders({ anthropic: flaky, openai: flaky, ollama: flaky });
+
+    await api(app).post(`/api/targets/${targetId}/runs`).set("Cookie", editor)
+      .send({ caseIds: [caseIds[0]] }).expect(201);
+    const run = await waitForRun(["succeeded", "failed"]);
+
+    const detail = await api(app).get(`/api/runs/${run.id}`).set("Cookie", viewer).expect(200);
+    const usage = detail.body.run.llmUsage;
+    expect(usage.configs.length).toBeGreaterThanOrEqual(2);
+    expect(usage.configs.find((c: { configName: string }) => c.configName === "backup").calls).toBeGreaterThan(0);
+    expect(usage.switches.length).toBeGreaterThanOrEqual(1);
+    expect(usage.switches[0]).toMatchObject({ toConfigName: "backup" });
+    expect(usage.switches[0].reason).toContain("moment");
+
+    await prisma.llmFallbackChain.deleteMany({ where: { llmConfigId: second.id } });
+    await prisma.llmConfig.delete({ where: { id: second.id } });
+    // The primary took a failure on purpose; clear it so later tests start clean.
+    const primary = await prisma.llmConfig.findFirstOrThrow({ where: { name: "stub" } });
+    await app.get(LlmHealthService).resetAfterEdit(primary.id);
   }, 60_000);
 
   it("stops a case at the step cap and blocks it rather than looping", async () => {
@@ -408,6 +533,10 @@ describe("test runs (e2e)", () => {
       data: { endedAt: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000) },
     });
     await prisma.runStep.updateMany({ where: { runId: run.id }, data: { screenshotKey: "runs/x/y.png" } });
+    await prisma.testResult.updateMany({
+      where: { runId: run.id },
+      data: { evidence: { screenshots: ["runs/x/1.png"], video: "runs/x/rec.mp4", httpLogs: [{ method: "GET" }] } },
+    });
 
     const swept = await app.get(RetentionService).sweep();
     expect(swept.runs).toBeGreaterThanOrEqual(1);
@@ -419,6 +548,13 @@ describe("test runs (e2e)", () => {
     expect(steps.every((s) => s.screenshotKey === null)).toBe(true);
     const results = await prisma.testResult.findMany({ where: { runId: run.id } });
     expect(results.length).toBeGreaterThan(0); // so do the verdicts
+    // The keys go with the objects: a dead link is worse than an empty list.
+    for (const r of results) {
+      const evidence = r.evidence as { screenshots: string[]; video: string | null; httpLogs: unknown[] };
+      expect(evidence.screenshots).toEqual([]);
+      expect(evidence.video).toBeNull();
+      expect(evidence.httpLogs).toHaveLength(1); // small, and most verdicts rest on it
+    }
 
     // A second sweep does not redo work already done.
     expect((await app.get(RetentionService).sweep()).runs).toBe(0);

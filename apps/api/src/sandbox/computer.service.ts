@@ -16,6 +16,8 @@ export interface ActionResult {
 export const CONTAINER_ACTIONS: ReadonlySet<string> = new Set([
   "screenshot", "click", "double_click", "right_click", "move",
   "type", "key", "scroll", "navigate", "run_command", "cursor",
+  // Driven by the worker around a case, never proposed by the model.
+  "record_start", "record_stop",
 ]);
 
 /** Actions the worker resolves without touching the container. */
@@ -37,6 +39,35 @@ export class ComputerService {
 
   async screenshot(port: number): Promise<ActionResult> {
     return this.perform(port, "screenshot", {});
+  }
+
+  /**
+   * Screen recording for the case being executed (§4.7 錄影). Failures are
+   * reported, never thrown: losing the video must not take the case with it.
+   */
+  async startRecording(port: number, fps = 5): Promise<ActionResult> {
+    return this.perform(port, "record_start", { fps }, 15_000);
+  }
+
+  async stopRecording(port: number): Promise<ActionResult> {
+    return this.perform(port, "record_stop", {}, 40_000);
+  }
+
+  /** Pulls the finished mp4 out of the container. Null when there is nothing to fetch. */
+  async fetchRecording(port: number, timeoutMs = 120_000): Promise<Buffer | null> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const res = await fetch(`http://127.0.0.1:${port}/recording`, { signal: controller.signal });
+      if (!res.ok) return null;
+      const buf = Buffer.from(await res.arrayBuffer());
+      return buf.byteLength ? buf : null;
+    } catch (err) {
+      this.log.warn(`failed to fetch recording: ${(err as Error).message}`);
+      return null;
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   /** Run one action. Agent errors come back as `ok: false`, not as a throw. */

@@ -10,6 +10,7 @@ import base64
 import json
 import os
 import shlex
+import signal
 import subprocess
 import threading
 import time
@@ -23,6 +24,12 @@ SETTLE_MS = int(os.environ.get("ACTION_SETTLE_MS", "350"))
 
 ENV = {**os.environ, "DISPLAY": DISPLAY}
 _lock = threading.Lock()
+
+RECORDING_PATH = "/tmp/recording.mp4"
+# A runaway recorder would fill the container's disk; a case that runs this long
+# has other problems anyway.
+RECORDING_MAX_SEC = int(os.environ.get("RECORDING_MAX_SEC", "1800"))
+_recorder = {"proc": None, "started": 0.0}
 
 
 def run(argv, timeout=20):
@@ -158,6 +165,59 @@ def act_run_command(p):
     }
 
 
+def _stop_recorder(timeout=20):
+    """SIGINT rather than kill: ffmpeg needs it to write the moov atom, and an
+    mp4 without one will not play."""
+    proc = _recorder.get("proc")
+    if proc is None:
+        return None
+    try:
+        proc.send_signal(signal.SIGINT)
+        proc.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            pass
+    finally:
+        _recorder["proc"] = None
+    return proc
+
+
+def act_record_start(p):
+    _stop_recorder()
+    if os.path.exists(RECORDING_PATH):
+        os.remove(RECORDING_PATH)
+    fps = clamp(p.get("fps") or 5, 1, 30)
+    argv = [
+        "ffmpeg", "-nostdin", "-y",
+        "-f", "x11grab", "-video_size", f"{WIDTH}x{HEIGHT}", "-framerate", str(fps),
+        "-i", DISPLAY, "-t", str(RECORDING_MAX_SEC),
+        # yuv420p is what browsers can play, and it needs even dimensions.
+        "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2",
+        "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
+        "-movflags", "+faststart",
+        RECORDING_PATH,
+    ]
+    log = open("/tmp/ffmpeg.log", "wb")
+    proc = subprocess.Popen(argv, env=ENV, stdin=subprocess.DEVNULL, stdout=log, stderr=log)
+    _recorder.update(proc=proc, started=time.time())
+    return {"recording": True, "fps": fps}
+
+
+def act_record_stop(_):
+    started = _recorder.get("started") or time.time()
+    proc = _stop_recorder()
+    size = os.path.getsize(RECORDING_PATH) if os.path.exists(RECORDING_PATH) else 0
+    return {
+        "recording": False,
+        "was_recording": proc is not None,
+        "bytes": size,
+        "duration_ms": int((time.time() - started) * 1000),
+    }
+
+
 def act_cursor(_):
     out = xdo("getmouselocation", "--shell")
     vals = dict(line.split("=", 1) for line in out.strip().splitlines() if "=" in line)
@@ -176,6 +236,8 @@ ACTIONS = {
     "navigate": act_navigate,
     "run_command": act_run_command,
     "cursor": act_cursor,
+    "record_start": act_record_start,
+    "record_stop": act_record_stop,
 }
 
 
@@ -193,12 +255,32 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _send_file(self, path, content_type):
+        if not os.path.exists(path):
+            return self._send(404, {"ok": False, "error": "no recording"})
+        size = os.path.getsize(path)
+        self.send_response(200)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(size))
+        self.end_headers()
+        with open(path, "rb") as fh:
+            while True:
+                chunk = fh.read(1 << 20)
+                if not chunk:
+                    break
+                self.wfile.write(chunk)
+
     def do_GET(self):
+        if self.path.rstrip("/") == "/recording":
+            # Streamed rather than base64'd into JSON: a few minutes of screen is
+            # tens of megabytes, and the worker only needs the bytes.
+            return self._send_file(RECORDING_PATH, "video/mp4")
         if self.path.rstrip("/") in ("/health", ""):
             healthy = subprocess.run(["xdpyinfo"], env=ENV, capture_output=True).returncode == 0
             return self._send(200 if healthy else 503, {
                 "ok": healthy, "display": DISPLAY, "width": WIDTH, "height": HEIGHT,
                 "actions": sorted(ACTIONS),
+                "recording": _recorder.get("proc") is not None,
             })
         return self._send(404, {"ok": False, "error": "not found"})
 

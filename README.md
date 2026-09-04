@@ -14,7 +14,7 @@
 | 6. 變更管理（提案 → 逐項接受 → 套用 → 時間軸） | ✅ |
 | 7. Sandbox Manager + 容器 image + noVNC 串流 | ✅ |
 | 8. Agent Worker + web 類型執行 + 執行中頁面（進度、Finding、即時編輯） | ✅ |
-| 9. 結果頁 + 人工覆核 | ⬜ |
+| 9. 結果頁 + 人工覆核 + 被動偵測 + Finding 轉換 | ✅ |
 | 10. desktop、skills / MCP、用量、增量 Handoff | ⬜ |
 
 ## 結構
@@ -36,7 +36,7 @@ npm run infra:up                # 起 db / redis / minio
 npm run build -w packages/schemas
 npm run db:migrate              # prisma migrate dev
 npm run db:seed                 # 建立 ADMIN_EMAIL / ADMIN_PASSWORD 的 admin
-docker build -t qa-harness-sandbox:0.1 docker/sandbox   # sandbox 桌面 image
+docker build -t qa-harness-sandbox:0.2 docker/sandbox   # sandbox 桌面 image
 npm run dev:api                 # http://localhost:3001/api
 npm run dev:web                 # http://localhost:5173
 ```
@@ -82,6 +82,24 @@ Target 頁的「測試清單」分頁可以一鍵生成，過程以 SSE 串到�
 5. **寫入**：`features` 與 `test_cases`，每條案例同時建立第 1 版。`replace` 只清掉先前生成的案例，手寫的一律保留。
 
 Target 設定裡若含 `Authorization` 之類的欄位，送進模型前會遮蔽。每次編輯案例都會寫一個新版本，可回溯。
+
+## 結果頁（§4.7）
+
+Target 頁的「執行」分頁下半部就是結果頁，選一次執行來看。
+
+- **總覽**：pass / fail / blocked / skipped 數、耗時、步數，以及「使用的 model」—— 不只是名字，還包含這次執行實際用了哪幾組設定、各打了幾次、失敗幾次，以及每一次 fallback 切換的時間、從哪一組換到哪一組、為什麼。整條鏈都掛掉而暫停等待的時刻也記在同一份紀錄裡。悄悄用第三組設定跑完的執行，不該看起來跟一路順利的一樣。
+- **依 feature 的通過率**：哪個功能整片紅一眼就看得出來。
+- **每條 case**：模型判定與理由、重現步驟、步驟時間軸（每步的意圖、觀察、動作、耗時、截圖與用的 model）、**錄影**、HTTP log（憑證已遮蔽）。
+- **人工覆核**：`human_verdict` 和模型判定並排，不覆蓋。兩邊不一致時明確標示出來。
+- **一鍵重跑失敗的案例**。
+- 判定為 `possibly_changed` 的失敗會浮出「建立變更提案」，直接進 §4.4 的流程。
+- **Finding** 可以轉成變更提案，或轉成測試案例，或標記忽略。
+
+**錄影**。sandbox 容器裡用 ffmpeg 抓 X display（5 fps、x264 ultrafast、yuv420p），一條 case 一段，判定前就停 —— 判定那幾秒畫面上什麼都沒發生，錄進去只是浪費。停止用 SIGINT 而不是 kill，不然 mp4 少了 moov atom 就播不出來。實測一段 17 秒的操作約 80KB。錄影失敗只會少一段影片，不會影響案例本身；Admin → Sandbox → 設定可以整個關掉。
+
+**Finding → 測試案例**。模型先草擬（要驗的是「修好之後應該長怎樣」，不是重述錯誤），人看過、可以直接改，按下去才寫進測試清單，`source` 記成 `finding`。同一個 finding 不會被轉兩次。
+
+**保留期到了**之後截圖和錄影會被刪掉，`test_results.evidence` 裡指向它們的 key 也會一併清掉 —— 留著死連結比留著空清單糟。逐字的執行過程和判定都留著。
 
 ## 變更管理（§4.4）
 

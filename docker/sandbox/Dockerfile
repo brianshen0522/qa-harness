@@ -10,6 +10,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
       xvfb x11vnc openbox xdotool scrot x11-utils xauth \
+      ffmpeg \
       novnc websockify \
       chromium \
       python3 \

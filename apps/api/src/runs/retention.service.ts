@@ -1,4 +1,5 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from "@nestjs/common";
+import type { Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { EvidenceService } from "./evidence.service";
 
@@ -46,9 +47,21 @@ export class RetentionService implements OnModuleInit, OnModuleDestroy {
       let objects = 0;
       for (const run of expired) {
         objects += await this.evidence.deleteRun(run.id);
+        // The result rows point at those objects; leaving the keys behind would
+        // give the results page dead links instead of an honest "已清除".
+        const results = await this.prisma.testResult.findMany({
+          where: { runId: run.id },
+          select: { id: true, evidence: true },
+        });
         await this.prisma.$transaction([
           // The transcript stays; only the bulky artefacts go.
           this.prisma.runStep.updateMany({ where: { runId: run.id }, data: { screenshotKey: null } }),
+          ...results.map((r) =>
+            this.prisma.testResult.update({
+              where: { id: r.id },
+              data: { evidence: strippedEvidence(r.evidence) },
+            }),
+          ),
           this.prisma.testRun.update({ where: { id: run.id }, data: { evidencePurgedAt: new Date() } }),
         ]);
       }
@@ -63,4 +76,10 @@ export class RetentionService implements OnModuleInit, OnModuleDestroy {
       this.sweeping = false;
     }
   }
+}
+
+/** Keeps the HTTP log — it is small and it is what most verdicts rest on. */
+function strippedEvidence(evidence: Prisma.JsonValue): Prisma.InputJsonValue {
+  const obj = (evidence ?? {}) as Record<string, unknown>;
+  return { ...obj, screenshots: [], video: null } as Prisma.InputJsonValue;
 }

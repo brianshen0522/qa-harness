@@ -274,15 +274,17 @@ model LlmCallLog {
 // ---------- Sandbox / Audit ----------
 
 model SandboxSettings {
-  id              Int    @id @default(1)
-  image           String @default("qa-harness-sandbox:0.1")
-  cpu             Float  @default(2)
-  memoryMb        Int    @default(4096) @map("memory_mb")
-  resolution      String @default("1280x800")
-  maxConcurrent   Int    @default(2) @map("max_concurrent")
-  maxStepsPerCase Int    @default(60) @map("max_steps_per_case")
-  stepTimeoutSec  Int    @default(60) @map("step_timeout")
-  retentionDays   Int    @default(30) @map("retention_days")
+  id              Int     @id @default(1)
+  image           String  @default("qa-harness-sandbox:0.2")
+  cpu             Float   @default(2)
+  memoryMb        Int     @default(4096) @map("memory_mb")
+  resolution      String  @default("1280x800")
+  maxConcurrent   Int     @default(2) @map("max_concurrent")
+  maxStepsPerCase Int     @default(60) @map("max_steps_per_case")
+  stepTimeoutSec  Int     @default(60) @map("step_timeout")
+  retentionDays   Int     @default(30) @map("retention_days")
+  /// Record the screen for each case. Off makes runs cheaper on disk (§4.7 錄影).
+  recordVideo     Boolean @default(true) @map("record_video")
 
   @@map("sandbox_settings")
 }
@@ -486,6 +488,7 @@ enum CaseSource {
   generated
   manual
   change_proposal
+  finding
 }
 
 /// active runs by default; outdated needs review after a change; deprecated is history.
@@ -612,6 +615,9 @@ model TestRun {
 
   /// Which LLM configs were in play, captured when the run started.
   llmConfigSnapshot Json?     @map("llm_config_snapshot")
+  /// What was actually used: calls and failures per config, plus every moment
+  /// the chain fell over to the next one (§4.7 「含 fallback 切換紀錄」).
+  llmUsage          Json?     @map("llm_usage")
   stepCount         Int       @default(0) @map("step_count")
   inputTokens       Int       @default(0) @map("input_tokens")
   outputTokens      Int       @default(0) @map("output_tokens")
@@ -733,16 +739,19 @@ enum FindingStatus {
 
 /// Something wrong noticed during a run that is not about the case being tested (§4.5).
 model RunFinding {
-  id          String        @id @default(uuid())
-  runId       String        @map("run_id")
-  testCaseId  String?       @map("test_case_id")
-  severity    Severity
-  title       String
-  description String        @default("")
-  evidence    Json          @default("{}")
-  featureId   String?       @map("related_feature_id")
-  status      FindingStatus @default(open)
-  createdAt   DateTime      @default(now()) @map("created_at")
+  id                  String        @id @default(uuid())
+  runId               String        @map("run_id")
+  testCaseId          String?       @map("test_case_id")
+  severity            Severity
+  title               String
+  description         String        @default("")
+  evidence            Json          @default("{}")
+  featureId           String?       @map("related_feature_id")
+  status              FindingStatus @default(open)
+  /// What this finding turned into, so the results page can link to it.
+  convertedCaseId     String?       @map("converted_case_id")
+  convertedProposalId String?       @map("converted_proposal_id")
+  createdAt           DateTime      @default(now()) @map("created_at")
 
   run     TestRun  @relation(fields: [runId], references: [id], onDelete: Cascade)
   feature Feature? @relation(fields: [featureId], references: [id], onDelete: SetNull)

@@ -69,6 +69,11 @@ export class EvidenceService implements OnModuleInit {
     return this.put(key, Buffer.from(base64, "base64"), "image/png");
   }
 
+  /** The screen recording for one case (§4.7 錄影). */
+  async putVideo(runId: string, caseId: string, body: Buffer): Promise<StoredEvidence | null> {
+    return this.put(`runs/${runId}/${caseId}/recording.mp4`, body, "video/mp4");
+  }
+
   async putJson(runId: string, name: string, value: unknown): Promise<StoredEvidence | null> {
     const key = `runs/${runId}/${name}.json`;
     return this.put(key, Buffer.from(JSON.stringify(value, null, 2)), "application/json");

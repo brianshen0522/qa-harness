@@ -961,9 +961,10 @@ function LogViewer({ instance }: { instance: SandboxInstance }) {
 
 /* ------------------------------------------------------------------ 設定 */
 
-type Draft = Record<keyof SandboxSettings, string>;
+/** Text fields only; the one boolean setting is kept beside this as a checkbox. */
+type Draft = Record<Exclude<keyof SandboxSettings, "recordVideo">, string>;
 
-const FIELDS: { key: keyof SandboxSettings; label: string; type: "text" | "number"; hint?: string }[] = [
+const FIELDS: { key: Exclude<keyof SandboxSettings, "recordVideo">; label: string; type: "text" | "number"; hint?: string }[] = [
   { key: "image", label: "容器 Image", type: "text", hint: "例如 ghcr.io/anthropics/computer-use-demo:latest" },
   { key: "cpu", label: "CPU（核心數）", type: "number" },
   { key: "memoryMb", label: "記憶體（MB）", type: "number" },
@@ -982,9 +983,13 @@ function SettingsTab() {
   const qc = useQueryClient();
   const settings = useQuery({ queryKey: ["admin", "sandbox"], queryFn: () => api<SandboxSettings>("/admin/sandbox") });
   const [draft, setDraft] = useState<Draft | null>(null);
+  const [recordVideo, setRecordVideo] = useState(true);
 
   useEffect(() => {
-    if (settings.data) setDraft(toDraft(settings.data));
+    if (settings.data) {
+      setDraft(toDraft(settings.data));
+      setRecordVideo(settings.data.recordVideo);
+    }
   }, [settings.data]);
 
   const save = useMutation({
@@ -998,7 +1003,7 @@ function SettingsTab() {
   const submit = (e: FormEvent) => {
     e.preventDefault();
     if (!draft) return;
-    const body: Record<string, string | number> = {};
+    const body: Record<string, string | number | boolean> = { recordVideo };
     for (const f of FIELDS) {
       const raw = draft[f.key].trim();
       body[f.key] = f.type === "number" ? Number(raw) : raw;
@@ -1006,7 +1011,11 @@ function SettingsTab() {
     save.mutate(body as unknown as SandboxSettings);
   };
 
-  const dirty = settings.data && draft ? JSON.stringify(draft) !== JSON.stringify(toDraft(settings.data)) : false;
+  const dirty =
+    settings.data && draft
+      ? JSON.stringify(draft) !== JSON.stringify(toDraft(settings.data)) ||
+        recordVideo !== settings.data.recordVideo
+      : false;
 
   return (
     <Card>
@@ -1027,12 +1036,32 @@ function SettingsTab() {
               </Field>
             ))}
           </div>
+          <label className="flex items-start gap-2">
+            <input
+              type="checkbox"
+              className="mt-1"
+              checked={recordVideo}
+              onChange={(e) => setRecordVideo(e.target.checked)}
+            />
+            <span>
+              <span className="block text-sm text-gray-800">錄影</span>
+              <span className="block text-xs text-gray-500">
+                每條 case 各錄一段畫面，附在結果頁。關掉可以省下不少磁碟；截圖不受影響。
+              </span>
+            </span>
+          </label>
           <div className="flex items-center gap-2">
             <Button type="submit" disabled={!dirty || save.isPending}>
               {save.isPending ? "儲存中…" : "儲存"}
             </Button>
             {dirty && settings.data && (
-              <Button variant="ghost" onClick={() => setDraft(toDraft(settings.data))}>
+              <Button
+              variant="ghost"
+              onClick={() => {
+                setDraft(toDraft(settings.data));
+                setRecordVideo(settings.data.recordVideo);
+              }}
+            >
                 還原
               </Button>
             )}

@@ -240,6 +240,7 @@ export interface SandboxSettings {
   maxStepsPerCase: number;
   stepTimeoutSec: number;
   retentionDays: number;
+  recordVideo: boolean;
 }
 
 export interface AuditEntry {
@@ -721,6 +722,8 @@ export interface HttpLog {
 /** What a result carries as proof; keys are resolved through the evidence endpoint. */
 export interface ResultEvidence {
   screenshots?: string[];
+  /** Object key of the case's screen recording (§4.7 錄影); null for api runs. */
+  video?: string | null;
   httpLogs?: HttpLog[];
   evidenceRefs?: string[];
 }
@@ -765,8 +768,25 @@ export interface RunFindingRow {
   title: string;
   description: string;
   status: FindingStatus;
+  /** What the finding turned into, when someone converted it (§4.7). */
+  convertedCaseId: string | null;
+  convertedProposalId: string | null;
   createdAt: string;
   feature: { id: string; name: string } | null;
+}
+
+/** A regression case drafted from a finding, before anyone has saved it. */
+export interface FindingCaseDraft {
+  findingId: string;
+  model: string;
+  title: string;
+  precondition: string;
+  steps: string[];
+  expected: string;
+  priority: Priority;
+  type: CaseType;
+  featureId: string | null;
+  featureName: string | null;
 }
 
 /** One row of the run's queue, with the case as it was used and its result. */
@@ -815,6 +835,9 @@ export interface RunDetail {
     triggeredById: string;
     startedAt: string;
     endedAt: string | null;
+    /** Which configs served the run, and where the chain fell over (§4.7). */
+    llmUsage: RunLlmUsage | null;
+    evidencePurgedAt: string | null;
     myRole: Role;
     target: { id: string; name: string; kind: TargetKind; projectId: string };
   };
@@ -822,6 +845,13 @@ export interface RunDetail {
   cases: RunCase[];
   findings: RunFindingRow[];
   features: RunFeatureRate[];
+}
+
+export interface RunLlmUsage {
+  configs: { configId: string; configName: string; models: string[]; calls: number; failures: number }[];
+  switches: { at: string; fromConfigName: string; toConfigName: string; reason: string; caseId: string | null }[];
+  /** Every time the whole chain was exhausted and the run had to wait. */
+  outages: { at: string; reason: string; caseId: string | null }[];
 }
 
 /** `GET /runs/:runId/steps` — the persisted step rows, in sequence. */

@@ -1,0 +1,19 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "qa-harness/case_verdict",
+  "title": "case_verdict",
+  "description": "Final verdict for one test case in a run.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "verdict", "reasoning", "evidence_refs", "repro_steps", "possibly_changed"],
+  "properties": {
+    "schema_version": { "type": "string", "const": "1.0" },
+    "verdict": { "type": "string", "enum": ["pass", "fail", "blocked", "skipped"] },
+    "reasoning": { "type": "string", "minLength": 1 },
+    "evidence_refs": { "type": "array", "items": { "type": "string" } },
+    "repro_steps": { "type": "array", "items": { "type": "string" } },
+    "possibly_changed": { "type": "boolean" }
+  },
+  "if": { "properties": { "verdict": { "const": "fail" } } },
+  "then": { "properties": { "repro_steps": { "minItems": 1 } } }
+}

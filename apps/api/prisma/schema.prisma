@@ -1,0 +1,273 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------- Accounts ----------
+
+enum UserStatus {
+  active
+  disabled
+}
+
+model User {
+  id           String     @id @default(uuid())
+  email        String     @unique
+  name         String
+  authProvider String     @map("auth_provider")
+  status       UserStatus @default(active)
+  createdAt    DateTime   @default(now()) @map("created_at")
+
+  teamMemberships   TeamMember[]
+  projectMemberships ProjectMember[]
+  targetMemberships  TargetMember[]
+  createdProjects    Project[]
+
+  @@map("users")
+}
+
+model Admin {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  passwordHash String   @map("password_hash")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  @@map("admins")
+}
+
+// ---------- Team / Project ----------
+
+model Team {
+  id        String   @id @default(uuid())
+  name      String
+  createdAt DateTime @default(now()) @map("created_at")
+
+  members  TeamMember[]
+  projects Project[]
+
+  @@map("teams")
+}
+
+model TeamMember {
+  teamId String @map("team_id")
+  userId String @map("user_id")
+  team   Team   @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([teamId, userId])
+  @@map("team_members")
+}
+
+enum Role {
+  viewer
+  editor
+  owner
+}
+
+enum DescriptionSource {
+  manual
+  discussion
+  handoff
+}
+
+model Project {
+  id                 String   @id @default(uuid())
+  teamId             String   @map("team_id")
+  name               String
+  description        String   @default("")
+  descriptionVersion Int      @default(0) @map("description_version")
+  createdById        String   @map("created_by")
+  createdAt          DateTime @default(now()) @map("created_at")
+  updatedAt          DateTime @updatedAt @map("updated_at")
+
+  team                Team                        @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  createdBy           User                        @relation(fields: [createdById], references: [id])
+  members             ProjectMember[]
+  targets             QaTarget[]
+  descriptionVersions ProjectDescriptionVersion[]
+
+  @@map("projects")
+}
+
+model ProjectDescriptionVersion {
+  id        String            @id @default(uuid())
+  projectId String            @map("project_id")
+  version   Int
+  content   String
+  source    DescriptionSource
+  createdBy String            @map("created_by")
+  createdAt DateTime          @default(now()) @map("created_at")
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, version])
+  @@map("project_description_versions")
+}
+
+model ProjectMember {
+  projectId String @map("project_id")
+  userId    String @map("user_id")
+  role      Role
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([projectId, userId])
+  @@map("project_members")
+}
+
+// ---------- QA Target ----------
+
+enum TargetKind {
+  api
+  web
+  desktop
+}
+
+enum TargetStatus {
+  idle
+  running
+}
+
+model QaTarget {
+  id                 String       @id @default(uuid())
+  projectId          String       @map("project_id")
+  name               String
+  kind               TargetKind
+  config             Json         @default("{}")
+  description        String       @default("")
+  descriptionVersion Int          @default(0) @map("description_version")
+  status             TargetStatus @default(idle)
+  createdAt          DateTime     @default(now()) @map("created_at")
+  updatedAt          DateTime     @updatedAt @map("updated_at")
+
+  project     Project            @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  credentials TargetCredential[]
+  members     TargetMember[]
+
+  @@map("qa_targets")
+}
+
+model TargetCredential {
+  targetId       String @map("target_id")
+  key            String
+  encryptedValue String @map("encrypted_value")
+
+  target QaTarget @relation(fields: [targetId], references: [id], onDelete: Cascade)
+
+  @@id([targetId, key])
+  @@map("qa_target_credentials")
+}
+
+/// Role override — only ever >= the member's project role (enforced in service layer).
+model TargetMember {
+  targetId String @map("target_id")
+  userId   String @map("user_id")
+  role     Role
+
+  target QaTarget @relation(fields: [targetId], references: [id], onDelete: Cascade)
+  user   User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([targetId, userId])
+  @@map("qa_target_members")
+}
+
+// ---------- LLM ----------
+
+enum LlmProvider {
+  anthropic
+  openai
+  ollama
+}
+
+enum LlmPurpose {
+  discuss
+  generate
+  execute
+}
+
+model LlmConfig {
+  id              String       @id @default(uuid())
+  name            String
+  provider        LlmProvider
+  endpoint        String?
+  apiKeyEncrypted String?      @map("api_key")
+  model           String
+  purposes        LlmPurpose[]
+  supportsVision  Boolean      @default(false) @map("supports_vision")
+  enabled         Boolean      @default(true)
+  createdAt       DateTime     @default(now()) @map("created_at")
+  updatedAt       DateTime     @updatedAt @map("updated_at")
+
+  fallbackEntries LlmFallbackChain[]
+
+  @@map("llm_configs")
+}
+
+model LlmFallbackChain {
+  purpose     LlmPurpose
+  llmConfigId String     @map("llm_config_id")
+  order       Int
+
+  llmConfig LlmConfig @relation(fields: [llmConfigId], references: [id], onDelete: Cascade)
+
+  @@id([purpose, llmConfigId])
+  @@map("llm_fallback_chains")
+}
+
+/// One row per LLM call, for usage accounting and debugging fallbacks.
+model LlmCallLog {
+  id           String   @id @default(uuid())
+  purpose      LlmPurpose
+  schemaName   String?  @map("schema_name")
+  llmConfigId  String?  @map("llm_config_id")
+  model        String
+  attempt      Int
+  outcome      String   // ok | invalid_output | provider_error | timeout | rate_limit
+  errorMessage String?  @map("error_message")
+  rawOutput    String?  @map("raw_output")
+  inputTokens  Int?     @map("input_tokens")
+  outputTokens Int?     @map("output_tokens")
+  durationMs   Int      @map("duration_ms")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  @@map("llm_call_logs")
+}
+
+// ---------- Sandbox / Audit ----------
+
+model SandboxSettings {
+  id              Int    @id @default(1)
+  image           String @default("ghcr.io/anthropics/anthropic-quickstarts:computer-use-demo-latest")
+  cpu             Float  @default(2)
+  memoryMb        Int    @default(4096) @map("memory_mb")
+  resolution      String @default("1280x800")
+  maxConcurrent   Int    @default(2) @map("max_concurrent")
+  maxStepsPerCase Int    @default(60) @map("max_steps_per_case")
+  stepTimeoutSec  Int    @default(60) @map("step_timeout")
+  retentionDays   Int    @default(30) @map("retention_days")
+
+  @@map("sandbox_settings")
+}
+
+enum ActorType {
+  admin
+  user
+}
+
+model AuditLog {
+  id        String    @id @default(uuid())
+  actorType ActorType @map("actor_type")
+  actorId   String    @map("actor_id")
+  action    String
+  target    String?
+  payload   Json?
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  @@index([createdAt])
+  @@map("audit_logs")
+}

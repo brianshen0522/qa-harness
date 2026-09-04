@@ -1,0 +1,27 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "qa-harness/execution_step",
+  "title": "execution_step",
+  "description": "One agent step while executing a test case.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "phase", "action", "intent", "observation"],
+  "properties": {
+    "schema_version": { "type": "string", "const": "1.0" },
+    "phase": { "type": "string", "enum": ["setup", "executing", "verifying", "judging"] },
+    "action": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "params"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["screenshot", "click", "double_click", "right_click", "type", "key", "scroll", "move", "wait", "http_request", "navigate", "run_command", "done"]
+        },
+        "params": { "type": "object", "additionalProperties": true }
+      }
+    },
+    "intent": { "type": "string" },
+    "observation": { "type": "string" }
+  }
+}

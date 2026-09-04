@@ -1,0 +1,45 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "qa-harness/change_proposal",
+  "title": "change_proposal",
+  "description": "Structured change proposal produced by the LLM. Never applied automatically.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "summary", "description_diff", "feature_changes", "test_case_changes"],
+  "properties": {
+    "schema_version": { "type": "string", "const": "1.0" },
+    "summary": { "type": "string" },
+    "description_diff": { "type": "string", "description": "Unified diff of the description, or empty string." },
+    "feature_changes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["op", "reason"],
+        "properties": {
+          "op": { "type": "string", "enum": ["add", "modify", "remove"] },
+          "feature_id": { "type": ["string", "null"] },
+          "name": { "type": "string" },
+          "description": { "type": "string" },
+          "reason": { "type": "string" }
+        }
+      }
+    },
+    "test_case_changes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["op", "reason"],
+        "properties": {
+          "op": { "type": "string", "enum": ["add", "modify", "mark_outdated", "deprecate"] },
+          "case_id": { "type": ["string", "null"] },
+          "feature_ref": { "type": "string" },
+          "before": { "type": ["object", "null"], "additionalProperties": true },
+          "after": { "type": ["object", "null"], "additionalProperties": true },
+          "reason": { "type": "string" }
+        }
+      }
+    }
+  }
+}

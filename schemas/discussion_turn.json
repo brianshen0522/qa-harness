@@ -1,0 +1,55 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "qa-harness/discussion_turn",
+  "title": "discussion_turn",
+  "description": "One LLM turn in the guided discussion for a Project or Target.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "message", "questions", "draft_patch", "completeness", "target_proposals"],
+  "properties": {
+    "schema_version": { "type": "string", "const": "1.0" },
+    "message": { "type": "string", "description": "Reply shown to the user (markdown)." },
+    "questions": {
+      "type": "array",
+      "maxItems": 3,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["item", "question"],
+        "properties": {
+          "item": { "type": "string", "description": "Checklist item key this question clarifies." },
+          "question": { "type": "string" }
+        }
+      }
+    },
+    "draft_patch": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "content"],
+      "properties": {
+        "mode": { "type": "string", "enum": ["none", "replace", "append"] },
+        "content": { "type": "string", "description": "Markdown to replace or append to the draft description." }
+      }
+    },
+    "completeness": {
+      "type": "object",
+      "description": "Checklist item key -> status.",
+      "additionalProperties": { "type": "string", "enum": ["unknown", "partial", "clear"] }
+    },
+    "target_proposals": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["kind", "name", "config", "credential_keys", "rationale"],
+        "properties": {
+          "kind": { "type": "string", "enum": ["api", "web", "desktop"] },
+          "name": { "type": "string" },
+          "config": { "type": "object", "additionalProperties": true },
+          "credential_keys": { "type": "array", "items": { "type": "string" } },
+          "rationale": { "type": "string" }
+        }
+      }
+    }
+  }
+}

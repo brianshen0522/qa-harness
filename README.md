@@ -13,7 +13,7 @@
 | 5. Test case 生成 pipeline（先 api 類型）+ features 結構 | ✅ |
 | 6. 變更管理 | ⬜ |
 | 7. Sandbox Manager + 容器 image + noVNC 串流 | ✅ |
-| 8. Agent Worker + web 類型執行 + 執行中頁面 | 🚧 agent loop 與 Admin 主控台完成；接 test case 與 Finding 待做 |
+| 8. Agent Worker + web 類型執行 + 執行中頁面（進度、Finding、即時編輯） | ✅ |
 | 9. 結果頁 + 人工覆核 | ⬜ |
 | 10. desktop、skills / MCP、用量、增量 Handoff | ⬜ |
 
@@ -58,6 +58,18 @@ npm run test:e2e -w apps/api    # e2e：auth、CRUD、權限規則 §2.3、admin
 **討論區**：Project 與 Target 各一條討論串。LLM 帶著 scope 對應的「必須釐清項目」清單主動提問，每輪最多 3 題，每題標註它要釐清哪一項；回覆同時更新完整度（未知 / 部分 / 清楚）與描述草稿。使用者訊息中的連結會自動抓取，內容送進 context 並存為 `project_attachments`。被測面清楚後 LLM 會提出 Target 提案卡，**只提案不建立**，由 Project owner 接受後才真的建立 Target。一鍵「儲存為描述」產生新的 description version（`source=discussion`）。
 
 **Context Handoff**：依 scope 與 target kind 產生交接 prompt → 貼給 coding agent → 把回傳的 Markdown 貼回來 → 預覽解析結果 → 選擇覆蓋 / 合併 / 當作附件套用。解析採寬鬆策略：認得的 section 結構化匯入，未知 section 原樣保留，完全無法解析則強制走附件。偵測到疑似憑證時會標示行號與遮罩預覽，並**從寫入的描述中移除**，原始文件另存於 `handoff_documents`。
+
+## 執行（§4.5 / §4.6）
+
+按「開始執行」後，run 在背景跑，關掉瀏覽器不會中斷。
+
+- **一個 Target 同時只有一個 run**：用一次條件式 UPDATE 搶鎖（`status = idle` 才搶得到），不排隊也不接手，兩個請求不可能同時贏。結束時一定釋放鎖並回收 sandbox。
+- **兩種執行器**：`api` 類型不起 sandbox，直接送 HTTP；`web` / `desktop` 起容器，用 computer use 操作畫面。每步都截圖存進 MinIO。
+- **憑證不進 prompt**：模型只看得到憑證的「名稱」，要用時寫 `{{名稱}}`，伺服器在送出前代入真值；存下來的紀錄裡憑證值一律遮蔽。實測確認資料庫中零外洩。
+- **主機位址自動轉換**：容器裡的 `localhost` 是容器自己。設定寫 `localhost` 的被測站台會自動轉成 `host.docker.internal`，並在 prompt 裡告訴模型。
+- **Finding 與 verdict 分開**：模型在執行中發現與本條案例無關的問題時用 `report_finding` 記下來就繼續，不會混進判定。判定是另一次呼叫，只看完整過程，fail 時強制寫重現步驟。
+- **逐案例鎖定**：排隊中的案例可以改（本次 run 用新版本），正在跑的那條鎖住，跑完的可以改但結果會標記「已於執行後修改」。執行中還能跳過案例、加案例、中止。
+- **LLM 掛掉不中斷**：同樣走暫停機制，保留進度，模型恢復後從中斷的那一步繼續。
 
 ## Test case 生成 pipeline（§4.3）
 

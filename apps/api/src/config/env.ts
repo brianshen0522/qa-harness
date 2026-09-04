@@ -31,6 +31,12 @@ export const env = {
   DEV_LOGIN_ENABLED: bool("DEV_LOGIN_ENABLED", false),
   ADMIN_EMAIL: opt("ADMIN_EMAIL"),
   ADMIN_PASSWORD: opt("ADMIN_PASSWORD"),
+
+  // Object storage for run evidence (screenshots, HTTP logs).
+  S3_ENDPOINT: opt("S3_ENDPOINT", "http://localhost:9000"),
+  S3_ACCESS_KEY: opt("S3_ACCESS_KEY", "minio"),
+  S3_SECRET_KEY: opt("S3_SECRET_KEY", "minio12345"),
+  S3_BUCKET: opt("S3_BUCKET", "qa-harness"),
 };
 
 export const USER_COOKIE = "qa_user";

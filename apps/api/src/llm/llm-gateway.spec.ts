@@ -120,14 +120,22 @@ describe("LlmGatewayService.structured", () => {
     ).rejects.toBeInstanceOf(LlmExhaustedError);
   });
 
-  it("execute purpose only uses vision-capable configs", async () => {
+  it("uses only vision-capable configs when the caller asks for vision", async () => {
     const { gw } = makeGateway([cfg("text-only", "openai", false), cfg("vision", "anthropic", true)]);
     const t = fakeAdapter(() => validVerdict);
     const v = fakeAdapter(() => validVerdict);
     gw.setProviders({ openai: t, anthropic: v });
-    const r = await gw.structured("execute", "case_verdict", { messages: [{ role: "user", content: "x" }] });
+    const r = await gw.structured("execute", "case_verdict", { messages: [{ role: "user", content: "x" }] }, { requireVision: true });
     expect(t.calls).toHaveLength(0);
     expect(r.configId).toBe("vision");
+  });
+
+  it("does not demand vision when the request has no images", async () => {
+    // An api target's run sends only text, so a text-only model is fine.
+    const { gw } = makeGateway([cfg("text-only", "openai", false)]);
+    gw.setProviders({ openai: fakeAdapter(() => validVerdict) });
+    const r = await gw.structured("execute", "case_verdict", { messages: [{ role: "user", content: "x" }] });
+    expect(r.configId).toBe("text-only");
   });
 
   it("says so when no config exists for the purpose at all", async () => {

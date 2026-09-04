@@ -92,7 +92,7 @@ export class SandboxAgentService {
       // Vision models drop `observation` on roughly a third of first attempts and
       // fix it when told, so one extra retry costs a few seconds and removes the
       // tail where a whole step fails.
-      { maxRetries: 3 },
+      { maxRetries: 3, requireVision: true },
     );
     return { step: res.data, model: res.model };
   }

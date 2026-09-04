@@ -221,7 +221,9 @@ export class LlmGatewayService {
    * the caller can tell the user which it is while it waits.
    */
   private async chainFor(purpose: LlmPurpose, opts: StructuredOptions): Promise<ResolvedLlmConfig[]> {
-    const requireVision = !!opts.requireVision || purpose === "execute";
+    // Vision is a property of the request, not the purpose: an api target's run
+    // sends no screenshots and must not be blocked for want of a vision model.
+    const requireVision = !!opts.requireVision;
     if (opts.configId) {
       // An explicit config (the admin test button) bypasses the breaker on purpose.
       return [await this.configs.resolveOne(opts.configId)];

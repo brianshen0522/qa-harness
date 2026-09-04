@@ -228,9 +228,10 @@ describe("the probe loop", () => {
     const delays: number[] = [];
     for (let i = 0; i < 6; i++) {
       rows[0].nextProbeAt = new Date(Date.now() - 1000); // make it due again
-      const before = Date.now();
       await service.probeOnce();
-      delays.push(rows[0].nextProbeAt!.getTime() - before);
+      // Measured between the two timestamps the same write set, so the delay is
+      // exact rather than including however long the probe itself took.
+      delays.push(rows[0].nextProbeAt!.getTime() - rows[0].lastProbeAt!.getTime());
       expect(rows[0].health).toBe(LlmHealth.down);
     }
     // Growing, then capped, and always scheduled for another try.

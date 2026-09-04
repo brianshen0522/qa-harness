@@ -422,14 +422,48 @@ describe("test case generation and list (e2e)", () => {
       await api(app).get(`/api/test-cases/${caseId}/versions`).set("Cookie", viewer).expect(404);
     });
 
-    it("locks the whole list while the target is running", async () => {
+    it("does not lock the list for a target flag with no run behind it", async () => {
+      // §4.5 locks per case against the live run queue, so a stale `running`
+      // flag with no run must not freeze editing.
       await prisma.qaTarget.update({ where: { id: targetId }, data: { status: "running" } });
-      const list = await api(app).get(`/api/targets/${targetId}/test-cases`).set("Cookie", viewer).expect(200);
-      expect(list.body.target.locked).toBe(true);
-      await api(app).post(`/api/targets/${targetId}/test-cases`).set("Cookie", editor)
-        .send({ title: "t", steps: ["a"], expected: "b" }).expect(409);
-      await api(app).post(`/api/targets/${targetId}/features`).set("Cookie", editor).send({ name: "x" }).expect(409);
-      await prisma.qaTarget.update({ where: { id: targetId }, data: { status: "idle" } });
+      try {
+        const list = await api(app).get(`/api/targets/${targetId}/test-cases`).set("Cookie", viewer).expect(200);
+        expect(list.body.target).toMatchObject({ locked: false, running: false, activeRunId: null });
+        const created = await api(app).post(`/api/targets/${targetId}/test-cases`).set("Cookie", editor)
+          .send({ title: "仍然可以新增", steps: ["a"], expected: "b" }).expect(201);
+        await api(app).delete(`/api/test-cases/${created.body.id}`).set("Cookie", editor).expect(200);
+      } finally {
+        await prisma.qaTarget.update({ where: { id: targetId }, data: { status: "idle" } });
+      }
+    });
+
+    it("blocks only the case being executed while a run is going", async () => {
+      const run = await prisma.testRun.create({
+        data: { targetId, status: "running", triggeredById: "someone" },
+      });
+      const [first, second] = await prisma.testCase.findMany({ where: { targetId }, take: 2 });
+      await prisma.runCaseQueue.createMany({
+        data: [
+          { runId: run.id, testCaseId: first.id, status: "running", order: 0 },
+          { runId: run.id, testCaseId: second.id, status: "queued", order: 1 },
+        ],
+      });
+      await prisma.qaTarget.update({ where: { id: targetId }, data: { status: "running" } });
+      try {
+        const list = await api(app).get(`/api/targets/${targetId}/test-cases`).set("Cookie", viewer).expect(200);
+        expect(list.body.target).toMatchObject({ running: true, activeRunId: run.id });
+        const all = [...list.body.features.flatMap((f: { cases: unknown[] }) => f.cases), ...list.body.unassigned];
+        const locked = all.find((c: { id: string }) => c.id === first.id);
+        const queued = all.find((c: { id: string }) => c.id === second.id);
+        expect(locked).toMatchObject({ locked: true, runStatus: "running" });
+        expect(queued).toMatchObject({ locked: false, runStatus: "queued" });
+
+        await api(app).patch(`/api/test-cases/${first.id}`).set("Cookie", editor).send({ title: "不該改得動" }).expect(409);
+        await api(app).patch(`/api/test-cases/${second.id}`).set("Cookie", editor).send({ title: "排隊中可以改" }).expect(200);
+      } finally {
+        await prisma.qaTarget.update({ where: { id: targetId }, data: { status: "idle" } });
+        await prisma.testRun.delete({ where: { id: run.id } });
+      }
     });
   });
 

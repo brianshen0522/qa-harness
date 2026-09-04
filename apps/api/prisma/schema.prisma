@@ -156,6 +156,7 @@ model QaTarget {
   features         Feature[]
   testCases        TestCase[]
   generationRuns   GenerationRun[]
+  testRuns         TestRun[]
 
   @@map("qa_targets")
 }
@@ -455,8 +456,9 @@ model Feature {
   createdAt                 DateTime      @default(now()) @map("created_at")
   updatedAt                 DateTime      @updatedAt @map("updated_at")
 
-  target    QaTarget   @relation(fields: [targetId], references: [id], onDelete: Cascade)
+  target    QaTarget     @relation(fields: [targetId], references: [id], onDelete: Cascade)
   testCases TestCase[]
+  findings  RunFinding[]
 
   @@unique([targetId, name])
   @@index([targetId, order])
@@ -509,9 +511,11 @@ model TestCase {
   createdAt                 DateTime   @default(now()) @map("created_at")
   updatedAt                 DateTime   @updatedAt @map("updated_at")
 
-  target   QaTarget          @relation(fields: [targetId], references: [id], onDelete: Cascade)
-  feature  Feature?          @relation(fields: [featureId], references: [id], onDelete: SetNull)
-  versions TestCaseVersion[]
+  target    QaTarget          @relation(fields: [targetId], references: [id], onDelete: Cascade)
+  feature   Feature?          @relation(fields: [featureId], references: [id], onDelete: SetNull)
+  versions  TestCaseVersion[]
+  queueRows RunCaseQueue[]
+  results   TestResult[]
 
   @@index([targetId, order])
   @@index([featureId])
@@ -575,4 +579,166 @@ model GenerationRun {
 
   @@index([targetId, startedAt])
   @@map("generation_runs")
+}
+
+// ---------- Test runs (§4.5, §4.6) ----------
+
+enum RunStatus {
+  queued
+  running
+  /// Waiting for an LLM to come back; resumes on its own.
+  paused
+  succeeded
+  failed
+  aborted
+}
+
+model TestRun {
+  id       String    @id @default(uuid())
+  targetId String    @map("target_id")
+  status   RunStatus @default(queued)
+
+  /// Container id while a sandbox is attached; null for api targets.
+  sandboxId   String? @map("sandbox_id")
+  sandboxName String? @map("sandbox_name")
+  /// noVNC url for the shared live view (§4.6).
+  viewUrl     String? @map("view_url")
+
+  /// Which LLM configs were in play, captured when the run started.
+  llmConfigSnapshot Json?     @map("llm_config_snapshot")
+  stepCount         Int       @default(0) @map("step_count")
+  inputTokens       Int       @default(0) @map("input_tokens")
+  outputTokens      Int       @default(0) @map("output_tokens")
+  pausedReason      String?   @map("paused_reason")
+  error             String?
+  triggeredById     String    @map("triggered_by")
+  startedAt         DateTime  @default(now()) @map("started_at")
+  endedAt           DateTime? @map("ended_at")
+
+  target   QaTarget       @relation(fields: [targetId], references: [id], onDelete: Cascade)
+  queue    RunCaseQueue[]
+  steps    RunStep[]
+  results  TestResult[]
+  findings RunFinding[]
+
+  @@index([targetId, startedAt])
+  @@map("test_runs")
+}
+
+enum QueueStatus {
+  queued
+  running
+  done
+  skipped
+}
+
+/// The case list for one run, with each case's version pinned when it starts (§4.5).
+model RunCaseQueue {
+  runId          String      @map("run_id")
+  testCaseId     String      @map("test_case_id")
+  /// Null until the case starts; set from the case's current version at that moment.
+  caseVersion    Int?        @map("test_case_version")
+  status         QueueStatus @default(queued)
+  order          Int
+  /// True when the case was edited after this run used it (§4.5 done/skipped rule).
+  editedAfterUse Boolean     @default(false) @map("edited_after_use")
+
+  run      TestRun  @relation(fields: [runId], references: [id], onDelete: Cascade)
+  testCase TestCase @relation(fields: [testCaseId], references: [id], onDelete: Cascade)
+
+  @@id([runId, testCaseId])
+  @@index([runId, order])
+  @@map("run_case_queue")
+}
+
+model RunStep {
+  id            String   @id @default(uuid())
+  runId         String   @map("run_id")
+  testCaseId    String?  @map("test_case_id")
+  seq           Int
+  phase         String
+  action        Json
+  intent        String   @default("")
+  observation   String   @default("")
+  /// Object-storage key for the screenshot the model saw.
+  screenshotKey String?  @map("screenshot_key")
+  result        Json?
+  modelUsed     String?  @map("model_used")
+  durationMs    Int      @default(0) @map("duration_ms")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  run TestRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@index([runId, seq])
+  @@map("run_steps")
+}
+
+enum Verdict {
+  pass
+  fail
+  blocked
+  skipped
+}
+
+model TestResult {
+  id              String    @id @default(uuid())
+  runId           String    @map("run_id")
+  testCaseId      String    @map("test_case_id")
+  caseVersion     Int       @map("test_case_version")
+  verdict         Verdict
+  /// Set when the failure looks like the feature changed rather than broke (§4.4).
+  possiblyChanged Boolean   @default(false) @map("possibly_changed")
+  llmReasoning    String    @default("") @map("llm_reasoning")
+  /// { screenshots: string[], httpLogs: [], video: string | null }
+  evidence        Json      @default("{}")
+  reproSteps      String[]  @map("repro_steps")
+  stepCount       Int       @default(0) @map("step_count")
+  durationMs      Int       @default(0) @map("duration_ms")
+  /// Human review, kept separate from the model's verdict (§4.7).
+  humanVerdict    Verdict?  @map("human_verdict")
+  humanNote       String?   @map("human_note")
+  reviewedById    String?   @map("reviewed_by")
+  reviewedAt      DateTime? @map("reviewed_at")
+  createdAt       DateTime  @default(now()) @map("created_at")
+
+  run      TestRun  @relation(fields: [runId], references: [id], onDelete: Cascade)
+  testCase TestCase @relation(fields: [testCaseId], references: [id], onDelete: Cascade)
+
+  @@unique([runId, testCaseId])
+  @@index([runId])
+  @@map("test_results")
+}
+
+enum Severity {
+  critical
+  major
+  minor
+  info
+}
+
+enum FindingStatus {
+  open
+  converted_to_case
+  converted_to_proposal
+  dismissed
+}
+
+/// Something wrong noticed during a run that is not about the case being tested (§4.5).
+model RunFinding {
+  id          String        @id @default(uuid())
+  runId       String        @map("run_id")
+  testCaseId  String?       @map("test_case_id")
+  severity    Severity
+  title       String
+  description String        @default("")
+  evidence    Json          @default("{}")
+  featureId   String?       @map("related_feature_id")
+  status      FindingStatus @default(open)
+  createdAt   DateTime      @default(now()) @map("created_at")
+
+  run     TestRun  @relation(fields: [runId], references: [id], onDelete: Cascade)
+  feature Feature? @relation(fields: [featureId], references: [id], onDelete: SetNull)
+
+  @@index([runId, createdAt])
+  @@map("run_findings")
 }

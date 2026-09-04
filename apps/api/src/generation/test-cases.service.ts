@@ -28,14 +28,26 @@ export class TestCasesService {
   /** Features with their cases, plus any case not attached to a feature. */
   async list(targetId: string, userId: string) {
     const { role } = await this.perms.requireTarget(targetId, userId, Role.viewer);
-    const [features, cases, target] = await Promise.all([
+    const [features, cases, target, activeRun] = await Promise.all([
       this.prisma.feature.findMany({ where: { targetId }, orderBy: { order: "asc" } }),
       this.prisma.testCase.findMany({ where: { targetId }, orderBy: { order: "asc" } }),
       this.prisma.qaTarget.findUniqueOrThrow({
         where: { id: targetId },
         select: { name: true, kind: true, status: true, descriptionVersion: true },
       }),
+      this.prisma.testRun.findFirst({
+        where: { targetId, status: { in: ["running", "paused"] } },
+        select: { id: true, status: true },
+      }),
     ]);
+    // Per-case lock state, so the UI can grey out only what is genuinely locked.
+    const queue = activeRun
+      ? await this.prisma.runCaseQueue.findMany({
+          where: { runId: activeRun.id },
+          select: { testCaseId: true, status: true },
+        })
+      : [];
+    const queueByCase = new Map(queue.map((q) => [q.testCaseId, q.status]));
 
     const byFeature = new Map<string, typeof cases>();
     const loose: typeof cases = [];
@@ -48,8 +60,22 @@ export class TestCasesService {
       }
     }
 
+    const withLock = <T extends { id: string }>(c: T) => ({
+      ...c,
+      runStatus: queueByCase.get(c.id) ?? null,
+      locked: queueByCase.get(c.id) === "running",
+    });
+
     return {
-      target: { ...target, myRole: role, locked: target.status === "running" },
+      target: {
+        ...target,
+        myRole: role,
+        // The whole list is no longer read-only during a run; only the case
+        // actually executing is (§4.5).
+        locked: false,
+        running: !!activeRun,
+        activeRunId: activeRun?.id ?? null,
+      },
       counts: {
         features: features.length,
         cases: cases.length,
@@ -60,9 +86,9 @@ export class TestCasesService {
       features: features.map((f) => ({
         ...f,
         stale: f.basedOnDescriptionVersion < target.descriptionVersion,
-        cases: byFeature.get(f.id) ?? [],
+        cases: (byFeature.get(f.id) ?? []).map(withLock),
       })),
-      unassigned: loose,
+      unassigned: loose.map(withLock),
     };
   }
 
@@ -106,7 +132,7 @@ export class TestCasesService {
   /** Every edit writes a new version, so a case can be traced back (§3.2). */
   async updateCase(caseId: string, userId: string, input: Partial<CaseInput> & { status?: CaseStatus }) {
     const existing = await this.getCase(caseId);
-    await this.requireEditable(existing.targetId, userId);
+    await this.requireEditable(existing.targetId, userId, caseId);
     if (input.featureId) await this.assertFeature(existing.targetId, input.featureId);
     if (input.title !== undefined || input.steps !== undefined || input.expected !== undefined) {
       this.validate({
@@ -147,7 +173,7 @@ export class TestCasesService {
 
   async deleteCase(caseId: string, userId: string) {
     const existing = await this.getCase(caseId);
-    await this.requireEditable(existing.targetId, userId);
+    await this.requireEditable(existing.targetId, userId, caseId);
     await this.prisma.testCase.delete({ where: { id: caseId } });
     await this.audit.log("user", userId, "testcase.delete", caseId, { targetId: existing.targetId });
     return { ok: true };
@@ -241,16 +267,33 @@ export class TestCasesService {
   }
 
   /**
-   * Editor or above, and the target must be idle. §4.5 allows editing queued
-   * cases mid-run; that needs the run queue, which arrives with the worker.
+   * Editor or above. While a run is going, §4.5 locks per case rather than
+   * wholesale: a case that has not started yet is still editable and the run
+   * picks up the new version, the case being executed right now is locked, and
+   * one already done is editable with its result flagged as edited afterwards.
    */
-  private async requireEditable(targetId: string, userId: string) {
+  private async requireEditable(targetId: string, userId: string, caseId?: string) {
     await this.perms.requireTarget(targetId, userId, Role.editor);
     const target = await this.prisma.qaTarget.findUniqueOrThrow({
       where: { id: targetId },
       select: { status: true },
     });
-    if (target.status === "running") throw new ConflictException("Target 執行中，測試清單暫時鎖定。");
+    if (target.status !== "running") return;
+
+    const activeRun = await this.prisma.testRun.findFirst({
+      where: { targetId, status: { in: ["running", "paused"] } },
+      select: { id: true },
+    });
+    if (!activeRun) return; // the lock is stale; nothing is actually executing
+
+    if (!caseId) return; // adding a case mid-run is allowed (§4.6)
+    const row = await this.prisma.runCaseQueue.findUnique({
+      where: { runId_testCaseId: { runId: activeRun.id, testCaseId: caseId } },
+      select: { status: true },
+    });
+    if (row?.status === "running") {
+      throw new ConflictException("這條案例正在執行中，等它跑完才能修改。");
+    }
   }
 
   private validate(input: { title: string; steps: string[]; expected: string }) {

@@ -125,6 +125,10 @@ export class DockerService {
         ExposedPorts: exposed,
         HostConfig: {
           PortBindings: bindings,
+          // A dev target on the host is almost always addressed as localhost;
+          // inside the container that means the container itself, so give it a
+          // name that reaches the host.
+          ExtraHosts: ["host.docker.internal:host-gateway"],
           NanoCpus: Math.round(spec.cpus * 1e9),
           Memory: spec.memoryMb * 1024 * 1024,
           ShmSize: (spec.shmSizeMb ?? 1024) * 1024 * 1024,

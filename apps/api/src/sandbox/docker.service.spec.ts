@@ -1,5 +1,5 @@
 import { demultiplexDockerStream, DockerService, type ContainerInspect } from "./docker.service";
-import { parseResolution } from "./sandbox.service";
+import { parseResolution, toSandboxUrl } from "./sandbox.service";
 
 function frame(streamType: number, text: string): Buffer {
   const payload = Buffer.from(text, "utf8");
@@ -58,5 +58,19 @@ describe("parseResolution", () => {
     for (const bad of ["", "big", "1280", "12x8", "abcxdef"]) {
       expect(parseResolution(bad)).toEqual([1280, 800]);
     }
+  });
+});
+
+describe("toSandboxUrl", () => {
+  it("points loopback at the host, which is what the user meant", () => {
+    expect(toSandboxUrl("http://localhost:3000/login")).toBe("http://host.docker.internal:3000/login");
+    expect(toSandboxUrl("http://127.0.0.1:8080")).toBe("http://host.docker.internal:8080/");
+    expect(toSandboxUrl("https://0.0.0.0:443/x")).toBe("https://host.docker.internal/x");
+  });
+
+  it("leaves a real host and anything unparseable alone", () => {
+    expect(toSandboxUrl("https://example.com/a")).toBe("https://example.com/a");
+    expect(toSandboxUrl("http://192.168.1.5:3000")).toBe("http://192.168.1.5:3000");
+    expect(toSandboxUrl("not a url")).toBe("not a url");
   });
 });

@@ -141,7 +141,7 @@ export class SandboxService implements OnModuleInit, OnModuleDestroy {
       env: {
         SCREEN_WIDTH: String(width),
         SCREEN_HEIGHT: String(height),
-        START_URL: opts.startUrl || "about:blank",
+        START_URL: opts.startUrl ? toSandboxUrl(opts.startUrl) : "about:blank",
       },
       labels: {
         [SANDBOX_LABEL]: SANDBOX_LABEL_VALUE,
@@ -239,6 +239,25 @@ function toInstance(i: ContainerInspect): SandboxInstance {
     createdBy: labels[CREATED_BY_LABEL] ?? null,
     resolution: labels[RESOLUTION_LABEL] ?? null,
   };
+}
+
+/** Loopback on the host, as seen from inside a container. */
+export const HOST_ALIAS = "host.docker.internal";
+const LOOPBACK = /^(localhost|127\.0\.0\.1|\[::1\]|0\.0\.0\.0)$/i;
+
+/**
+ * A URL the user wrote for their own machine is rewritten so the sandbox can
+ * actually reach it. Anything else is left untouched.
+ */
+export function toSandboxUrl(url: string): string {
+  try {
+    const parsed = new URL(url);
+    if (!LOOPBACK.test(parsed.hostname)) return url;
+    parsed.hostname = HOST_ALIAS;
+    return parsed.toString();
+  } catch {
+    return url;
+  }
 }
 
 export function parseResolution(value: string): [number, number] {

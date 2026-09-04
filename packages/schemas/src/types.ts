@@ -63,7 +63,10 @@ export interface ChangeProposal {
 export type ExecutionPhase = "setup" | "executing" | "verifying" | "judging";
 export type ActionType =
   | "screenshot" | "click" | "double_click" | "right_click" | "type" | "key" | "scroll"
-  | "move" | "wait" | "http_request" | "navigate" | "run_command" | "done";
+  | "move" | "wait" | "http_request" | "navigate" | "run_command"
+  /** Note an issue unrelated to the current case, then carry on (§4.5). */
+  | "report_finding"
+  | "done";
 
 export interface ExecutionStep {
   schema_version: "1.0";

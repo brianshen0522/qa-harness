@@ -310,9 +310,9 @@ export const execution_stepSchema = {
   "required": [
     "schema_version",
     "phase",
-    "action",
+    "observation",
     "intent",
-    "observation"
+    "action"
   ],
   "properties": {
     "schema_version": {
@@ -327,6 +327,14 @@ export const execution_stepSchema = {
         "verifying",
         "judging"
       ]
+    },
+    "observation": {
+      "type": "string",
+      "description": "畫面上實際看到什麼：元素、文字、目前狀態。必填，每一步都要重寫。"
+    },
+    "intent": {
+      "type": "string",
+      "description": "這一步想達成什麼。"
     },
     "action": {
       "type": "object",
@@ -358,13 +366,8 @@ export const execution_stepSchema = {
           "type": "object",
           "additionalProperties": true
         }
-      }
-    },
-    "intent": {
-      "type": "string"
-    },
-    "observation": {
-      "type": "string"
+      },
+      "description": "依據上面的觀察決定的下一個動作。"
     }
   }
 } as const;

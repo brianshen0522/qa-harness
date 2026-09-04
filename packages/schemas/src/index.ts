@@ -41,6 +41,31 @@ function formatErrors(errors: ErrorObject[] | null | undefined): ValidationError
   }));
 }
 
+/**
+ * Fill in required properties whose schema pins them to a single `const` value.
+ *
+ * Models routinely omit `schema_version`: it carries no information for them and
+ * not every provider enforces the schema. The value is fixed by the contract, so
+ * supplying it is normalisation, not guessing — and it saves a retry per call.
+ */
+export function applyConstDefaults<N extends SchemaName>(name: N, data: unknown): unknown {
+  if (!data || typeof data !== "object" || Array.isArray(data)) return data;
+  const schema = SCHEMAS[name] as unknown as {
+    required?: string[];
+    properties?: Record<string, { const?: unknown }>;
+  };
+  const record = data as Record<string, unknown>;
+  let patched: Record<string, unknown> | null = null;
+  for (const key of schema.required ?? []) {
+    if (key in record) continue;
+    const constValue = schema.properties?.[key]?.const;
+    if (constValue === undefined) continue;
+    patched ??= { ...record };
+    patched[key] = constValue;
+  }
+  return patched ?? data;
+}
+
 /** Validate `data` against the named schema. */
 export function validateSchema<N extends SchemaName>(
   name: N,
@@ -60,8 +85,26 @@ export function describeErrors(errors: ValidationError[]): string {
  * Lenient JSON extraction for providers without native structured output:
  * strips markdown code fences and trims to the outermost {...} or [...].
  */
+/**
+ * Reasoning models sometimes prefix the answer with a thinking block, and some
+ * gateways pass those tags through as ordinary content. An unclosed opening tag
+ * counts too: it means the reply was reasoning all the way to the token limit.
+ */
+export function stripReasoning(text: string): string {
+  return text
+    .replace(/<(think|thinking|reasoning)>[\s\S]*?<\/\1>/gi, "")
+    .replace(/<(think|thinking|reasoning)>[\s\S]*$/i, "")
+    .trim();
+}
+
+/** True when nothing but reasoning (or nothing at all) came back. */
+export function isBlankOutput(text: string): boolean {
+  return stripReasoning(text).length === 0;
+}
+
 export function extractJson(text: string): unknown {
-  let s = text.trim();
+  let s = stripReasoning(text);
+  if (!s) throw new Error("Model returned no content outside its reasoning block");
   const fence = s.match(/```(?:json)?\s*([\s\S]*?)```/i);
   if (fence) s = fence[1].trim();
   try {

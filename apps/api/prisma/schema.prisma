@@ -153,6 +153,9 @@ model QaTarget {
   members          TargetMember[]
   discussion       Discussion?
   handoffDocuments HandoffDocument[]
+  features         Feature[]
+  testCases        TestCase[]
+  generationRuns   GenerationRun[]
 
   @@map("qa_targets")
 }
@@ -411,4 +414,138 @@ model HandoffDocument {
   @@index([projectId, importedAt])
   @@index([targetId, importedAt])
   @@map("handoff_documents")
+}
+
+// ---------- Features & test cases (§4.3) ----------
+
+enum FeatureStatus {
+  active
+  removed
+}
+
+model Feature {
+  id                        String        @id @default(uuid())
+  targetId                  String        @map("target_id")
+  name                      String
+  description               String        @default("")
+  status                    FeatureStatus @default(active)
+  /// Description version this feature was derived from, so staleness is visible.
+  basedOnDescriptionVersion Int           @default(0) @map("based_on_description_version")
+  order                     Int           @default(0)
+  createdAt                 DateTime      @default(now()) @map("created_at")
+  updatedAt                 DateTime      @updatedAt @map("updated_at")
+
+  target    QaTarget   @relation(fields: [targetId], references: [id], onDelete: Cascade)
+  testCases TestCase[]
+
+  @@unique([targetId, name])
+  @@index([targetId, order])
+  @@map("features")
+}
+
+enum Priority {
+  P0
+  P1
+  P2
+  P3
+}
+
+enum CaseType {
+  happy
+  edge
+  negative
+}
+
+enum CaseSource {
+  generated
+  manual
+  change_proposal
+}
+
+/// active runs by default; outdated needs review after a change; deprecated is history.
+enum CaseStatus {
+  active
+  outdated
+  deprecated
+}
+
+model TestCase {
+  id                        String     @id @default(uuid())
+  targetId                  String     @map("target_id")
+  featureId                 String?    @map("feature_id")
+  title                     String
+  precondition              String     @default("")
+  /// string[] — the steps an executor follows.
+  steps                     Json       @default("[]")
+  expected                  String
+  priority                  Priority   @default(P2)
+  type                      CaseType   @default(happy)
+  source                    CaseSource @default(generated)
+  status                    CaseStatus @default(active)
+  currentVersion            Int        @default(1) @map("current_version")
+  order                     Int        @default(0)
+  basedOnDescriptionVersion Int        @default(0) @map("based_on_description_version")
+  createdById               String?    @map("created_by")
+  createdAt                 DateTime   @default(now()) @map("created_at")
+  updatedAt                 DateTime   @updatedAt @map("updated_at")
+
+  target   QaTarget          @relation(fields: [targetId], references: [id], onDelete: Cascade)
+  feature  Feature?          @relation(fields: [featureId], references: [id], onDelete: SetNull)
+  versions TestCaseVersion[]
+
+  @@index([targetId, order])
+  @@index([featureId])
+  @@map("test_cases")
+}
+
+model TestCaseVersion {
+  id         String   @id @default(uuid())
+  testCaseId String   @map("test_case_id")
+  version    Int
+  /// Full snapshot of the case at this version.
+  content    Json
+  changeId   String?  @map("change_id")
+  createdBy  String?  @map("created_by")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  testCase TestCase @relation(fields: [testCaseId], references: [id], onDelete: Cascade)
+
+  @@unique([testCaseId, version])
+  @@map("test_case_versions")
+}
+
+// ---------- Generation pipeline (§4.3) ----------
+
+enum GenerationStatus {
+  running
+  succeeded
+  failed
+}
+
+enum GenerationMode {
+  replace
+  append
+}
+
+model GenerationRun {
+  id                 String           @id @default(uuid())
+  targetId           String           @map("target_id")
+  status             GenerationStatus @default(running)
+  mode               GenerationMode
+  descriptionVersion Int              @map("description_version")
+  featureCount       Int              @default(0) @map("feature_count")
+  caseCount          Int              @default(0) @map("case_count")
+  duplicatesDropped  Int              @default(0) @map("duplicates_dropped")
+  /// Summary of what 現況探索 found, shown in the UI.
+  discovery          Json?
+  model              String?
+  error              String?
+  triggeredById      String           @map("triggered_by")
+  startedAt          DateTime         @default(now()) @map("started_at")
+  endedAt            DateTime?        @map("ended_at")
+
+  target QaTarget @relation(fields: [targetId], references: [id], onDelete: Cascade)
+
+  @@index([targetId, startedAt])
+  @@map("generation_runs")
 }

@@ -42,7 +42,9 @@ export class SandboxAgentService {
       "## 規則",
       `- 螢幕解析度是 ${width}x${height}，座標原點在左上角。點擊座標必須落在這個範圍內。`,
       "- 每次只回傳「一個」動作。動作執行後你會拿到新的截圖，再決定下一步。",
-      "- 先看截圖，把你看到的畫面寫進 `observation`，把這一步想達成什麼寫進 `intent`。",
+      "- 每一次回覆都必須同時包含 `observation` 和 `intent` 兩個欄位，缺一不可：",
+      "  `observation` 寫你在這張截圖上實際看到什麼（有哪些元素、文字、目前狀態），",
+      "  `intent` 寫你這一步想達成什麼。即使畫面和上一步幾乎相同，也要重新寫 `observation`。",
       "- 點擊前先確認目標元素在截圖上的實際位置，不要用猜的座標。",
       "- 使用者可能在你操作到一半時插話（訊息會標成「使用者插話」）。插話的優先權高於原本的計畫：",
       "  先照他說的調整，必要時放棄原本的做法，不要假裝沒看到。",
@@ -78,12 +80,20 @@ export class SandboxAgentService {
     maxSteps: number;
     timeoutMs: number;
   }): Promise<{ step: ExecutionStep; model: string }> {
-    const res = await this.gateway.structured("execute", "execution_step", {
-      system: args.system,
-      messages: buildMessages(args.turns, args.screenshot, args.seq, args.maxSteps),
-      maxTokens: 2048,
-      timeoutMs: args.timeoutMs,
-    });
+    const res = await this.gateway.structured(
+      "execute",
+      "execution_step",
+      {
+        system: args.system,
+        messages: buildMessages(args.turns, args.screenshot, args.seq, args.maxSteps),
+        maxTokens: 2048,
+        timeoutMs: args.timeoutMs,
+      },
+      // Vision models drop `observation` on roughly a third of first attempts and
+      // fix it when told, so one extra retry costs a few seconds and removes the
+      // tail where a whole step fails.
+      { maxRetries: 3 },
+    );
     return { step: res.data, model: res.model };
   }
 

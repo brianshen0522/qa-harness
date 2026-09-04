@@ -87,6 +87,25 @@ describe("LlmGatewayService.structured", () => {
     }
   });
 
+  it("retries an empty reply without feeding the empty turn back", async () => {
+    const { gw } = makeGateway([cfg("a", "anthropic")]);
+    const a = fakeAdapter((_req, call) => (call === 1 ? "" : validVerdict));
+    gw.setProviders({ anthropic: a });
+    const r = await gw.structured("execute", "case_verdict", { messages: [{ role: "user", content: "judge" }] });
+    expect(r.attempts.map((x) => x.outcome)).toEqual(["invalid_output", "ok"]);
+    // The second attempt sends the original conversation unchanged.
+    expect(a.calls[1].messages).toEqual(a.calls[0].messages);
+  });
+
+  it("treats a reasoning-only reply as empty and retries it the same way", async () => {
+    const { gw } = makeGateway([cfg("a", "anthropic")]);
+    const a = fakeAdapter((_req, call) => (call === 1 ? "<think>hmm, what to do</think>" : validVerdict));
+    gw.setProviders({ anthropic: a });
+    const r = await gw.structured("execute", "case_verdict", { messages: [{ role: "user", content: "judge" }] });
+    expect(r.attempts[0].error).toMatch(/reasoning block/);
+    expect(a.calls[1].messages).toEqual(a.calls[0].messages);
+  });
+
   it("throws LlmExhaustedError with the attempt log when everything fails", async () => {
     const { gw } = makeGateway([cfg("a", "openai")]);
     gw.setProviders({ openai: fakeAdapter(() => "{}") });

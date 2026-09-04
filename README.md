@@ -59,6 +59,18 @@ npm run test:e2e -w apps/api    # e2e：auth、CRUD、權限規則 §2.3、admin
 
 **Context Handoff**：依 scope 與 target kind 產生交接 prompt → 貼給 coding agent → 把回傳的 Markdown 貼回來 → 預覽解析結果 → 選擇覆蓋 / 合併 / 當作附件套用。解析採寬鬆策略：認得的 section 結構化匯入，未知 section 原樣保留，完全無法解析則強制走附件。偵測到疑似憑證時會標示行號與遮罩預覽，並**從寫入的描述中移除**，原始文件另存於 `handoff_documents`。
 
+## Test case 生成 pipeline（§4.3）
+
+Target 頁的「測試清單」分頁可以一鍵生成，過程以 SSE 串到前端。
+
+1. **現況探索**：api 類型讀 `openapi_url` 或貼上的 schema，抽出每個 endpoint 的方法、路徑、參數、request body 欄位與回應碼；web 類型抓首頁，抽出標題階層、連結與表單欄位。desktop 目前只依描述生成。
+2. **功能清單**：描述 + 設定 + 探索結果 + 討論區附件 + 交接文件建議案例一起送進 `feature_list` schema。
+3. **逐功能展開**：每個功能各一次呼叫，要求覆蓋 happy / edge / negative 與 P0–P3。
+4. **去重與排序**：用「標題 + 預期結果」的字元 bigram 相似度（門檻 0.75）去掉改寫重複，再依功能、優先級、類型排序。刻意偏向保留 —— 多留一條使用者按一下就刪掉，誤刪一條是靜默的覆蓋缺口。
+5. **寫入**：`features` 與 `test_cases`，每條案例同時建立第 1 版。`replace` 只清掉先前生成的案例，手寫的一律保留。
+
+Target 設定裡若含 `Authorization` 之類的欄位，送進模型前會遮蔽。每次編輯案例都會寫一個新版本，可回溯。
+
 ## Sandbox 主控台（§4.8 / §5.1）
 
 Admin → Sandbox → 主控台可以直接起一個容器、看畫面、下指令給 LLM 操作它。

@@ -6,6 +6,9 @@ export interface FetchedPage {
   text: string;
   chars: number;
   error?: string;
+  /** Raw body, kept only when the caller asks for it (structure discovery). */
+  raw?: string;
+  contentType?: string;
 }
 
 const MAX_BYTES = 2_000_000;
@@ -78,7 +81,7 @@ export class UrlFetchService {
     return Promise.all(urls.map((u) => this.fetchOne(u)));
   }
 
-  async fetchOne(url: string): Promise<FetchedPage> {
+  async fetchOne(url: string, keepRaw = false): Promise<FetchedPage> {
     let parsed: URL;
     try {
       parsed = new URL(url);
@@ -121,6 +124,8 @@ export class UrlFetchService {
         title,
         text: truncated ? `${text.slice(0, MAX_CHARS)}\n…（已截斷）` : text,
         chars: text.length,
+        contentType: ctype,
+        ...(keepRaw ? { raw: body.slice(0, 600_000) } : {}),
       };
     } catch (err) {
       const msg = (err as Error).name === "AbortError" ? "逾時" : (err as Error).message;

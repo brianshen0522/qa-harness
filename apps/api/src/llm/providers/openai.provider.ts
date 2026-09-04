@@ -65,26 +65,34 @@ export class OpenAiProvider implements LlmProviderAdapter {
     let completion: OpenAI.Chat.Completions.ChatCompletion;
     try {
       if (req.jsonSchema) {
-        try {
-          completion = await client.chat.completions.create({
+        // Escalating fallback: strict schema enforcement is what actually stops the
+        // model dropping required fields, but not every compatible server accepts
+        // it (strict mode rejects `additionalProperties: true` on some servers).
+        const withFormat = (strict: boolean) =>
+          client.chat.completions.create({
             ...base,
             response_format: {
               type: "json_schema",
-              json_schema: { name: req.jsonSchema.name, schema: req.jsonSchema.schema, strict: false },
+              json_schema: { name: req.jsonSchema!.name, schema: req.jsonSchema!.schema, strict },
             },
           });
+        try {
+          completion = await withFormat(true);
           nativeJson = true;
         } catch (err) {
-          if (err instanceof OpenAI.BadRequestError) {
-            // Compatible servers that only know json_object, or nothing at all.
+          if (!(err instanceof OpenAI.BadRequestError)) throw err;
+          try {
+            completion = await withFormat(false);
+            nativeJson = true;
+          } catch (err2) {
+            if (!(err2 instanceof OpenAI.BadRequestError)) throw err2;
+            // Servers that only know json_object, or nothing at all.
             try {
               completion = await client.chat.completions.create({ ...base, response_format: { type: "json_object" } });
-            } catch (err2) {
-              if (err2 instanceof OpenAI.BadRequestError) completion = await client.chat.completions.create(base);
-              else throw err2;
+            } catch (err3) {
+              if (err3 instanceof OpenAI.BadRequestError) completion = await client.chat.completions.create(base);
+              else throw err3;
             }
-          } else {
-            throw err;
           }
         }
       } else {

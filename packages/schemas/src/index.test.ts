@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { validateSchema, extractJson, toProviderSchema, SCHEMAS, SCHEMA_NAMES } from "./index";
+import { validateSchema, extractJson, toProviderSchema, applyConstDefaults, SCHEMAS, SCHEMA_NAMES } from "./index";
 
 test("all schemas compile and every schema has schema_version", () => {
   for (const name of SCHEMA_NAMES) {
@@ -31,6 +31,13 @@ test("discussion_turn: max 3 questions, completeness enum", () => {
   assert.equal(validateSchema("discussion_turn", { ...t, questions: [1, 2, 3, 4].map(() => ({ item: "a", question: "b" })) }).ok, false);
 });
 
+test("extractJson ignores a reasoning block that precedes the answer", () => {
+  assert.deepEqual(extractJson('<think>let me consider {a:1}</think>{"a":2}'), { a: 2 });
+  assert.deepEqual(extractJson('<thinking>\nplan\n</thinking>\n```json\n{"b":3}\n```'), { b: 3 });
+  // Reasoning only, no answer: a distinct message so the caller can retry cleanly.
+  assert.throws(() => extractJson("<think>only thinking here</think>"), /reasoning block/);
+});
+
 test("extractJson handles fences and prose", () => {
   assert.deepEqual(extractJson('```json\n{"a":1}\n```'), { a: 1 });
   assert.deepEqual(extractJson('Sure! Here it is: {"a":[1,2]} hope that helps'), { a: [1, 2] });
@@ -42,4 +49,31 @@ test("toProviderSchema strips conditionals and meta", () => {
   assert.equal(p.if, undefined);
   assert.equal(p.$schema, undefined);
   assert.ok(p.properties.verdict);
+});
+
+test("applyConstDefaults fills a missing schema_version for every schema", () => {
+  for (const name of SCHEMA_NAMES) {
+    const filled = applyConstDefaults(name, { some: "value" }) as Record<string, unknown>;
+    assert.equal(filled.schema_version, "1.0", name);
+  }
+});
+
+test("applyConstDefaults leaves present values and non-const fields alone", () => {
+  const step = { schema_version: "1.0", phase: "executing" };
+  assert.equal(applyConstDefaults("execution_step", step), step, "unchanged input is returned as-is");
+  // A missing field with no const is left for validation to reject.
+  const patched = applyConstDefaults("execution_step", { phase: "executing" }) as Record<string, unknown>;
+  assert.equal(patched.schema_version, "1.0");
+  assert.equal("observation" in patched, false);
+});
+
+test("applyConstDefaults ignores values that are not objects", () => {
+  assert.equal(applyConstDefaults("execution_step", null), null);
+  assert.deepEqual(applyConstDefaults("execution_step", [1, 2]), [1, 2]);
+});
+
+test("a step missing only schema_version becomes valid after normalisation", () => {
+  const raw = { phase: "executing", action: { type: "click", params: { x: 1, y: 2 } }, intent: "i", observation: "o" };
+  assert.equal(validateSchema("execution_step", raw).ok, false);
+  assert.equal(validateSchema("execution_step", applyConstDefaults("execution_step", raw)).ok, true);
 });

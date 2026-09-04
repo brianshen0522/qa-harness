@@ -1,8 +1,8 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { LlmPurpose } from "@prisma/client";
 import {
-  describeErrors, extractJson, schemaForPrompt, SCHEMAS, toProviderSchema, validateSchema,
-  type SchemaName, type SchemaTypeMap,
+  applyConstDefaults, describeErrors, extractJson, isBlankOutput, schemaForPrompt,
+  SCHEMAS, toProviderSchema, validateSchema, type SchemaName, type SchemaTypeMap,
 } from "@qa-harness/schemas";
 import { PrismaService } from "../prisma/prisma.service";
 import { LlmConfigsService } from "./llm-configs.service";
@@ -107,7 +107,7 @@ export class LlmGatewayService {
         let parsed: unknown;
         let parseError: string | null = null;
         try {
-          parsed = extractJson(res.text);
+          parsed = applyConstDefaults(schemaName, extractJson(res.text));
         } catch (err) {
           parseError = (err as Error).message;
         }
@@ -126,11 +126,16 @@ export class LlmGatewayService {
         await this.record(purpose, schemaName, cfg, a, res, res.text);
         this.log.warn(`[${purpose}/${schemaName}] ${cfg.name} attempt ${attempt} invalid_output: ${errorText.slice(0, 300)}`);
 
+        if (isBlankOutput(res.text)) {
+          // Nothing but reasoning, or nothing at all. Echoing an empty assistant
+          // turn only makes the next attempt worse, so retry the request untouched.
+          continue;
+        }
         // Feed the validation errors back so the model can correct itself.
         messages = [
           ...messages,
-          { role: "assistant", content: res.text || "(empty)" },
-          { role: "user", content: `Your previous output did not satisfy the required JSON schema:\n${errorText}\n\nReturn ONLY a corrected JSON object that satisfies the schema.` },
+          { role: "assistant", content: res.text },
+          { role: "user", content: `Your previous output did not satisfy the required JSON schema:\n${errorText}\n\nReturn ONLY a corrected JSON object that satisfies the schema. Include every required field, even when the value seems obvious.` },
         ];
       }
     }

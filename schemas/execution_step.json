@@ -5,23 +5,67 @@
   "description": "One agent step while executing a test case.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version", "phase", "action", "intent", "observation"],
+  "required": [
+    "schema_version",
+    "phase",
+    "observation",
+    "intent",
+    "action"
+  ],
   "properties": {
-    "schema_version": { "type": "string", "const": "1.0" },
-    "phase": { "type": "string", "enum": ["setup", "executing", "verifying", "judging"] },
+    "schema_version": {
+      "type": "string",
+      "const": "1.0"
+    },
+    "phase": {
+      "type": "string",
+      "enum": [
+        "setup",
+        "executing",
+        "verifying",
+        "judging"
+      ]
+    },
+    "observation": {
+      "type": "string",
+      "description": "畫面上實際看到什麼：元素、文字、目前狀態。必填，每一步都要重寫。"
+    },
+    "intent": {
+      "type": "string",
+      "description": "這一步想達成什麼。"
+    },
     "action": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["type", "params"],
+      "required": [
+        "type",
+        "params"
+      ],
       "properties": {
         "type": {
           "type": "string",
-          "enum": ["screenshot", "click", "double_click", "right_click", "type", "key", "scroll", "move", "wait", "http_request", "navigate", "run_command", "done"]
+          "enum": [
+            "screenshot",
+            "click",
+            "double_click",
+            "right_click",
+            "type",
+            "key",
+            "scroll",
+            "move",
+            "wait",
+            "http_request",
+            "navigate",
+            "run_command",
+            "done"
+          ]
         },
-        "params": { "type": "object", "additionalProperties": true }
-      }
-    },
-    "intent": { "type": "string" },
-    "observation": { "type": "string" }
+        "params": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      },
+      "description": "依據上面的觀察決定的下一個動作。"
+    }
   }
 }

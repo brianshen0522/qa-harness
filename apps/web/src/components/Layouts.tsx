@@ -18,7 +18,7 @@ export function UserLayout() {
   return (
     <div className="min-h-screen">
       <header className="border-b border-gray-200 bg-white">
-        <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-3">
+        <div className="mx-auto flex max-w-screen-2xl items-center justify-between px-4 py-3">
           <div className="flex items-center gap-4">
             <Link to="/" className="text-base font-bold text-gray-900">
               QA Harness
@@ -40,7 +40,7 @@ export function UserLayout() {
           </div>
         </div>
       </header>
-      <main className="mx-auto max-w-6xl px-4 py-6">
+      <main className="mx-auto max-w-screen-2xl px-4 py-6">
         <Outlet />
       </main>
     </div>
@@ -59,7 +59,7 @@ export function AdminLayout() {
   return (
     <div className="min-h-screen">
       <header className="border-b border-gray-800 bg-gray-900 text-white">
-        <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-3">
+        <div className="mx-auto flex max-w-screen-2xl items-center justify-between px-4 py-3">
           <div className="flex items-center gap-4">
             <Link to="/admin/llm" className="text-base font-bold">
               QA Harness <span className="ml-1 rounded bg-amber-500 px-1.5 py-0.5 text-xs text-black">Admin</span>
@@ -91,7 +91,7 @@ export function AdminLayout() {
           </div>
         </div>
       </header>
-      <main className="mx-auto max-w-6xl px-4 py-6">
+      <main className="mx-auto max-w-screen-2xl px-4 py-6">
         <Outlet />
       </main>
     </div>

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, apiEventSource } from "../api/client";
@@ -69,6 +69,93 @@ type SandboxEvent = Extract<RunEvent, { type: "sandbox" }>;
 /** Evidence is served as raw bytes off the run, so it can be an `<img src>` directly. */
 function evidenceUrl(runId: string, key: string): string {
   return `/api/runs/${runId}/evidence?key=${encodeURIComponent(key)}`;
+}
+
+const clampWidth = (w: number, min: number, max: number) => Math.min(max, Math.max(min, w));
+
+/**
+ * The live-run sidebar is drag-resizable and collapsible. During a run the live
+ * view is the thing worth watching, so the operator gets to decide how much
+ * room the detail panel takes — and can push it out of the way entirely.
+ */
+function useResizableSidebar(key: string, initial = 400, min = 300, max = 760) {
+  const [width, setWidth] = useState(() => {
+    try {
+      const v = Number(localStorage.getItem(key));
+      return v >= min && v <= max ? v : initial;
+    } catch {
+      return initial;
+    }
+  });
+  const [collapsed, setCollapsed] = useState(false);
+  const drag = useRef<{ startX: number; startW: number } | null>(null);
+  const widthRef = useRef(width);
+  widthRef.current = width;
+
+  useEffect(() => {
+    const onMove = (e: MouseEvent) => {
+      if (!drag.current) return;
+      // Sidebar sits on the right, so dragging the handle left widens it.
+      setWidth(clampWidth(drag.current.startW + (drag.current.startX - e.clientX), min, max));
+    };
+    const onUp = () => {
+      if (!drag.current) return;
+      drag.current = null;
+      document.body.style.userSelect = "";
+      try {
+        localStorage.setItem(key, String(widthRef.current));
+      } catch {
+        /* private mode; the width just won't persist */
+      }
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+    return () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+  }, [key, min, max]);
+
+  const onHandleDown = (e: ReactMouseEvent) => {
+    drag.current = { startX: e.clientX, startW: widthRef.current };
+    document.body.style.userSelect = "none";
+    e.preventDefault();
+  };
+
+  return { width, collapsed, setCollapsed, onHandleDown };
+}
+
+/** A titled, individually collapsible section inside the live-run sidebar. */
+function LivePanel({
+  title,
+  count,
+  defaultOpen = true,
+  scroll = false,
+  children,
+}: {
+  title: ReactNode;
+  count?: number;
+  defaultOpen?: boolean;
+  scroll?: boolean;
+  children: ReactNode;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <section className="rounded-lg border border-gray-200 bg-white shadow-sm">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-center justify-between px-3 py-2 text-left"
+      >
+        <span className="flex items-center gap-2 text-sm font-semibold text-gray-800">
+          {title}
+          {count !== undefined && <span className="text-xs font-normal text-gray-400">{count}</span>}
+        </span>
+        <span className="text-xs text-gray-400">{open ? "▾" : "▸"}</span>
+      </button>
+      {open && <div className={`border-t border-gray-100 p-3 ${scroll ? "max-h-[42vh] overflow-y-auto" : ""}`}>{children}</div>}
+    </section>
+  );
 }
 
 /**
@@ -554,8 +641,6 @@ function LiveRun({
 
   const step = latestStep(state);
   const current = state.currentCaseId;
-  const shownCase = openCase ?? current ?? state.order[state.order.length - 1] ?? null;
-  const shownSteps = shownCase ? (state.stepsByCase.get(shownCase) ?? []) : [];
 
   const queue: { caseId: string; title: string; order: number }[] = detail.data
     ? detail.data.cases.map((c) => ({ caseId: c.caseId, title: c.testCase.title, order: c.order }))
@@ -566,24 +651,45 @@ function LiveRun({
   const sandboxName = state.sandbox?.name ?? detail.data?.run.sandboxName ?? null;
   const done = state.finished.size + state.skipped.size;
   const total = Math.max(state.total, queue.length);
+  const runningIndex = state.index || Math.min(done + 1, total);
+  const pct = total ? Math.round((done / total) * 100) : 0;
+
+  const { width, collapsed, setCollapsed, onHandleDown } = useResizableSidebar("qa.run.sidebar");
+
+  const liveView =
+    kind === "api" ? (
+      <ApiLiveView runId={runId} step={step} rows={steps.data} loading={steps.isPending} fill />
+    ) : viewUrl ? (
+      <iframe
+        src={viewUrl}
+        title="執行即時畫面"
+        className="h-full w-full flex-1 rounded-md border border-gray-800 bg-black"
+      />
+    ) : (
+      <div className="flex flex-1 items-center justify-center rounded-md border border-dashed border-gray-300 bg-gray-50 text-sm text-gray-500">
+        {state.sandbox?.note ?? "sandbox 還在啟動，畫面稍後出現。"}
+      </div>
+    );
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
+      {/* Toolbar */}
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex flex-wrap items-center gap-2">
           <Badge tone={state.paused ? "amber" : "blue"}>{state.paused ? "等待 LLM" : "執行中"}</Badge>
-          <span className="text-sm font-semibold text-gray-800">
-            第 {state.index || Math.min(done + 1, total)} / {total} 條
-          </span>
-          {sandboxName && <span className="text-xs text-gray-400">sandbox：{sandboxName}</span>}
-          {!live && <span className="text-xs text-amber-700">串流已中斷，重新整理頁面可再接上。</span>}
+          <span className="text-sm font-semibold text-gray-800">第 {runningIndex} / {total} 條</span>
+          <div className="h-2 w-40 overflow-hidden rounded bg-gray-100">
+            <div className="h-2 rounded bg-blue-500 transition-all" style={{ width: `${pct}%` }} />
+          </div>
+          <span className="text-xs text-gray-400">已完成 {done}</span>
+          {sandboxName && <span className="hidden text-xs text-gray-400 sm:inline">sandbox：{sandboxName}</span>}
+          {!live && <span className="text-xs text-amber-700">串流已中斷，重新整理可再接上。</span>}
         </div>
         <div className="flex items-center gap-2">
-          {canEdit && (
-            <Button variant="secondary" size="sm" onClick={() => setAddOpen(true)}>
-              加入案例
-            </Button>
-          )}
+          <Button variant="ghost" size="sm" onClick={() => setCollapsed((v) => !v)}>
+            {collapsed ? "顯示詳情面板" : "隱藏詳情面板"}
+          </Button>
+          {canEdit && <Button variant="secondary" size="sm" onClick={() => setAddOpen(true)}>加入案例</Button>}
           <Button variant="danger" size="sm" disabled={!canEdit || aborting} onClick={onAbort}>
             {aborting ? "中止中…" : "中止"}
           </Button>
@@ -597,196 +703,141 @@ function LiveRun({
         <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-amber-800">
           <p className="text-sm font-semibold">等待 LLM</p>
           <p className="mt-1 whitespace-pre-wrap text-sm">{state.paused.message}</p>
-          <p className="mt-1 text-xs">
-            {pauseReasonLabel(state.paused.reason)}。進度都保留著，有模型恢復後會自己接續，不需要重新開始。
-          </p>
+          <p className="mt-1 text-xs">{pauseReasonLabel(state.paused.reason)}。進度都保留著，有模型恢復後會自己接續。</p>
         </div>
       )}
       {state.resumed && (
-        <p className="rounded-md border border-green-200 bg-green-50 px-3 py-1.5 text-sm text-green-800">
-          {state.resumed}
-        </p>
+        <p className="rounded-md border border-green-200 bg-green-50 px-3 py-1.5 text-sm text-green-800">{state.resumed}</p>
       )}
 
-      <div className="grid gap-4 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)]">
-        {/* 左：即時畫面（或 api 的當前請求） */}
-        {kind === "api" ? (
-          <ApiLiveView runId={runId} step={step} rows={steps.data} loading={steps.isPending} />
-        ) : (
-          <Card title={`即時畫面${sandboxName ? ` — ${sandboxName}` : ""}`}>
-            <p className="mb-2 text-xs text-gray-400">
-              這是 sandbox 容器內建 noVNC 的即時畫面，由瀏覽器直接連到 127.0.0.1（只綁在
-              loopback，不經過 API）。因此只有在跑 API 的那台機器上開這個頁面才看得到畫面。
-            </p>
-            {viewUrl ? (
-              <iframe
-                src={viewUrl}
-                title="執行即時畫面"
-                className="w-full rounded-md border border-gray-300 bg-black"
-                style={{ aspectRatio: "16 / 10" }}
-              />
+      {/* Cockpit: big live view + resizable, collapsible detail sidebar. */}
+      <div className="flex h-[calc(100vh-13rem)] min-h-[520px] items-stretch">
+        <div className="flex min-w-0 flex-1 flex-col gap-2">
+          {liveView}
+          {/* The latest action, always visible under the live view. */}
+          <div className="shrink-0 rounded-md border border-gray-200 bg-white px-3 py-2">
+            {step ? (
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-xs font-semibold text-gray-800">第 {step.seq} 步</span>
+                <code className="rounded bg-gray-100 px-1.5 py-0.5 text-xs font-medium text-gray-700">{step.action.type}</code>
+                <span className={`text-xs ${step.result.ok ? "text-green-700" : "text-red-600"}`}>
+                  {step.result.ok ? "成功" : "失敗"} · {step.result.durationMs}ms
+                </span>
+                {step.intent && <span className="min-w-0 flex-1 truncate text-sm text-gray-700">意圖：{step.intent}</span>}
+                {current && <span className="hidden truncate text-xs text-gray-400 md:inline">{state.titles.get(current) ?? ""}</span>}
+              </div>
             ) : (
-              <Empty>{state.sandbox?.note ?? "sandbox 還在啟動，畫面稍後出現。"}</Empty>
+              <span className="text-xs text-gray-400">還沒有步驟。</span>
             )}
-          </Card>
+          </div>
+        </div>
+
+        {!collapsed && (
+          <div
+            onMouseDown={onHandleDown}
+            className="group mx-1 flex w-1.5 shrink-0 cursor-col-resize items-center justify-center rounded"
+            title="拖曳調整寬度"
+          >
+            <div className="h-10 w-1 rounded bg-gray-200 group-hover:bg-blue-400" />
+          </div>
         )}
 
-        {/* 右：三層進度 + case 清單 + finding */}
-        <div className="space-y-4">
-          <Card title="進度">
-            <div className="space-y-4">
-              <div>
-                <div className="flex items-center justify-between text-xs text-gray-500">
-                  <span>Run</span>
-                  <span>
-                    第 {state.index || Math.min(done + 1, total)} / {total} 條 · 已完成 {done}
-                  </span>
-                </div>
-                <div className="mt-1 h-2 overflow-hidden rounded bg-gray-100">
-                  <div
-                    className="h-2 rounded bg-blue-500 transition-all"
-                    style={{ width: total ? `${Math.round((done / total) * 100)}%` : "0%" }}
-                  />
-                </div>
-                {current && (
-                  <p className="mt-1 truncate text-sm text-gray-800">{state.titles.get(current) ?? current}</p>
-                )}
-              </div>
-
-              <div>
-                <p className="mb-1 text-xs text-gray-500">Case 階段</p>
-                <div className="flex flex-wrap items-center gap-1">
-                  {PHASES.map((p, i) => {
-                    const isCurrent = step?.phase === p;
-                    return (
-                      <span key={p} className="flex items-center gap-1">
-                        <span
-                          className={`rounded px-2 py-0.5 text-xs font-medium ${
-                            isCurrent ? "bg-blue-600 text-white" : "bg-gray-100 text-gray-500"
-                          }`}
-                        >
-                          {PHASE_LABEL[p]}
-                        </span>
-                        {i < PHASES.length - 1 && <span className="text-xs text-gray-300">→</span>}
-                      </span>
-                    );
-                  })}
-                </div>
-              </div>
-
-              <div>
-                <p className="mb-1 text-xs text-gray-500">Step</p>
-                {step ? (
-                  <div className="rounded-md bg-gray-50 p-2">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="text-sm font-semibold text-gray-800">第 {step.seq} 步</span>
-                      <code className="rounded bg-gray-100 px-1.5 py-0.5 text-xs font-medium text-gray-700">
-                        {step.action.type}
-                      </code>
-                      <span className={`text-xs ${step.result.ok ? "text-green-700" : "text-red-600"}`}>
-                        {step.result.ok ? "成功" : "失敗"} · {step.result.durationMs}ms
-                      </span>
-                    </div>
-                    <p className="mt-1 break-all font-mono text-xs text-gray-500">
-                      {formatActionParams(step.action.params)}
-                    </p>
-                    {step.intent && (
-                      <p className="mt-1 text-sm text-gray-800">
-                        <span className="mr-1 text-xs font-medium text-gray-500">意圖</span>
-                        {step.intent}
-                      </p>
-                    )}
-                  </div>
-                ) : (
-                  <Empty>還沒有步驟。</Empty>
-                )}
-              </div>
-            </div>
-          </Card>
-
-          <Card title={`案例清單（${queue.length}）`}>
-            {queue.length === 0 ? (
-              <Empty>案例清單載入中…</Empty>
-            ) : (
-              <ul className="divide-y divide-gray-100">
-                {queue.map((q) => {
-                  const finished = state.finished.get(q.caseId);
-                  const status = finished
-                    ? "done"
-                    : state.skipped.has(q.caseId)
-                      ? "skipped"
-                      : q.caseId === current
-                        ? "running"
-                        : "queued";
-                  const open = shownCase === q.caseId;
-                  const caseSteps = state.stepsByCase.get(q.caseId) ?? [];
+        {collapsed ? (
+          <button
+            type="button"
+            onClick={() => setCollapsed(false)}
+            className="flex w-6 shrink-0 items-center justify-center rounded-md border border-gray-200 bg-white text-xs text-gray-500 hover:bg-gray-50"
+            title="展開詳情面板"
+          >
+            ‹
+          </button>
+        ) : (
+          <div className="flex shrink-0 flex-col gap-3 overflow-y-auto pr-1" style={{ width }}>
+            <LivePanel title="階段">
+              <div className="flex flex-wrap items-center gap-1">
+                {PHASES.map((p, i) => {
+                  const isCurrent = step?.phase === p;
                   return (
-                    <li key={q.caseId} className="py-2">
-                      <div className="flex items-start gap-2">
-                        <button
-                          type="button"
-                          className="min-w-0 flex-1 text-left"
-                          onClick={() => setOpenCase(open ? null : q.caseId)}
-                        >
-                          <p className="truncate text-sm text-gray-800">{q.title}</p>
-                          <p className="mt-0.5 flex flex-wrap items-center gap-1">
-                            <Badge tone={QUEUE_STATUS_TONE[status]}>{QUEUE_STATUS_LABEL[status]}</Badge>
-                            {finished && <Badge tone={VERDICT_TONE[finished.verdict]}>{VERDICT_LABEL[finished.verdict]}</Badge>}
-                            {finished?.possiblyChanged && <Badge tone="amber">可能已變更</Badge>}
-                            {caseSteps.length > 0 && (
-                              <span className="text-xs text-gray-400">{caseSteps.length} 步</span>
-                            )}
-                          </p>
-                        </button>
-                        {status === "queued" && canEdit && (
-                          <Button variant="ghost" size="sm" onClick={() => onSkip(q.caseId)}>
-                            跳過
-                          </Button>
-                        )}
-                      </div>
-                      {open && (
-                        <div className="mt-2 space-y-2">
-                          {finished && (
-                            <p className="rounded-md bg-gray-50 p-2 text-sm text-gray-700">
-                              <span className="mr-1 text-xs font-medium text-gray-500">理由</span>
-                              {finished.reasoning}
-                            </p>
-                          )}
-                          {caseSteps.length === 0 ? (
-                            <Empty>這條案例還沒有步驟。</Empty>
-                          ) : (
-                            caseSteps.map((s) => <LiveStepCard key={`${s.caseId}-${s.seq}`} step={s} runId={runId} />)
-                          )}
-                        </div>
-                      )}
-                    </li>
+                    <span key={p} className="flex items-center gap-1">
+                      <span className={`rounded px-2 py-0.5 text-xs font-medium ${isCurrent ? "bg-blue-600 text-white" : "bg-gray-100 text-gray-500"}`}>
+                        {PHASE_LABEL[p]}
+                      </span>
+                      {i < PHASES.length - 1 && <span className="text-xs text-gray-300">→</span>}
+                    </span>
                   );
                 })}
-              </ul>
-            )}
-          </Card>
+              </div>
+            </LivePanel>
 
-          <Card title={`即時 Finding（${state.findings.length}）`}>
-            {state.findings.length === 0 ? (
-              <Empty>目前沒有額外發現。</Empty>
-            ) : (
-              <ul className="space-y-2">
-                {state.findings.map((f) => (
-                  <li key={f.id} className="rounded-md border border-gray-200 p-2">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <Badge tone={SEVERITY_TONE[f.severity]}>{SEVERITY_LABEL[f.severity]}</Badge>
-                      <span className="text-sm font-medium text-gray-800">{f.title}</span>
-                    </div>
-                    {f.description && <p className="mt-1 whitespace-pre-wrap text-sm text-gray-600">{f.description}</p>}
-                    <p className="mt-1 text-xs text-gray-400">
-                      發現於：{f.caseId ? (state.titles.get(f.caseId) ?? f.caseId) : "非特定案例"}
-                    </p>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </Card>
-        </div>
+            <LivePanel title="案例清單" count={queue.length} scroll>
+              {queue.length === 0 ? (
+                <Empty>案例清單載入中…</Empty>
+              ) : (
+                <ul className="divide-y divide-gray-100">
+                  {queue.map((q) => {
+                    const finished = state.finished.get(q.caseId);
+                    const status = finished ? "done" : state.skipped.has(q.caseId) ? "skipped" : q.caseId === current ? "running" : "queued";
+                    const open = openCase === q.caseId;
+                    const caseSteps = state.stepsByCase.get(q.caseId) ?? [];
+                    return (
+                      <li key={q.caseId} className={`py-2 ${q.caseId === current ? "-mx-3 border-l-2 border-blue-500 bg-blue-50/40 px-3" : ""}`}>
+                        <div className="flex items-start gap-2">
+                          <button type="button" className="min-w-0 flex-1 text-left" onClick={() => setOpenCase(open ? null : q.caseId)}>
+                            <p className="truncate text-sm text-gray-800">{q.title}</p>
+                            <p className="mt-0.5 flex flex-wrap items-center gap-1">
+                              <Badge tone={QUEUE_STATUS_TONE[status]}>{QUEUE_STATUS_LABEL[status]}</Badge>
+                              {finished && <Badge tone={VERDICT_TONE[finished.verdict]}>{VERDICT_LABEL[finished.verdict]}</Badge>}
+                              {finished?.possiblyChanged && <Badge tone="amber">可能已變更</Badge>}
+                              {caseSteps.length > 0 && <span className="text-xs text-gray-400">{caseSteps.length} 步</span>}
+                            </p>
+                          </button>
+                          {status === "queued" && canEdit && (
+                            <Button variant="ghost" size="sm" onClick={() => onSkip(q.caseId)}>跳過</Button>
+                          )}
+                        </div>
+                        {open && (
+                          <div className="mt-2 space-y-2">
+                            {finished && (
+                              <p className="rounded-md bg-gray-50 p-2 text-sm text-gray-700">
+                                <span className="mr-1 text-xs font-medium text-gray-500">理由</span>{finished.reasoning}
+                              </p>
+                            )}
+                            {caseSteps.length === 0 ? (
+                              <Empty>這條案例還沒有步驟。</Empty>
+                            ) : (
+                              caseSteps.map((sc) => <LiveStepCard key={`${sc.caseId}-${sc.seq}`} step={sc} runId={runId} />)
+                            )}
+                          </div>
+                        )}
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </LivePanel>
+
+            <LivePanel title="即時 Finding" count={state.findings.length} scroll>
+              {state.findings.length === 0 ? (
+                <Empty>目前沒有額外發現。</Empty>
+              ) : (
+                <ul className="space-y-2">
+                  {state.findings.map((f) => (
+                    <li key={f.id} className="rounded-md border border-gray-200 p-2">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Badge tone={SEVERITY_TONE[f.severity]}>{SEVERITY_LABEL[f.severity]}</Badge>
+                        <span className="text-sm font-medium text-gray-800">{f.title}</span>
+                      </div>
+                      {f.description && <p className="mt-1 whitespace-pre-wrap text-sm text-gray-600">{f.description}</p>}
+                      <p className="mt-1 text-xs text-gray-400">
+                        發現於：{f.caseId ? (state.titles.get(f.caseId) ?? f.caseId) : "非特定案例"}
+                      </p>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </LivePanel>
+          </div>
+        )}
       </div>
 
       <AddCaseDialog
@@ -808,11 +859,14 @@ function ApiLiveView({
   step,
   rows,
   loading,
+  fill,
 }: {
   runId: string | null;
   step: StepEvent | null;
   rows: RunStepRow[] | undefined;
   loading: boolean;
+  /** Fill the cockpit's left pane (grow + scroll) instead of sitting inline. */
+  fill?: boolean;
 }) {
   const httpStep = step && step.action.type === "http_request" ? step : null;
   const row =
@@ -827,7 +881,7 @@ function ApiLiveView({
     typeof detail.body === "string" ? detail.body : detail.body === undefined ? "" : JSON.stringify(detail.body, null, 2);
 
   return (
-    <Card title="目前的請求">
+    <Card title="目前的請求" className={fill ? "flex flex-1 flex-col overflow-hidden [&>div:last-child]:flex-1 [&>div:last-child]:overflow-y-auto" : undefined}>
       <p className="mb-2 text-xs text-gray-400">
         api Target 不會起 sandbox，也就沒有畫面可以看；這裡顯示代理當下送出的 HTTP 請求與回應。
       </p>

@@ -1,14 +1,17 @@
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, apiEventStream, errorMessage } from "../../api/client";
+import { api, apiEventSource, errorMessage } from "../../api/client";
 import type {
-  AgentEvent,
   AgentPhase,
-  AgentStepEvent,
   SandboxActionResult,
   SandboxInstance,
   SandboxSettings,
   SandboxStatus,
+  SessionEvent,
+  SessionSendResult,
+  SessionSnapshot,
+  SessionStatus,
+  SessionStepEvent,
 } from "../../api/types";
 import {
   Badge,
@@ -117,8 +120,8 @@ function ConsoleTab() {
           defaultMaxSteps={status.data?.settings.maxStepsPerCase ?? 20}
         />
       ) : (
-        <Card title="LLM 操作">
-          <Empty>先啟動並選取一個 sandbox，才能下指令。</Empty>
+        <Card title="與 LLM 對話">
+          <Empty>先啟動並選取一個 sandbox，才能開始對話。</Empty>
         </Card>
       )}
 
@@ -391,7 +394,7 @@ function LiveView({
   );
 }
 
-/* ---------------------------------------------------------------- LLM 操作 */
+/* -------------------------------------------------------------- 與 LLM 對話 */
 
 const PHASE_LABEL: Record<AgentPhase, string> = {
   setup: "準備",
@@ -415,131 +418,276 @@ function formatParams(params: Record<string, unknown>): string {
     .join("  ");
 }
 
+/**
+ * One ongoing conversation with a sandbox. The transcript lives in component
+ * state fed by the SSE stream — react-query only fetches the first snapshot, so
+ * a reload paints immediately and the replay on connect fills in the rest.
+ */
 function AgentPanel({ instance, defaultMaxSteps }: { instance: SandboxInstance; defaultMaxSteps: number }) {
-  const [instruction, setInstruction] = useState("");
+  const [events, setEvents] = useState<SessionEvent[]>([]);
+  const [status, setStatus] = useState<SessionStatus>("idle");
+  const [reconnecting, setReconnecting] = useState(false);
+  const [draft, setDraft] = useState("");
   const [maxSteps, setMaxSteps] = useState(String(defaultMaxSteps));
-  const [events, setEvents] = useState<AgentEvent[]>([]);
-  const [running, setRunning] = useState(false);
-  const [runError, setRunError] = useState<string | null>(null);
-  const abortRef = useRef<AbortController | null>(null);
+  const [atBottom, setAtBottom] = useState(true);
+
+  // Keyed by `seq`, which is unique and monotonic per session: the stream
+  // replays everything on connect, so the snapshot and the replay collapse here
+  // instead of showing up twice.
+  const bySeq = useRef(new Map<number, SessionEvent>());
   const listRef = useRef<HTMLDivElement>(null);
 
-  // Leaving the page mid-run closes the stream, which also stops the run server-side.
-  useEffect(() => () => abortRef.current?.abort(), []);
+  const ingest = useCallback((incoming: SessionEvent[]) => {
+    const map = bySeq.current;
+    let changed = false;
+    for (const event of incoming) {
+      if (event.type === "status") {
+        setStatus(event.status);
+        continue;
+      }
+      if (event.type === "reset") {
+        // The transcript is thrown away rather than rendered.
+        map.clear();
+        changed = true;
+        continue;
+      }
+      map.set(event.seq, event);
+      changed = true;
+    }
+    if (changed) setEvents([...map.values()]);
+  }, []);
+
+  const path = `/admin/sandbox/instances/${instance.id}/agent`;
+
+  const snapshot = useQuery({
+    queryKey: ["admin", "sandbox", "agent", instance.id],
+    queryFn: () => api<SessionSnapshot>(`${path}/session`),
+    staleTime: Infinity,
+    refetchOnWindowFocus: false,
+  });
 
   useEffect(() => {
-    listRef.current?.scrollTo({ top: listRef.current.scrollHeight, behavior: "smooth" });
-  }, [events.length]);
+    if (!snapshot.data) return;
+    ingest(snapshot.data.events);
+    setStatus(snapshot.data.status);
+  }, [snapshot.data, ingest]);
 
-  const run = async () => {
-    const text = instruction.trim();
-    if (!text || running) return;
-    const controller = new AbortController();
-    abortRef.current = controller;
-    setEvents([]);
-    setRunError(null);
-    setRunning(true);
-    try {
-      const steps = Number(maxSteps);
-      const body: Record<string, unknown> = { instruction: text };
-      if (Number.isFinite(steps) && steps > 0) body.maxSteps = Math.round(steps);
-      for await (const event of apiEventStream<AgentEvent>(
-        `/admin/sandbox/instances/${instance.id}/agent`,
-        body,
-        controller.signal,
-      )) {
-        setEvents((prev) => [...prev, event]);
+  useEffect(() => {
+    const source = apiEventSource(`${path}/stream`);
+    source.onopen = () => setReconnecting(false);
+    source.onmessage = (e) => {
+      setReconnecting(false);
+      try {
+        ingest([JSON.parse(e.data as string) as SessionEvent]);
+      } catch {
+        /* a malformed frame is not worth breaking the transcript over */
       }
-    } catch (err) {
-      if (controller.signal.aborted) {
-        setEvents((prev) =>
-          prev.some((e) => e.type === "finished")
-            ? prev
-            : [...prev, { type: "finished", reason: "aborted", steps: 0, summary: "已由使用者中止。" }],
-        );
-      } else {
-        setRunError(errorMessage(err));
-      }
-    } finally {
-      setRunning(false);
-      abortRef.current = null;
-    }
+    };
+    // EventSource retries on its own; only say so while it is actually retrying.
+    source.onerror = () => setReconnecting(source.readyState === EventSource.CONNECTING);
+    return () => source.close();
+  }, [path, ingest]);
+
+  // Follow the tail, unless the user has scrolled up to read something.
+  useEffect(() => {
+    if (!atBottom) return;
+    const el = listRef.current;
+    if (el) el.scrollTo({ top: el.scrollHeight });
+  }, [events, atBottom]);
+
+  const onScroll = () => {
+    const el = listRef.current;
+    if (el) setAtBottom(el.scrollHeight - el.scrollTop - el.clientHeight < 48);
   };
 
-  // A `thinking` row is only a placeholder until its step arrives — and once the
-  // run has stopped nothing is thinking any more, so drop the leftovers too.
-  const stepSeqs = new Set(events.filter((e): e is AgentStepEvent => e.type === "step").map((e) => e.seq));
-  const visible = events.filter((e) => e.type !== "thinking" || (running && !stepSeqs.has(e.seq)));
+  const jumpToLatest = () => {
+    const el = listRef.current;
+    if (el) el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+    setAtBottom(true);
+  };
+
+  const send = useMutation({
+    mutationFn: (content: string) => {
+      const body: Record<string, unknown> = { content };
+      const steps = Number(maxSteps);
+      if (Number.isFinite(steps) && steps > 0) body.maxSteps = Math.round(steps);
+      return api<SessionSendResult>(`${path}/messages`, { method: "POST", body });
+    },
+    onSuccess: () => setDraft(""),
+  });
+
+  const stop = useMutation({
+    mutationFn: () => api<{ stopped: boolean }>(`${path}/stop`, { method: "POST" }),
+  });
+
+  const clear = useMutation({
+    mutationFn: () => api<{ ok: true }>(`${path}/session`, { method: "DELETE" }),
+    onSuccess: () => {
+      bySeq.current.clear();
+      setEvents([]);
+    },
+  });
+
+  const submit = () => {
+    if (!draft.trim() || send.isPending) return;
+    send.mutate(draft.trim());
+  };
+
+  const confirmClear = () => {
+    if (window.confirm("清除這個 sandbox 的整段對話？先前的訊息與步驟都會消失，無法復原。")) clear.mutate();
+  };
+
+  const running = status === "running";
+  const visible = useMemo(() => visibleEvents(events, running), [events, running]);
+  // Rounds are numbered for the reader; `runId` is an opaque id.
+  const rounds = useMemo(() => {
+    const map = new Map<number, number>();
+    let n = 0;
+    for (const event of events) if (event.type === "run_started") map.set(event.seq, ++n);
+    return map;
+  }, [events]);
 
   return (
     <Card
-      title={`LLM 操作 — ${instance.name}`}
+      title={`與 LLM 對話 — ${instance.name}`}
       actions={
-        events.length > 0 && !running ? (
-          <Button size="sm" variant="ghost" onClick={() => setEvents([])}>
-            清除
+        <>
+          <Badge tone={running ? "amber" : "gray"}>{running ? "執行中" : "閒置"}</Badge>
+          <Button size="sm" variant="ghost" disabled={clear.isPending || events.length === 0} onClick={confirmClear}>
+            {clear.isPending ? "清除中…" : "清除對話"}
           </Button>
-        ) : undefined
+        </>
       }
     >
       <div className="space-y-3">
-        <Field
-          label="指令"
-          hint="用自然語言描述要做的事；LLM 會看著畫面一步一步操作這個桌面。"
-        >
-          <Textarea
-            rows={3}
-            value={instruction}
-            disabled={running}
-            placeholder="開啟 https://example.com，點擊 More information 連結，回報跳轉後的網址"
-            onChange={(e) => setInstruction(e.target.value)}
-          />
-        </Field>
+        {reconnecting && <p className="text-xs text-amber-600">連線中斷，重新連線中…</p>}
+        <ErrorText error={snapshot.error} />
+        <ErrorText error={stop.error} />
+        <ErrorText error={clear.error} />
 
-        <div className="flex flex-wrap items-end gap-3">
-          <div className="w-32">
-            <Field label="最多步數">
-              <Input
-                type="number"
-                min={1}
-                max={200}
-                value={maxSteps}
-                disabled={running}
-                onChange={(e) => setMaxSteps(e.target.value)}
-              />
-            </Field>
+        <div className="relative">
+          <div
+            ref={listRef}
+            onScroll={onScroll}
+            className="max-h-[60vh] space-y-2 overflow-y-auto rounded-md bg-gray-50 p-3"
+          >
+            {snapshot.isPending && <Spinner />}
+            {!snapshot.isPending && visible.length === 0 && (
+              <Empty>還沒有對話。在下方輸入要 LLM 做的事，牠會看著畫面一步一步操作這個桌面。</Empty>
+            )}
+            {visible.map((event) => (
+              <TranscriptRow key={event.seq} event={event} round={rounds.get(event.seq) ?? 1} />
+            ))}
           </div>
-          {running ? (
-            <Button variant="danger" onClick={() => abortRef.current?.abort()}>
-              中止
-            </Button>
-          ) : (
-            <Button onClick={run} disabled={!instruction.trim() || !instance.running}>
-              執行
-            </Button>
+          {!atBottom && (
+            <div className="pointer-events-none absolute inset-x-0 bottom-2 flex justify-center">
+              <span className="pointer-events-auto">
+                <Button size="sm" variant="secondary" onClick={jumpToLatest}>
+                  回到最新
+                </Button>
+              </span>
+            </div>
           )}
-          {!instance.running && <span className="text-xs text-amber-600">這個容器沒有在執行中。</span>}
         </div>
 
-        {runError && <ErrorText error={runError} />}
+        <div className="space-y-2">
+          <Field
+            label="訊息"
+            hint={
+              running
+                ? "執行中，送出的訊息會在下一步前插入"
+                : "送出後會開始新的一輪，先前的對話會保留"
+            }
+          >
+            <Textarea
+              rows={3}
+              value={draft}
+              placeholder="開啟 https://example.com，點擊 More information 連結，回報跳轉後的網址"
+              onChange={(e) => setDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+                  e.preventDefault();
+                  submit();
+                }
+              }}
+            />
+          </Field>
 
-        <div ref={listRef} className="max-h-[60vh] space-y-2 overflow-y-auto rounded-md bg-gray-50 p-3">
-          {visible.length === 0 && <Empty>還沒有執行紀錄。輸入指令後按「執行」。</Empty>}
-          {visible.map((event, i) => (
-            <TranscriptRow key={`${event.type}-${i}`} event={event} />
-          ))}
+          <div className="flex flex-wrap items-end gap-3">
+            <div className="w-32">
+              <Field label="最多步數">
+                <Input
+                  type="number"
+                  min={1}
+                  max={200}
+                  value={maxSteps}
+                  onChange={(e) => setMaxSteps(e.target.value)}
+                />
+              </Field>
+            </div>
+            <Button onClick={submit} disabled={!draft.trim() || send.isPending}>
+              {send.isPending ? "送出中…" : "送出"}
+            </Button>
+            {running && (
+              <Button variant="danger" disabled={stop.isPending} onClick={() => stop.mutate()}>
+                {stop.isPending ? "中止中…" : "中止本輪"}
+              </Button>
+            )}
+            <span className="text-xs text-gray-400">Cmd / Ctrl + Enter 送出</span>
+            {!instance.running && <span className="text-xs text-amber-600">這個容器沒有在執行中。</span>}
+          </div>
+          <ErrorText error={send.error} />
         </div>
       </div>
     </Card>
   );
 }
 
-function TranscriptRow({ event }: { event: AgentEvent }) {
-  if (event.type === "started") {
+/**
+ * `status` and `reset` never reach the transcript, and a `thinking` row is only
+ * a placeholder: it stands until its step lands, and a round that stopped —
+ * finished, errored or back to idle — leaves nothing thinking.
+ */
+function visibleEvents(events: SessionEvent[], running: boolean): SessionEvent[] {
+  return events.filter((event, i) => {
+    if (event.type !== "thinking") return true;
+    if (!running) return false;
+    return !events
+      .slice(i + 1)
+      .some(
+        (later) =>
+          (later.type === "step" && later.step === event.step) ||
+          later.type === "finished" ||
+          later.type === "error",
+      );
+  });
+}
+
+function TranscriptRow({ event, round }: { event: SessionEvent; round: number }) {
+  if (event.type === "user_message") {
     return (
-      <div className="rounded-md border border-gray-200 bg-white px-3 py-2 text-xs text-gray-500">
-        已開始 · sandbox {event.sandbox} · 畫面 {event.screen} · 最多 {event.maxSteps} 步
-        <p className="mt-1 whitespace-pre-wrap text-sm text-gray-800">{event.instruction}</p>
+      <div className="flex justify-end">
+        <div className="max-w-[85%] rounded-md border border-blue-200 bg-blue-50 px-3 py-2">
+          <p className="whitespace-pre-wrap text-sm text-gray-800">{event.content}</p>
+          {event.interjected && (
+            <div className="mt-1.5">
+              <Badge tone="amber">插話</Badge>
+              <p className="mt-1 text-xs text-amber-700">這則訊息會在本輪的下一步前被讀取。</p>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  if (event.type === "run_started") {
+    return (
+      <div className="flex items-center gap-2 py-1 text-xs text-gray-400">
+        <span className="h-px flex-1 bg-gray-200" />
+        <span className="whitespace-nowrap">
+          第 {round} 輪 · {event.sandbox} · 畫面 {event.screen} · 最多 {event.maxSteps} 步
+        </span>
+        <span className="h-px flex-1 bg-gray-200" />
       </div>
     );
   }
@@ -547,7 +695,7 @@ function TranscriptRow({ event }: { event: AgentEvent }) {
   if (event.type === "thinking") {
     return (
       <div className="rounded-md border border-blue-200 bg-blue-50 px-3 py-1">
-        <Spinner label={`第 ${event.seq} 步思考中…`} />
+        <Spinner label={`第 ${event.step} 步思考中…`} />
       </div>
     );
   }
@@ -573,14 +721,16 @@ function TranscriptRow({ event }: { event: AgentEvent }) {
     );
   }
 
-  return <Notice tone="red">{event.message}</Notice>;
+  if (event.type === "error") return <Notice tone="red">{event.message}</Notice>;
+
+  return null;
 }
 
-function StepCard({ step }: { step: AgentStepEvent }) {
+function StepCard({ step }: { step: SessionStepEvent }) {
   return (
     <div className="rounded-md border border-gray-200 bg-white p-3">
       <div className="flex flex-wrap items-center gap-2">
-        <span className="text-sm font-semibold text-gray-800">第 {step.seq} 步</span>
+        <span className="text-sm font-semibold text-gray-800">第 {step.step} 步</span>
         <Badge tone={PHASE_TONE[step.phase] ?? "gray"}>{PHASE_LABEL[step.phase] ?? step.phase}</Badge>
         <code className="rounded bg-gray-100 px-1.5 py-0.5 text-xs font-medium text-gray-700">
           {step.action.type}

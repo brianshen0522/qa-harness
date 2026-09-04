@@ -7,7 +7,7 @@ import type { AdminPrincipal } from "../common/types";
 import { AuditService } from "../audit/audit.service";
 import { ComputerService } from "./computer.service";
 import { SandboxService } from "./sandbox.service";
-import { SandboxAgentService } from "./sandbox-agent.service";
+import { SandboxSessionService } from "./sandbox-session.service";
 
 class CreateSandboxDto {
   @IsOptional() @IsString() startUrl?: string;
@@ -19,8 +19,8 @@ class PerformActionDto {
   @IsOptional() @IsObject() params?: Record<string, unknown>;
 }
 
-class AgentRunDto {
-  @IsString() @MinLength(1) instruction!: string;
+class AgentMessageDto {
+  @IsString() @MinLength(1) content!: string;
   @IsOptional() @IsInt() @Min(1) @Max(200) maxSteps?: number;
 }
 
@@ -30,7 +30,7 @@ export class AdminSandboxController {
   constructor(
     private readonly sandbox: SandboxService,
     private readonly computer: ComputerService,
-    private readonly agent: SandboxAgentService,
+    private readonly session: SandboxSessionService,
     private readonly audit: AuditService,
   ) {}
 
@@ -65,6 +65,7 @@ export class AdminSandboxController {
   @Delete("instances/:id")
   async remove(@CurrentAdmin() admin: AdminPrincipal, @Param("id") id: string) {
     const r = await this.sandbox.remove(id);
+    this.session.discard(id);
     await this.audit.log("admin", admin.id, "sandbox.stop", id);
     return r;
   }
@@ -100,50 +101,71 @@ export class AdminSandboxController {
     };
   }
 
+  // ---------- steerable agent conversation ----------
+
+  /** Transcript so far, for the first render before the stream attaches. */
+  @Get("instances/:id/agent/session")
+  async sessionSnapshot(@Param("id") id: string) {
+    await this.sandbox.get(id);
+    return this.session.snapshot(id);
+  }
+
   /**
-   * Streams the LLM agent loop as server-sent events.
-   * POST (not GET) because the instruction goes in the body, so the client
-   * consumes it with fetch + a stream reader rather than EventSource.
+   * Live transcript. A GET so the browser can use EventSource; every subscriber
+   * of the same sandbox sees the same events, and past events are replayed on
+   * connect so a reload does not lose the conversation.
    */
-  @Post("instances/:id/agent")
-  async runAgent(
-    @CurrentAdmin() admin: AdminPrincipal,
-    @Param("id") id: string,
-    @Body() dto: AgentRunDto,
-    @Req() req: Request,
-    @Res() res: Response,
-  ) {
+  @Get("instances/:id/agent/stream")
+  async stream(@Param("id") id: string, @Req() req: Request, @Res() res: Response) {
+    await this.sandbox.get(id);
     res.writeHead(200, {
       "content-type": "text/event-stream; charset=utf-8",
       "cache-control": "no-cache, no-transform",
       connection: "keep-alive",
       "x-accel-buffering": "no",
     });
+    res.write(": connected\n\n");
 
-    const controller = new AbortController();
-    req.on("close", () => controller.abort());
-
-    const send = (event: unknown) => {
+    const unsubscribe = this.session.subscribe(id, (event) => {
       if (!res.writableEnded) res.write(`data: ${JSON.stringify(event)}\n\n`);
-    };
-
-    await this.audit.log("admin", admin.id, "sandbox.agent.run", id, {
-      instruction: dto.instruction.slice(0, 500), maxSteps: dto.maxSteps ?? null,
     });
+    // Proxies drop an idle stream; a comment every 25s keeps it open.
+    const heartbeat = setInterval(() => {
+      if (!res.writableEnded) res.write(": ping\n\n");
+    }, 25_000);
 
-    try {
-      for await (const event of this.agent.run(id, {
-        instruction: dto.instruction,
-        maxSteps: dto.maxSteps,
-        signal: controller.signal,
-      })) {
-        send(event);
-        if (controller.signal.aborted) break;
-      }
-    } catch (err) {
-      send({ type: "error", message: (err as Error).message });
-    } finally {
+    req.on("close", () => {
+      clearInterval(heartbeat);
+      unsubscribe();
       if (!res.writableEnded) res.end();
-    }
+    });
+  }
+
+  /** Talk to the model: starts a round when idle, interrupts one that is running. */
+  @Post("instances/:id/agent/messages")
+  async sendMessage(
+    @CurrentAdmin() admin: AdminPrincipal,
+    @Param("id") id: string,
+    @Body() dto: AgentMessageDto,
+  ) {
+    const r = await this.session.send(id, dto.content, dto.maxSteps);
+    await this.audit.log("admin", admin.id, "sandbox.agent.message", id, {
+      content: dto.content.slice(0, 500), interjected: r.interjected,
+    });
+    return r;
+  }
+
+  /** Stop the current round but keep the conversation. */
+  @Post("instances/:id/agent/stop")
+  async stopAgent(@CurrentAdmin() admin: AdminPrincipal, @Param("id") id: string) {
+    const r = this.session.stop(id);
+    await this.audit.log("admin", admin.id, "sandbox.agent.stop", id);
+    return r;
+  }
+
+  /** Clear the conversation. */
+  @Delete("instances/:id/agent/session")
+  resetAgent(@Param("id") id: string) {
+    return this.session.reset(id);
   }
 }

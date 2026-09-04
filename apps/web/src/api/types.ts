@@ -454,9 +454,12 @@ export interface SandboxActionResult {
 
 export type AgentPhase = "setup" | "executing" | "verifying" | "judging";
 
-export interface AgentStepEvent {
+export type SessionStatus = "idle" | "running";
+
+export interface SessionStepEvent {
   type: "step";
-  seq: number;
+  /** Step number inside the current round. */
+  step: number;
   phase: AgentPhase;
   intent: string;
   observation: string;
@@ -466,10 +469,33 @@ export interface AgentStepEvent {
   llmMs: number;
 }
 
-/** One `data:` payload of the agent SSE stream. */
-export type AgentEvent =
-  | { type: "started"; instruction: string; maxSteps: number; screen: string; sandbox: string }
-  | { type: "thinking"; seq: number }
-  | AgentStepEvent
+/**
+ * One `data:` payload of the agent conversation stream. `seq` is the event's own
+ * sequence number — unique and monotonic per session, so it doubles as the React
+ * key and as the de-duplication key when the server replays past events.
+ */
+export type SessionEvent = { seq: number; at: string } & (
+  | { type: "status"; status: SessionStatus }
+  /** `interjected` marks a message that arrived while a round was already running. */
+  | { type: "user_message"; content: string; interjected: boolean }
+  | { type: "run_started"; runId: string; maxSteps: number; screen: string; sandbox: string }
+  | { type: "thinking"; step: number }
+  | SessionStepEvent
   | { type: "finished"; reason: "done" | "max_steps" | "aborted"; steps: number; summary: string }
-  | { type: "error"; message: string; detail?: unknown };
+  | { type: "error"; message: string; detail?: unknown }
+  | { type: "reset" }
+);
+
+/** First render of the transcript, before the stream attaches. */
+export interface SessionSnapshot {
+  status: SessionStatus;
+  events: SessionEvent[];
+  turns: number;
+  pending: number;
+}
+
+export interface SessionSendResult {
+  queued: true;
+  interjected: boolean;
+  status: SessionStatus;
+}

@@ -1,193 +1,112 @@
-import { SandboxAgentService, type AgentEvent } from "./sandbox-agent.service";
-import { LlmExhaustedError } from "../llm/llm-gateway.service";
+import { SandboxAgentService, buildMessages, clamp, waitMs, type AgentTurn } from "./sandbox-agent.service";
 import type { ExecutionStep } from "@qa-harness/schemas";
 
-const SETTINGS = { maxStepsPerCase: 20, stepTimeoutSec: 60, resolution: "1280x800" };
-
-function step(partial: Partial<ExecutionStep> & { action: ExecutionStep["action"] }): ExecutionStep {
-  return {
-    schema_version: "1.0",
-    phase: "executing",
-    intent: "do the thing",
-    observation: "saw the screen",
-    ...partial,
-  } as ExecutionStep;
+function turn(assistant: string, text: string, fromUser = false): AgentTurn {
+  return { assistant, user: [{ type: "text", text }], fromUser };
 }
 
-function build(steps: ExecutionStep[], opts: { screenshotOk?: boolean; actionOk?: boolean } = {}) {
-  const performed: { action: string; params: Record<string, unknown> }[] = [];
-  const prompts: { system?: string; messages: unknown[] }[] = [];
-  let i = 0;
-
-  const sandbox = {
-    settings: jest.fn().mockResolvedValue(SETTINGS),
-    requireAgentPort: jest.fn().mockResolvedValue({
-      port: 8000,
-      instance: { name: "sbx-1", resolution: "1280x800" },
-    }),
-  };
+function service(performResult: Record<string, unknown> = { ok: true, action: "click", durationMs: 2, detail: {} }) {
   const computer = {
-    screenshot: jest.fn().mockImplementation(async () =>
-      opts.screenshotOk === false
-        ? { ok: false, action: "screenshot", durationMs: 1, error: "scrot failed", detail: {} }
-        : { ok: true, action: "screenshot", durationMs: 5, image: "AAAA", detail: {} },
-    ),
-    perform: jest.fn().mockImplementation(async (_port: number, action: string, params: Record<string, unknown>) => {
-      performed.push({ action, params });
-      return opts.actionOk === false
-        ? { ok: false, action, durationMs: 3, error: "element not found", detail: {} }
-        : { ok: true, action, durationMs: 3, detail: { x: 10 } };
-    }),
+    screenshot: jest.fn(),
+    perform: jest.fn().mockResolvedValue(performResult),
   };
-  const gateway = {
-    structured: jest.fn().mockImplementation(async (_p: string, _s: string, req: { system?: string; messages: unknown[] }) => {
-      prompts.push({ system: req.system, messages: req.messages });
-      const next = steps[Math.min(i, steps.length - 1)];
-      i++;
-      return { data: next, model: "vision-model", configId: "c", configName: "cfg", attempts: [], fallbacks: 0, raw: "" };
-    }),
-  };
-
-  const service = new SandboxAgentService(sandbox as never, computer as never, gateway as never);
-  return { service, performed, prompts, computer, gateway, sandbox };
+  const gateway = { structured: jest.fn() };
+  return { svc: new SandboxAgentService(computer as never, gateway as never), computer, gateway };
 }
 
-async function collect(gen: AsyncGenerator<AgentEvent>): Promise<AgentEvent[]> {
-  const out: AgentEvent[] = [];
-  for await (const e of gen) out.push(e);
-  return out;
-}
+const step = (action: ExecutionStep["action"]): ExecutionStep =>
+  ({ schema_version: "1.0", phase: "executing", intent: "i", observation: "o", action }) as ExecutionStep;
 
-describe("SandboxAgentService.run", () => {
-  it("performs actions until the model says done", async () => {
-    const { service, performed } = build([
-      step({ action: { type: "navigate", params: { url: "https://example.com" } } }),
-      step({ action: { type: "click", params: { x: 100, y: 200 } } }),
-      step({ phase: "judging", action: { type: "done", params: { summary: "找到了" } } }),
-    ]);
-    const events = await collect(service.run("sbx", { instruction: "去 example.com" }));
-
-    expect(events[0]).toMatchObject({ type: "started", sandbox: "sbx-1", screen: "1280x800" });
-    expect(events.filter((e) => e.type === "step")).toHaveLength(3);
-    expect(performed.map((p) => p.action)).toEqual(["navigate", "click"]); // "done" is not sent to the container
-    expect(events.at(-1)).toMatchObject({ type: "finished", reason: "done", steps: 3, summary: "找到了" });
-  });
-
-  it("stops at maxSteps when the model never finishes", async () => {
-    const { service, performed } = build([step({ action: { type: "screenshot", params: {} } })]);
-    const events = await collect(service.run("sbx", { instruction: "loop", maxSteps: 4 }));
-    expect(performed).toHaveLength(4);
-    expect(events.at(-1)).toMatchObject({ type: "finished", reason: "max_steps", steps: 4 });
-  });
-
-  it("defaults maxSteps to the configured per-case limit", async () => {
-    const { service, gateway } = build([step({ action: { type: "done", params: {} } })]);
-    await collect(service.run("sbx", { instruction: "x" }));
-    expect(gateway.structured).toHaveBeenCalledTimes(1);
-  });
-
-  it("feeds the action result back to the model and keeps the latest screenshot", async () => {
-    const { service, prompts } = build([
-      step({ action: { type: "click", params: { x: 1, y: 2 } } }),
-      step({ action: { type: "done", params: {} } }),
-    ]);
-    await collect(service.run("sbx", { instruction: "x" }));
-
-    // First call: only the current screenshot.
-    const first = prompts[0].messages as { role: string; content: unknown }[];
-    expect(first).toHaveLength(1);
-    expect(first[0].content).toEqual([
-      { type: "image", mediaType: "image/png", base64: "AAAA" },
+describe("buildMessages", () => {
+  it("sends only the current screenshot on the first turn", () => {
+    const messages = buildMessages([], "IMG", 1, 20);
+    expect(messages).toHaveLength(1);
+    expect(messages[0].content).toEqual([
+      { type: "image", mediaType: "image/png", base64: "IMG" },
       { type: "text", text: expect.stringContaining("第 1 / 20 步") },
     ]);
-
-    // Second call: the previous decision, its outcome, then the new screenshot.
-    const second = prompts[1].messages as { role: string; content: unknown }[];
-    expect(second).toHaveLength(3);
-    expect(second[0].role).toBe("assistant");
-    expect(String(second[0].content)).toContain('"type":"click"');
-    expect(JSON.stringify(second[1].content)).toContain("動作 click 執行成功");
-    expect(prompts[0].system).toContain("1280x800");
   });
 
-  it("reports a failed action to the model instead of aborting", async () => {
-    const { service, prompts } = build(
-      [step({ action: { type: "click", params: { x: 1, y: 2 } } }), step({ action: { type: "done", params: {} } })],
-      { actionOk: false },
+  it("keeps images only for the three most recent turns", () => {
+    const turns = Array.from({ length: 6 }, (_, i) => ({
+      assistant: `a${i}`,
+      user: [
+        { type: "image" as const, mediaType: "image/png" as const, base64: `IMG${i}` },
+        { type: "text" as const, text: `result ${i}` },
+      ],
+    }));
+    const messages = buildMessages(turns, "LATEST", 7, 20);
+    const withImages = messages.filter((m) =>
+      Array.isArray(m.content) && m.content.some((p) => p.type === "image"),
     );
-    const events = await collect(service.run("sbx", { instruction: "x" }));
-    const first = events.find((e) => e.type === "step") as Extract<AgentEvent, { type: "step" }>;
-    expect(first.result).toMatchObject({ ok: false, error: "element not found" });
-    expect(JSON.stringify(prompts[1].messages)).toContain("動作 click 失敗：element not found");
-    expect(events.at(-1)).toMatchObject({ type: "finished", reason: "done" });
+    // Three recent turns plus the current screenshot.
+    expect(withImages).toHaveLength(4);
+    expect(JSON.stringify(messages)).toContain("result 0"); // older text survives
+    expect(JSON.stringify(messages)).not.toContain("IMG0"); // its image does not
   });
 
-  it("handles `wait` without calling the container, in ms or seconds", async () => {
-    const { service, performed } = build([
-      step({ action: { type: "wait", params: { ms: 150 } } }),
-      step({ action: { type: "wait", params: { seconds: 2 } } }),
-      step({ action: { type: "wait", params: {} } }),
-      step({ action: { type: "done", params: {} } }),
-    ]);
-    const events = await collect(service.run("sbx", { instruction: "x" }));
-    expect(performed).toEqual([]);
-    const waits = events.filter((e) => e.type === "step") as Extract<AgentEvent, { type: "step" }>[];
-    expect(waits.slice(0, 3).map((w) => w.result.detail?.waited_ms)).toEqual([150, 2000, 1000]);
+  it("omits the assistant slot for a turn the human typed", () => {
+    const messages = buildMessages([turn("", "使用者插話：停一下", true)], "IMG", 2, 20);
+    expect(messages.filter((m) => m.role === "assistant")).toHaveLength(0);
+    expect(messages[0].role).toBe("user");
+  });
+});
+
+describe("performAction", () => {
+  it("waits host-side without touching the container", async () => {
+    const { svc, computer } = service();
+    const r = await svc.performAction(8000, step({ type: "wait", params: { ms: 120 } }), 5000);
+    expect(computer.perform).not.toHaveBeenCalled();
+    expect(r).toMatchObject({ ok: true, detail: { waited_ms: 120 } });
   });
 
-  it("clamps an absurd wait instead of hanging the run", async () => {
-    const { service } = build([
-      step({ action: { type: "wait", params: { seconds: 900 } } }),
-      step({ action: { type: "done", params: {} } }),
-    ]);
-    const events = await collect(service.run("sbx", { instruction: "x" }));
-    const waited = events.find((e) => e.type === "step") as Extract<AgentEvent, { type: "step" }>;
-    expect(waited.result.detail?.waited_ms).toBe(30_000);
-  }, 40_000);
-
-  it("rejects actions the sandbox cannot handle", async () => {
-    const { service } = build([
-      step({ action: { type: "http_request", params: { url: "https://x" } } }),
-      step({ action: { type: "done", params: {} } }),
-    ]);
-    const events = await collect(service.run("sbx", { instruction: "x" }));
-    const bad = events.find((e) => e.type === "step") as Extract<AgentEvent, { type: "step" }>;
-    expect(bad.result.ok).toBe(false);
-    expect(bad.result.error).toContain("http_request");
+  it("refuses actions the sandbox cannot carry out", async () => {
+    const { svc, computer } = service();
+    const r = await svc.performAction(8000, step({ type: "http_request", params: {} }), 5000);
+    expect(computer.perform).not.toHaveBeenCalled();
+    expect(r.ok).toBe(false);
+    expect(r.error).toContain("http_request");
   });
 
-  it("errors out when the screen cannot be captured", async () => {
-    const { service } = build([step({ action: { type: "done", params: {} } })], { screenshotOk: false });
-    const events = await collect(service.run("sbx", { instruction: "x" }));
-    expect(events.at(-1)).toMatchObject({ type: "error", message: expect.stringContaining("截圖失敗") });
+  it("passes container actions through with their params", async () => {
+    const { svc, computer } = service();
+    await svc.performAction(8000, step({ type: "click", params: { x: 5, y: 6 } }), 5000);
+    expect(computer.perform).toHaveBeenCalledWith(8000, "click", { x: 5, y: 6 }, 5000);
+  });
+});
+
+describe("describeResult", () => {
+  it("reports success with the detail and failure with the reason", () => {
+    const { svc } = service();
+    const s = step({ type: "click", params: {} });
+    expect(svc.describeResult(s, { ok: true, durationMs: 1, detail: { x: 3 } })).toContain("執行成功");
+    expect(svc.describeResult(s, { ok: true, durationMs: 1, detail: { x: 3 } })).toContain('{"x":3}');
+    expect(svc.describeResult(s, { ok: false, durationMs: 1, error: "沒找到" })).toContain("失敗：沒找到");
+  });
+});
+
+describe("helpers", () => {
+  it("waitMs accepts ms, seconds or nothing", () => {
+    expect(waitMs({ ms: 250 })).toBe(250);
+    expect(waitMs({ seconds: 3 })).toBe(3000);
+    expect(waitMs({})).toBe(1000);
+    expect(waitMs(undefined)).toBe(1000);
   });
 
-  it("surfaces an exhausted LLM chain with its attempt log", async () => {
-    const { service, gateway } = build([step({ action: { type: "done", params: {} } })]);
-    gateway.structured.mockRejectedValueOnce(
-      new LlmExhaustedError("no vision model", [
-        { configId: "a", configName: "Local", model: "m", attempt: 0, outcome: "provider_error", durationMs: 1 },
-      ]),
-    );
-    const events = await collect(service.run("sbx", { instruction: "x" }));
-    expect(events.at(-1)).toMatchObject({ type: "error", message: expect.stringContaining("Local:provider_error") });
+  it("clamp bounds values and rejects NaN", () => {
+    expect(clamp(5, 1, 10)).toBe(5);
+    expect(clamp(0, 1, 10)).toBe(1);
+    expect(clamp(99, 1, 10)).toBe(10);
+    expect(clamp(Number.NaN, 1, 10)).toBe(1);
   });
+});
 
-  it("stops when the caller aborts", async () => {
-    const { service } = build([step({ action: { type: "click", params: { x: 1, y: 1 } } })]);
-    const controller = new AbortController();
-    const events: AgentEvent[] = [];
-    for await (const e of service.run("sbx", { instruction: "x", maxSteps: 10, signal: controller.signal })) {
-      events.push(e);
-      if (e.type === "step") controller.abort();
-    }
-    expect(events.at(-1)).toMatchObject({ type: "finished", reason: "aborted" });
-  });
-
-  it("reports a clear error when the sandbox is not usable", async () => {
-    const { service, sandbox } = build([step({ action: { type: "done", params: {} } })]);
-    sandbox.requireAgentPort.mockRejectedValueOnce(new Error("Sandbox 沒有在執行"));
-    const events = await collect(service.run("sbx", { instruction: "x" }));
-    expect(events).toEqual([{ type: "error", message: "Sandbox 沒有在執行" }]);
+describe("buildSystemPrompt", () => {
+  it("states the screen size and the interjection rule", () => {
+    const { svc } = service();
+    const p = svc.buildSystemPrompt(1920, 1080);
+    expect(p).toContain("1920x1080");
+    expect(p).toContain("使用者插話");
+    expect(p).toContain("done");
   });
 });

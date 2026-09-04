@@ -66,7 +66,10 @@ Admin → Sandbox → 主控台可以直接起一個容器、看畫面、下指�
 - **容器 image**（`docker/sandbox/`）：Debian + Xvfb + openbox + x11vnc + noVNC + Chromium，加一個純標準函式庫的 computer-use agent（`agent.py`），對外開 6080（noVNC）與 8000（動作 API）。動作集合就是 `execution_step` schema 的 action：screenshot / click / double_click / right_click / move / type / key / scroll / navigate / run_command。
 - **Sandbox Manager**：直接走 Docker Engine API 的 unix socket，不額外裝套件。負責建立、健康檢查、ephemeral port 配置、TTL 到期回收，並套用 sandbox 設定的 CPU、記憶體、解析度與並行上限。
 - **即時畫面**：容器內建的 noVNC，瀏覽器直接連 `127.0.0.1:<port>`（只綁 loopback）。第一版不經過 API 轉發，所以只有在跑 API 的那台機器上看得到。
-- **LLM 操作**：輸入一句話，agent loop 就會「截圖 → 問 vision model 下一個 `execution_step` → 在容器裡執行 → 把結果餵回去」，直到模型回 `done` 或達到步數上限。過程以 SSE 串到前端，每步顯示 phase、動作、意圖、觀察、耗時與使用的 model。這個迴圈就是步驟 8 Agent Worker 要用的核心。
+- **與 LLM 對話**：每個 sandbox 有一條常駐對話。送出訊息後 agent loop 就會「截圖 → 問 vision model 下一個 `execution_step` → 在容器裡執行 → 把結果餵回去」，直到模型回 `done` 或達到步數上限。
+  - **執行中可以插話**：發現方向不對時直接再送一則訊息，它會在下一步之前插進 context，模型會改做法。訊息在畫面上標成「插話」。
+  - **對話會延續**：`done` 之後再送訊息就是新的一輪，前面的歷史都還在，所以可以講「剛剛那個頁面…」。
+  - 進度以 SSE（GET + EventSource）串到前端，重新整理會重播完整對話。每步顯示 phase、動作、意圖、觀察、耗時與使用的 model。這個迴圈就是步驟 8 Agent Worker 要用的核心。
 
 ## LLM Gateway
 

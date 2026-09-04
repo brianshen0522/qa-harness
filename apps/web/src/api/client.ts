@@ -57,57 +57,12 @@ export function errorMessage(err: unknown): string {
 }
 
 /**
- * POSTs a JSON body and yields the parsed payload of every `data:` line of a
- * `text/event-stream` response. `EventSource` cannot be used for these streams
- * because it only ever issues a GET without a body. Pass an `AbortSignal` to
- * stop the run — closing the connection aborts it server-side too.
+ * Opens an `EventSource` on an API path. The agent transcript is served as SSE
+ * over a GET on the same origin (through the Vite proxy in dev), so the session
+ * cookie rides along and `EventSource` — which can only issue a GET — is enough.
+ * It reconnects by itself; the caller closes it and reads `readyState` to tell a
+ * reconnect apart from a stream the browser has given up on.
  */
-export async function* apiEventStream<T>(
-  path: string,
-  body: Record<string, unknown>,
-  signal?: AbortSignal,
-): AsyncGenerator<T> {
-  const res = await fetch(`/api${path}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-    credentials: "include",
-    signal,
-  });
-
-  if (!res.ok || !res.body) {
-    const text = await res.text().catch(() => "");
-    let message = res.statusText || `HTTP ${res.status}`;
-    if (text) {
-      message = text;
-      try {
-        const parsed = JSON.parse(text) as { message?: unknown };
-        const m = parsed?.message;
-        if (Array.isArray(m)) message = m.join("; ");
-        else if (typeof m === "string") message = m;
-      } catch {
-        /* keep the raw body as the message */
-      }
-    }
-    throw new ApiError(res.status, message);
-  }
-
-  const reader = res.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    let nl = buffer.indexOf("\n");
-    while (nl >= 0) {
-      const line = buffer.slice(0, nl).replace(/\r$/, "");
-      buffer = buffer.slice(nl + 1);
-      nl = buffer.indexOf("\n");
-      if (!line.startsWith("data:")) continue;
-      const payload = line.slice(5).trim();
-      if (!payload) continue;
-      yield JSON.parse(payload) as T;
-    }
-  }
+export function apiEventSource(path: string): EventSource {
+  return new EventSource(`/api${path}`, { withCredentials: true });
 }

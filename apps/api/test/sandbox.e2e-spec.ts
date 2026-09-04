@@ -1,4 +1,5 @@
 import { INestApplication } from "@nestjs/common";
+import type { AddressInfo } from "node:net";
 import { api, createApp, loginAdmin, loginUser, resetDb } from "./helpers";
 import { PrismaService } from "../src/prisma/prisma.service";
 import { DockerService } from "../src/sandbox/docker.service";
@@ -15,6 +16,7 @@ describe("admin sandbox (e2e)", () => {
   let admin: string;
   let user: string;
   let dockerReady = false;
+  let port = 0;
   const started: string[] = [];
 
   beforeAll(async () => {
@@ -22,10 +24,17 @@ describe("admin sandbox (e2e)", () => {
     await resetDb(prisma);
     admin = await loginAdmin(app, prisma);
     user = await loginUser(app, "member@s.local");
+    // A real port, so the SSE test can read the stream with fetch instead of
+    // aborting a supertest request (which leaks into the next test).
+    await app.listen(0);
+    port = (app.getHttpServer().address() as AddressInfo).port;
 
     const docker = app.get(DockerService);
     const settings = await app.get(SandboxService).settings();
     dockerReady = (await docker.ping()).ok && (await docker.imageExists(settings.image));
+    // The daemon is shared with whatever else is running on this machine, so the
+    // suite raises its own ceiling instead of competing for the configured one.
+    if (dockerReady) await prisma.sandboxSettings.update({ where: { id: 1 }, data: { maxConcurrent: 99 } });
     if (!dockerReady) {
       // eslint-disable-next-line no-console
       console.warn(`skipping container tests: docker or image ${settings.image} unavailable`);
@@ -131,28 +140,94 @@ describe("admin sandbox (e2e)", () => {
 
     it("refuses to exceed the concurrency limit", async () => {
       if (!dockerReady) return;
-      await prisma.sandboxSettings.update({ where: { id: 1 }, data: { maxConcurrent: 1 } });
+      // Set the ceiling to whatever is already running, so the next start must fail.
+      const running = (await app.get(SandboxService).list()).filter((i) => i.running).length;
+      await prisma.sandboxSettings.update({ where: { id: 1 }, data: { maxConcurrent: running } });
       const r = await api(app).post("/api/admin/sandbox/instances").set("Cookie", admin).send({}).expect(400);
-      expect(r.body.message).toMatch(/並行上限/);
-      await prisma.sandboxSettings.update({ where: { id: 1 }, data: { maxConcurrent: 2 } });
+      expect(r.body.message).toMatch(new RegExp(`並行上限（${running}/${running}）`));
+      await prisma.sandboxSettings.update({ where: { id: 1 }, data: { maxConcurrent: 99 } });
     }, 60_000);
 
     it("reclaims an expired sandbox on sweep", async () => {
       if (!dockerReady) return;
       const sandbox = app.get(SandboxService);
       const docker = app.get(DockerService);
-      // The daemon is shared with whatever else is running on this machine, so make
-      // room rather than assuming the limit is free.
-      const before = await prisma.sandboxSettings.findFirstOrThrow();
-      await prisma.sandboxSettings.update({ where: { id: 1 }, data: { maxConcurrent: 99 } });
       const expired = await sandbox.create("admin-test-user", { ttlMinutes: 5 });
       started.push(expired.id);
       await docker.stopContainer(expired.id);
       const removed = await sandbox.sweep();
       expect(removed).toBeGreaterThanOrEqual(1);
       await api(app).get(`/api/admin/sandbox/instances/${expired.id}`).set("Cookie", admin).expect(404);
-      await prisma.sandboxSettings.update({ where: { id: 1 }, data: { maxConcurrent: before.maxConcurrent } });
     }, 180_000);
+
+    it("holds a steerable conversation: message, interject, stop, reset", async () => {
+      if (!dockerReady) return;
+      const base = `/api/admin/sandbox/instances/${id}/agent`;
+
+      const empty = await api(app).get(`${base}/session`).set("Cookie", admin).expect(200);
+      expect(empty.body).toMatchObject({ status: "idle", events: [], turns: 0 });
+
+      // No LLM is configured in this suite, so a round ends with an error event —
+      // which is exactly what proves the queue, stream and lifecycle are wired up.
+      const sent = await api(app).post(`${base}/messages`).set("Cookie", admin)
+        .send({ content: "開啟 example.com", maxSteps: 3 }).expect(201);
+      expect(sent.body).toMatchObject({ queued: true, interjected: false });
+
+      await new Promise((r) => setTimeout(r, 1500));
+      const after = await api(app).get(`${base}/session`).set("Cookie", admin).expect(200);
+      const kinds = after.body.events.map((e: { type: string }) => e.type);
+      expect(kinds).toContain("user_message");
+      expect(kinds).toContain("run_started");
+      expect(after.body.status).toBe("idle");
+      const userMessage = after.body.events.find((e: { type: string }) => e.type === "user_message");
+      expect(userMessage).toMatchObject({ content: "開啟 example.com", interjected: false });
+
+      // A second message continues the same transcript rather than replacing it.
+      await api(app).post(`${base}/messages`).set("Cookie", admin).send({ content: "再試一次" }).expect(201);
+      await new Promise((r) => setTimeout(r, 1500));
+      const second = await api(app).get(`${base}/session`).set("Cookie", admin).expect(200);
+      expect(second.body.events.filter((e: { type: string }) => e.type === "user_message")).toHaveLength(2);
+
+      expect((await api(app).post(`${base}/stop`).set("Cookie", admin).expect(201)).body).toEqual({ stopped: false });
+      await api(app).delete(`${base}/session`).set("Cookie", admin).expect(200);
+      const cleared = await api(app).get(`${base}/session`).set("Cookie", admin).expect(200);
+      expect(cleared.body).toMatchObject({ turns: 0 });
+      expect(cleared.body.events.map((e: { type: string }) => e.type)).not.toContain("user_message");
+
+      await api(app).post(`${base}/messages`).set("Cookie", admin).send({ content: "  " }).expect(400);
+    }, 60_000);
+
+    it("streams the transcript over SSE and replays it on connect", async () => {
+      if (!dockerReady) return;
+      await api(app).post(`/api/admin/sandbox/instances/${id}/agent/messages`).set("Cookie", admin)
+        .send({ content: "串流測試" }).expect(201);
+      await new Promise((r) => setTimeout(r, 1200));
+
+      const controller = new AbortController();
+      const res = await fetch(`http://127.0.0.1:${port}/api/admin/sandbox/instances/${id}/agent/stream`, {
+        headers: { cookie: admin },
+        signal: controller.signal,
+      });
+      expect(res.status).toBe(200);
+      expect(res.headers.get("content-type")).toContain("text/event-stream");
+
+      const reader = res.body!.getReader();
+      const decoder = new TextDecoder();
+      let text = "";
+      const deadline = Date.now() + 10_000;
+      while (!text.includes("串流測試") && Date.now() < deadline) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        text += decoder.decode(value, { stream: true });
+      }
+      controller.abort();
+
+      expect(text).toContain(": connected");
+      expect(text).toContain('"type":"user_message"');
+      expect(text).toContain("串流測試");
+      // Replay includes the whole round, not just the newest event.
+      expect(text).toContain('"type":"run_started"');
+    }, 60_000);
 
     it("stops and removes the sandbox", async () => {
       if (!dockerReady) return;
@@ -165,7 +240,9 @@ describe("admin sandbox (e2e)", () => {
     it("records start and stop in the audit log", async () => {
       if (!dockerReady) return;
       const actions = (await prisma.auditLog.findMany()).map((a) => a.action);
-      expect(actions).toEqual(expect.arrayContaining(["sandbox.start", "sandbox.stop", "sandbox.action"]));
+      expect(actions).toEqual(expect.arrayContaining([
+        "sandbox.start", "sandbox.stop", "sandbox.action", "sandbox.agent.message", "sandbox.agent.stop",
+      ]));
     });
   });
 });

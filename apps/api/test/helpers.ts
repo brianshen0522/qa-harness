@@ -5,6 +5,7 @@ import request from "supertest";
 import * as argon2 from "argon2";
 import { AppModule } from "../src/app.module";
 import { PrismaService } from "../src/prisma/prisma.service";
+import { LlmExceptionFilter } from "../src/llm/llm-exception.filter";
 
 export async function createApp(): Promise<{ app: INestApplication; prisma: PrismaService }> {
   const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
@@ -12,6 +13,7 @@ export async function createApp(): Promise<{ app: INestApplication; prisma: Pris
   app.setGlobalPrefix("api");
   app.use(cookieParser());
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
+  app.useGlobalFilters(new LlmExceptionFilter());
   await app.init();
   const prisma = app.get(PrismaService);
   return { app, prisma };

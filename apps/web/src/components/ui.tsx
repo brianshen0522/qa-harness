@@ -1,4 +1,4 @@
-import type { ButtonHTMLAttributes, InputHTMLAttributes, ReactNode, SelectHTMLAttributes, TextareaHTMLAttributes } from "react";
+import type { ButtonHTMLAttributes, ComponentProps, InputHTMLAttributes, ReactNode, SelectHTMLAttributes } from "react";
 import { useEffect } from "react";
 
 function cx(...parts: (string | false | null | undefined)[]) {
@@ -41,7 +41,7 @@ export function Input({ className, ...props }: InputHTMLAttributes<HTMLInputElem
   return <input {...props} className={cx(FIELD, className)} />;
 }
 
-export function Textarea({ className, ...props }: TextareaHTMLAttributes<HTMLTextAreaElement>) {
+export function Textarea({ className, ...props }: ComponentProps<"textarea">) {
   return <textarea {...props} className={cx(FIELD, "font-mono", className)} />;
 }
 
@@ -167,6 +167,36 @@ export function Table({ children }: { children: ReactNode }) {
       <table className="w-full text-left text-sm [&_th]:whitespace-nowrap [&_th]:px-3 [&_th]:py-2 [&_th]:text-xs [&_th]:font-medium [&_th]:text-gray-500 [&_td]:px-3 [&_td]:py-2 [&_td]:align-top [&_tbody_tr]:border-t [&_tbody_tr]:border-gray-100">
         {children}
       </table>
+    </div>
+  );
+}
+
+export function Tabs<T extends string>({
+  tabs,
+  active,
+  onChange,
+}: {
+  tabs: { key: T; label: string }[];
+  active: T;
+  onChange: (key: T) => void;
+}) {
+  return (
+    <div className="flex gap-1 border-b border-gray-200" role="tablist">
+      {tabs.map((t) => (
+        <button
+          key={t.key}
+          type="button"
+          role="tab"
+          aria-selected={active === t.key}
+          onClick={() => onChange(t.key)}
+          className={cx(
+            "-mb-px border-b-2 px-3 py-2 text-sm font-medium transition",
+            active === t.key ? "border-blue-600 text-blue-700" : "border-transparent text-gray-500 hover:text-gray-800",
+          )}
+        >
+          {t.label}
+        </button>
+      ))}
     </div>
   );
 }

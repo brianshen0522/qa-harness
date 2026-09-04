@@ -56,6 +56,8 @@ export class OpenAiProvider implements LlmProviderAdapter {
       model: cfg.model,
       messages: toOpenAiMessages(req),
       max_completion_tokens: req.maxTokens ?? DEFAULT_MAX_TOKENS,
+      // Explicit: some compatible gateways stream by default when the field is absent.
+      stream: false,
       ...(req.temperature !== undefined ? { temperature: req.temperature } : {}),
     };
 

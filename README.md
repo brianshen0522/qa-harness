@@ -9,7 +9,7 @@
 | 1. Auth + Team / Project / Target CRUD + 權限規則（含測試） | ✅ |
 | 2. Admin 後台：LLM provider 設定 + 測試 + fallback；LLM Gateway | ✅ |
 | 3. Output Contract：所有 schema + 驗證 / 重試 / fallback | ✅ |
-| 4. 討論區 + Context Handoff | ⬜ |
+| 4. 討論區（引導式對談 + 完整度面板 + Target 提案）+ Context Handoff | ✅ |
 | 5. Test case 生成 pipeline | ⬜ |
 | 6. 變更管理 | ⬜ |
 | 7. Sandbox Manager + noVNC | ⬜ |
@@ -51,6 +51,12 @@ npm test -w packages/schemas    # schema 驗證
 npm test -w apps/api            # 單元：權限規則、加密、gateway 重試 / fallback
 npm run test:e2e -w apps/api    # e2e：auth、CRUD、權限規則 §2.3、admin LLM、chain（需 docker db）
 ```
+
+## 討論區與 Context Handoff（§4.1 / §4.2）
+
+**討論區**：Project 與 Target 各一條討論串。LLM 帶著 scope 對應的「必須釐清項目」清單主動提問，每輪最多 3 題，每題標註它要釐清哪一項；回覆同時更新完整度（未知 / 部分 / 清楚）與描述草稿。使用者訊息中的連結會自動抓取，內容送進 context 並存為 `project_attachments`。被測面清楚後 LLM 會提出 Target 提案卡，**只提案不建立**，由 Project owner 接受後才真的建立 Target。一鍵「儲存為描述」產生新的 description version（`source=discussion`）。
+
+**Context Handoff**：依 scope 與 target kind 產生交接 prompt → 貼給 coding agent → 把回傳的 Markdown 貼回來 → 預覽解析結果 → 選擇覆蓋 / 合併 / 當作附件套用。解析採寬鬆策略：認得的 section 結構化匯入，未知 section 原樣保留，完全無法解析則強制走附件。偵測到疑似憑證時會標示行號與遮罩預覽，並**從寫入的描述中移除**，原始文件另存於 `handoff_documents`。
 
 ## LLM Gateway
 

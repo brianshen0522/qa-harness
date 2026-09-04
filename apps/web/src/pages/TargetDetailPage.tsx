@@ -1,15 +1,29 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api/client";
 import type { Role, TargetDetail, TargetMember } from "../api/types";
-import { Badge, Button, Card, Dialog, Empty, ErrorText, Field, Input, KindBadge, Notice, RoleBadge, Select, Spinner, StatusBadge } from "../components/ui";
+import { Badge, Button, Card, Dialog, Empty, ErrorText, Field, Input, KindBadge, Notice, RoleBadge, Select, Spinner, StatusBadge, Tabs } from "../components/ui";
 import { DescriptionEditor } from "../components/DescriptionEditor";
 import { ConfigForm, configToDraft, draftToConfig, type ConfigDraft } from "../components/ConfigForm";
+import { DiscussionPanel } from "../components/DiscussionPanel";
+import { HandoffPanel } from "../components/HandoffPanel";
 import { ROLES, ROLE_LABEL, hasRole } from "../lib/roles";
+
+type TabKey = "overview" | "discussion" | "handoff";
+
+const TABS: { key: TabKey; label: string }[] = [
+  { key: "overview", label: "總覽" },
+  { key: "discussion", label: "討論區" },
+  { key: "handoff", label: "交接" },
+];
 
 export default function TargetDetailPage() {
   const { id = "" } = useParams();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tabParam = searchParams.get("tab");
+  const tab: TabKey = tabParam === "discussion" || tabParam === "handoff" ? tabParam : "overview";
+  const setTab = (key: TabKey) => setSearchParams(key === "overview" ? {} : { tab: key }, { replace: true });
   const qc = useQueryClient();
   const navigate = useNavigate();
   const target = useQuery({ queryKey: ["targets", id], queryFn: () => api<TargetDetail>(`/targets/${id}`) });
@@ -111,6 +125,12 @@ export default function TargetDetailPage() {
 
       {running && <Notice>此 Target 正在執行中，執行期間無法修改設定、描述或憑證。</Notice>}
 
+      <Tabs tabs={TABS} active={tab} onChange={setTab} />
+
+      {tab === "discussion" && <DiscussionPanel scope="target" entityId={id} myRole={t.myRole} locked={running} />}
+      {tab === "handoff" && <HandoffPanel scope="target" entityId={id} myRole={t.myRole} locked={running} />}
+
+      {tab === "overview" && (
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)]">
         <div className="space-y-4">
           <Card title="設定">
@@ -135,6 +155,7 @@ export default function TargetDetailPage() {
           <TargetMembers targetId={id} isOwner={isOwner} />
         </div>
       </div>
+      )}
 
       <Dialog open={confirmDelete} title="刪除 Target" onClose={() => setConfirmDelete(false)}>
         <p className="text-sm text-gray-700">確定要刪除「{t.name}」嗎？此動作無法復原。</p>

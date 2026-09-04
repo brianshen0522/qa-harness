@@ -10,6 +10,8 @@ import { ProjectsModule } from "./projects/projects.module";
 import { TargetsModule } from "./targets/targets.module";
 import { AdminModule } from "./admin/admin.module";
 import { LlmModule } from "./llm/llm.module";
+import { DiscussionModule } from "./discussion/discussion.module";
+import { HandoffModule } from "./handoff/handoff.module";
 
 @Module({
   imports: [
@@ -24,6 +26,8 @@ import { LlmModule } from "./llm/llm.module";
     TargetsModule,
     AdminModule,
     LlmModule,
+    DiscussionModule,
+    HandoffModule,
   ],
 })
 export class AppModule {}

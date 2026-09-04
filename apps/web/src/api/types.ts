@@ -228,3 +228,175 @@ export interface Usage {
     createdAt: string;
   }[];
 }
+
+// ---------- 討論區（spec §4.1） ----------
+
+export type Scope = "project" | "target";
+export type Completeness = "unknown" | "partial" | "clear";
+export type CompletenessMap = Record<string, Completeness>;
+export type ProposalStatus = "pending" | "accepted" | "rejected";
+
+export interface ChecklistItem {
+  key: string;
+  label: string;
+  hint: string;
+}
+
+/** The structured payload an assistant turn carries (`discussion_turn` schema). */
+export interface DiscussionTurn {
+  schema_version: "1.0";
+  message: string;
+  questions: { item: string; question: string }[];
+  draft_patch: { mode: "none" | "replace" | "append"; content: string };
+  completeness: CompletenessMap;
+  target_proposals: {
+    kind: TargetKind;
+    name: string;
+    config: TargetConfig;
+    credential_keys: string[];
+    rationale: string;
+  }[];
+}
+
+export interface LinkReference {
+  url: string;
+  title: string | null;
+  chars: number;
+  error: string | null;
+}
+
+export interface DiscussionMessage {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  /** Assistant messages only. */
+  structured: DiscussionTurn | null;
+  /** User messages only. */
+  references: LinkReference[] | null;
+  model: string | null;
+  createdAt: string;
+}
+
+export interface TargetProposal {
+  id: string;
+  kind: TargetKind;
+  name: string;
+  config: TargetConfig;
+  credentialKeys: string[];
+  rationale: string;
+  status: ProposalStatus;
+  createdTargetId: string | null;
+  createdAt: string;
+}
+
+export interface DiscussionState {
+  id: string;
+  scope: Scope;
+  projectId: string;
+  targetId: string | null;
+  kind: TargetKind | null;
+  entityName: string;
+  checklist: ChecklistItem[];
+  completeness: CompletenessMap;
+  draft: string;
+  messages: DiscussionMessage[];
+  proposals: TargetProposal[];
+  /** Target proposals only make sense in a Project discussion. */
+  canPropose: boolean;
+}
+
+export interface DiscussionPostResult {
+  userMessage: DiscussionMessage;
+  assistantMessage: DiscussionMessage;
+  turn: DiscussionTurn;
+  draft: string;
+  completeness: CompletenessMap;
+  proposals: TargetProposal[];
+  llm: { model: string; configName: string; fallbacks: number; attempts: number };
+}
+
+export type ProposalDecision = TargetProposal & { target?: Target };
+
+export interface SavedDescription {
+  id: string;
+  description: string | null;
+  descriptionVersion: number;
+}
+
+export interface ProjectAttachment {
+  id: string;
+  sourceType: "url" | "file" | "handoff";
+  filename: string;
+  mime: string;
+  url: string | null;
+  byteSize: number;
+  createdAt: string;
+}
+
+// ---------- Context Handoff（spec §4.2） ----------
+
+export type HandoffApplyMode = "overwrite" | "merge" | "attachment";
+
+export interface HandoffPromptSection {
+  title: string;
+  ask: string;
+}
+
+export interface HandoffPrompt {
+  scope: Scope;
+  kind: TargetKind | null;
+  harnessVersion: string;
+  sections: HandoffPromptSection[];
+  prompt: string;
+}
+
+export interface SuggestedTestCase {
+  title: string;
+  steps: string[];
+  expected?: string;
+}
+
+export interface DetectedSecret {
+  key: string;
+  line: number;
+  preview: string;
+}
+
+export interface HandoffParsed {
+  frontMatter: Record<string, string>;
+  /** Canonical section key -> markdown. */
+  sections: Record<string, string>;
+  /** Unrecognised title -> markdown. */
+  unknownSections: Record<string, string>;
+  suggestedTestCases: SuggestedTestCase[];
+  detectedSecrets: DetectedSecret[];
+  /** Canonical titles that are missing or still a placeholder. */
+  missingSections: string[];
+  unparsable: boolean;
+  warnings: string[];
+}
+
+export interface HandoffPreview extends HandoffParsed {
+  renderedDescription: string;
+  currentDescription: string;
+  recommendedMode: HandoffApplyMode;
+}
+
+export interface HandoffImportResult extends HandoffParsed {
+  document: {
+    id: string;
+    importedAt: string;
+    applyMode: HandoffApplyMode;
+    appliedToDescriptionVersion: number | null;
+  };
+}
+
+export interface HandoffDocumentListItem {
+  id: string;
+  scope: Scope;
+  harnessVersion: string;
+  applyMode: HandoffApplyMode;
+  importedAt: string;
+  importedById: string | null;
+  appliedToDescriptionVersion: number | null;
+}

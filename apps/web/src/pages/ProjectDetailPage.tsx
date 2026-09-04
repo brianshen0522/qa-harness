@@ -1,15 +1,29 @@
 import { useState, type FormEvent } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api/client";
 import type { DescriptionVersion, ProjectDetail, ProjectMember, Role, Target, TargetKind } from "../api/types";
-import { Button, Card, Dialog, Empty, ErrorText, Field, Input, KindBadge, RoleBadge, Select, Spinner, StatusBadge, Table, Textarea } from "../components/ui";
+import { Button, Card, Dialog, Empty, ErrorText, Field, Input, KindBadge, RoleBadge, Select, Spinner, StatusBadge, Table, Tabs, Textarea } from "../components/ui";
 import { DescriptionEditor } from "../components/DescriptionEditor";
 import { ConfigForm, configToDraft, draftToConfig, type ConfigDraft } from "../components/ConfigForm";
+import { DiscussionPanel } from "../components/DiscussionPanel";
+import { HandoffPanel } from "../components/HandoffPanel";
 import { KIND_LABEL, ROLES, ROLE_LABEL, formatDate, hasRole } from "../lib/roles";
+
+type TabKey = "overview" | "discussion" | "handoff";
+
+const TABS: { key: TabKey; label: string }[] = [
+  { key: "overview", label: "總覽" },
+  { key: "discussion", label: "討論區" },
+  { key: "handoff", label: "交接" },
+];
 
 export default function ProjectDetailPage() {
   const { id = "" } = useParams();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tabParam = searchParams.get("tab");
+  const tab: TabKey = tabParam === "discussion" || tabParam === "handoff" ? tabParam : "overview";
+  const setTab = (key: TabKey) => setSearchParams(key === "overview" ? {} : { tab: key }, { replace: true });
   const qc = useQueryClient();
   const navigate = useNavigate();
   const project = useQuery({ queryKey: ["projects", id], queryFn: () => api<ProjectDetail>(`/projects/${id}`) });
@@ -106,6 +120,12 @@ export default function ProjectDetailPage() {
       </div>
       <ErrorText error={rename.error} />
 
+      <Tabs tabs={TABS} active={tab} onChange={setTab} />
+
+      {tab === "discussion" && <DiscussionPanel scope="project" entityId={id} myRole={p.myRole} />}
+      {tab === "handoff" && <HandoffPanel scope="project" entityId={id} myRole={p.myRole} />}
+
+      {tab === "overview" && (
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)]">
         <div className="space-y-4">
           <Card
@@ -168,6 +188,7 @@ export default function ProjectDetailPage() {
 
         <ProjectMembers projectId={id} isOwner={isOwner} />
       </div>
+      )}
 
       <NewTargetDialog projectId={id} open={showNewTarget} onClose={() => setShowNewTarget(false)} />
 

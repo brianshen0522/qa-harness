@@ -22,7 +22,7 @@ model User {
   status       UserStatus @default(active)
   createdAt    DateTime   @default(now()) @map("created_at")
 
-  teamMemberships   TeamMember[]
+  teamMemberships    TeamMember[]
   projectMemberships ProjectMember[]
   targetMemberships  TargetMember[]
   createdProjects    Project[]
@@ -89,6 +89,9 @@ model Project {
   members             ProjectMember[]
   targets             QaTarget[]
   descriptionVersions ProjectDescriptionVersion[]
+  discussion          Discussion?
+  attachments         ProjectAttachment[]
+  handoffDocuments    HandoffDocument[]
 
   @@map("projects")
 }
@@ -145,9 +148,11 @@ model QaTarget {
   createdAt          DateTime     @default(now()) @map("created_at")
   updatedAt          DateTime     @updatedAt @map("updated_at")
 
-  project     Project            @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  credentials TargetCredential[]
-  members     TargetMember[]
+  project          Project            @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  credentials      TargetCredential[]
+  members          TargetMember[]
+  discussion       Discussion?
+  handoffDocuments HandoffDocument[]
 
   @@map("qa_targets")
 }
@@ -221,19 +226,19 @@ model LlmFallbackChain {
 
 /// One row per LLM call, for usage accounting and debugging fallbacks.
 model LlmCallLog {
-  id           String   @id @default(uuid())
+  id           String     @id @default(uuid())
   purpose      LlmPurpose
-  schemaName   String?  @map("schema_name")
-  llmConfigId  String?  @map("llm_config_id")
+  schemaName   String?    @map("schema_name")
+  llmConfigId  String?    @map("llm_config_id")
   model        String
   attempt      Int
-  outcome      String   // ok | invalid_output | provider_error | timeout | rate_limit
-  errorMessage String?  @map("error_message")
-  rawOutput    String?  @map("raw_output")
-  inputTokens  Int?     @map("input_tokens")
-  outputTokens Int?     @map("output_tokens")
-  durationMs   Int      @map("duration_ms")
-  createdAt    DateTime @default(now()) @map("created_at")
+  outcome      String // ok | invalid_output | provider_error | timeout | rate_limit
+  errorMessage String?    @map("error_message")
+  rawOutput    String?    @map("raw_output")
+  inputTokens  Int?       @map("input_tokens")
+  outputTokens Int?       @map("output_tokens")
+  durationMs   Int        @map("duration_ms")
+  createdAt    DateTime   @default(now()) @map("created_at")
 
   @@map("llm_call_logs")
 }
@@ -270,4 +275,140 @@ model AuditLog {
 
   @@index([createdAt])
   @@map("audit_logs")
+}
+
+// ---------- Discussion (§4.1) ----------
+
+enum Scope {
+  project
+  target
+}
+
+enum DiscussionRole {
+  user
+  assistant
+}
+
+/// One guided-discussion thread per Project and per Target.
+model Discussion {
+  id           String   @id @default(uuid())
+  scope        Scope
+  projectId    String?  @unique @map("project_id")
+  targetId     String?  @unique @map("target_id")
+  /// { checklistItemKey: "unknown" | "partial" | "clear" }
+  completeness Json     @default("{}")
+  /// Working description draft, editable by the user and patched by the LLM.
+  draft        String   @default("")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  project   Project?            @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  target    QaTarget?           @relation(fields: [targetId], references: [id], onDelete: Cascade)
+  messages  DiscussionMessage[]
+  proposals TargetProposal[]
+
+  @@map("discussions")
+}
+
+model DiscussionMessage {
+  id           String         @id @default(uuid())
+  discussionId String         @map("discussion_id")
+  role         DiscussionRole
+  content      String
+  /// Full `discussion_turn` payload for assistant messages.
+  structured   Json?
+  /// URLs fetched for this message: [{ url, title, chars, error }]
+  references   Json?
+  llmConfigId  String?        @map("llm_config_id")
+  model        String?
+  createdAt    DateTime       @default(now()) @map("created_at")
+
+  discussion Discussion @relation(fields: [discussionId], references: [id], onDelete: Cascade)
+
+  @@index([discussionId, createdAt])
+  @@map("discussion_messages")
+}
+
+enum ProposalStatus {
+  pending
+  accepted
+  rejected
+}
+
+/// LLM-suggested QA Target. Never applied automatically — a user must accept it.
+model TargetProposal {
+  id              String         @id @default(uuid())
+  discussionId    String         @map("discussion_id")
+  messageId       String?        @map("message_id")
+  kind            TargetKind
+  name            String
+  config          Json           @default("{}")
+  credentialKeys  String[]       @map("credential_keys")
+  rationale       String         @default("")
+  status          ProposalStatus @default(pending)
+  createdTargetId String?        @map("created_target_id")
+  decidedById     String?        @map("decided_by")
+  decidedAt       DateTime?      @map("decided_at")
+  createdAt       DateTime       @default(now()) @map("created_at")
+
+  discussion Discussion @relation(fields: [discussionId], references: [id], onDelete: Cascade)
+
+  @@map("target_proposals")
+}
+
+enum AttachmentSource {
+  url
+  file
+  handoff
+}
+
+/// Reference material gathered in the discussion area (§4.1).
+model ProjectAttachment {
+  id           String           @id @default(uuid())
+  projectId    String           @map("project_id")
+  sourceType   AttachmentSource @map("source_type")
+  filename     String
+  mime         String           @default("text/plain")
+  url          String?
+  storageKey   String?          @map("storage_key")
+  /// Extracted text, used as LLM context.
+  textContent  String?          @map("text_content")
+  byteSize     Int              @default(0) @map("byte_size")
+  uploadedById String           @map("uploaded_by")
+  createdAt    DateTime         @default(now()) @map("created_at")
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId, createdAt])
+  @@map("project_attachments")
+}
+
+// ---------- Context Handoff (§4.2) ----------
+
+enum HandoffApplyMode {
+  overwrite
+  merge
+  attachment
+}
+
+model HandoffDocument {
+  id                          String           @id @default(uuid())
+  scope                       Scope
+  projectId                   String?          @map("project_id")
+  targetId                    String?          @map("target_id")
+  rawContent                  String           @map("raw_content")
+  /// Parsed `handoff_document` payload (front-matter + sections + extras).
+  parsed                      Json
+  harnessVersion              String           @map("harness_version")
+  applyMode                   HandoffApplyMode @map("apply_mode")
+  importedById                String           @map("imported_by")
+  importedAt                  DateTime         @default(now()) @map("imported_at")
+  appliedToDescriptionVersion Int?             @map("applied_to_description_version")
+
+  project Project?  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  target  QaTarget? @relation(fields: [targetId], references: [id], onDelete: Cascade)
+
+  @@index([projectId, importedAt])
+  @@index([targetId, importedAt])
+  @@map("handoff_documents")
 }

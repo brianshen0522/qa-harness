@@ -37,7 +37,7 @@ npm run infra:up                # 起 db / redis / minio
 npm run build -w packages/schemas
 npm run db:migrate              # prisma migrate dev
 npm run db:seed                 # 建立 ADMIN_EMAIL / ADMIN_PASSWORD 的 admin
-docker build -t qa-harness-sandbox:0.2 docker/sandbox   # sandbox 桌面 image
+docker build -t qa-harness-sandbox:0.4 docker/sandbox   # sandbox 桌面 image
 npm run dev:api                 # http://localhost:3001/api
 npm run dev:web                 # http://localhost:5173
 ```
@@ -100,6 +100,7 @@ Target 設定裡若含 `Authorization` 之類的欄位，送進模型前會遮�
 
 **安全與正確性**
 - 全程唯讀；`/logout` 之類會改狀態的連結預設不跟。
+- sandbox 的 Chromium 關掉密碼管理員（seed profile Preferences + flags），否則登入後「Save password?」彈窗會蓋住表單、汙染每一張截圖。
 - 身份之間清 cookie 與 storage（CDP `clearBrowserCookies` + `clearDataForOrigin`），否則管理員的 session 會漏進訪客的爬取、權限矩陣就是一場謊言。
 - 「全面」不寫進 UI：顯示的是可回報的覆蓋率（掃了幾條路由、幾個身份、產生幾條案例），不是宣稱窮盡。
 

@@ -443,7 +443,11 @@ export class RunService implements OnModuleInit {
         this.gateway.structured(
           "execute",
           "execution_step",
-          { system, messages: buildMessages(turns, screenshot, seq, maxSteps), maxTokens: 2048, timeoutMs: stepTimeoutMs },
+          // Low reasoning effort: deciding one next action is not a hard reasoning
+          // problem, and left free the model spends the 2048-token budget thinking
+          // and returns nothing ("no content outside its reasoning block"), which
+          // shows up as invalid_output retries — wasted latency and real cost.
+          { system, messages: buildMessages(turns, screenshot, seq, maxSteps), maxTokens: 2048, timeoutMs: stepTimeoutMs, reasoningEffort: "low" },
           { maxRetries: 3, requireVision: ctx.needsSandbox },
         ),
       );

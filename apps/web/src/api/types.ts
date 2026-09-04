@@ -260,6 +260,9 @@ export interface Usage {
     _count: { _all: number };
     _sum: { inputTokens: number | null; outputTokens: number | null };
   }[];
+  models: { model: string | null; calls: number; inputTokens: number; outputTokens: number; costUsd: number }[];
+  totalCostUsd: number;
+  byProject: { projectId: string; name: string; runs: number; steps: number }[];
   recent: {
     id: string;
     purpose: string;

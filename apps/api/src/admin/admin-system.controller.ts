@@ -5,6 +5,7 @@ import { CurrentAdmin } from "../common/decorators";
 import type { AdminPrincipal } from "../common/types";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
+import { estimateCost } from "../llm/pricing";
 
 class SandboxSettingsDto {
   @IsOptional() @IsString() image?: string;
@@ -42,9 +43,15 @@ export class AdminSystemController {
 
   @Get("usage")
   async usage() {
-    const [byPurpose, recent] = await Promise.all([
+    const [byPurpose, byModel, recent, runAgg, targets] = await Promise.all([
       this.prisma.llmCallLog.groupBy({
         by: ["purpose", "outcome"],
+        _count: { _all: true },
+        _sum: { inputTokens: true, outputTokens: true },
+      }),
+      // Cost is per model, since price depends on which model actually served.
+      this.prisma.llmCallLog.groupBy({
+        by: ["model"],
         _count: { _all: true },
         _sum: { inputTokens: true, outputTokens: true },
       }),
@@ -52,7 +59,31 @@ export class AdminSystemController {
         id: true, purpose: true, schemaName: true, model: true, attempt: true, outcome: true, errorMessage: true,
         inputTokens: true, outputTokens: true, durationMs: true, createdAt: true,
       } }),
+      // Per-project run count (§4.8 各 project 的 run 數).
+      this.prisma.testRun.groupBy({ by: ["targetId"], _count: { _all: true }, _sum: { stepCount: true } }),
+      this.prisma.qaTarget.findMany({ select: { id: true, name: true, projectId: true, project: { select: { name: true } } } }),
     ]);
-    return { byPurpose, recent };
+
+    const models = byModel.map((m) => {
+      const inTok = m._sum.inputTokens ?? 0;
+      const outTok = m._sum.outputTokens ?? 0;
+      return { model: m.model, calls: m._count._all, inputTokens: inTok, outputTokens: outTok, costUsd: estimateCost(m.model, inTok, outTok) };
+    });
+    const totalCostUsd = models.reduce((a, m) => a + m.costUsd, 0);
+
+    // Roll the per-target run/step counts up to projects.
+    const byTarget = new Map(targets.map((t) => [t.id, t]));
+    const projects = new Map<string, { projectId: string; name: string; runs: number; steps: number }>();
+    for (const r of runAgg) {
+      const target = byTarget.get(r.targetId);
+      if (!target) continue;
+      const key = target.projectId;
+      const entry = projects.get(key) ?? { projectId: key, name: target.project.name, runs: 0, steps: 0 };
+      entry.runs += r._count._all;
+      entry.steps += r._sum.stepCount ?? 0;
+      projects.set(key, entry);
+    }
+
+    return { byPurpose, models, totalCostUsd, recent, byProject: [...projects.values()] };
   }
 }

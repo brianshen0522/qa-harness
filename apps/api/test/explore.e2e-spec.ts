@@ -15,49 +15,71 @@ import type { LlmProviderAdapter } from "../src/llm/providers";
  * A tiny SPA is modelled: "/" links to /admin and /profile; /admin is admin-only;
  * /profile has a form. The fake ComputerService plays login and CDP navigation.
  */
-const SITE: Record<string, { title: string; links: string[]; forms?: PageProbe["forms"]; adminOnly?: boolean }> = {
+type Control = { text: string; role: string; disabled: boolean };
+const SITE: Record<string, { title: string; links: string[]; forms?: PageProbe["forms"]; controls?: Control[]; adminOnly?: boolean }> = {
   "/": { title: "Home", links: ["/admin", "/profile"] },
   "/admin": { title: "Admin", links: ["/admin/users"], adminOnly: true },
-  "/admin/users": { title: "Users", links: [], adminOnly: true },
+  // The interesting page: a button that opens a modal, plus a destructive one
+  // the probe must refuse to click.
+  "/admin/users": {
+    title: "Users", links: [], adminOnly: true,
+    controls: [
+      { text: "新增使用者", role: "button", disabled: false },
+      { text: "刪除", role: "button", disabled: false },
+    ],
+  },
   "/profile": { title: "Profile", links: [], forms: [{ action: "/profile", method: "post", fields: [{ name: "email", type: "email", required: true, label: "Email" }] }] },
   "/login": { title: "Login", links: [], forms: [{ action: "/login", method: "post", fields: [{ name: "user", type: "text", required: true, label: "User" }, { name: "pass", type: "password", required: true, label: "Password" }] }] },
 };
 const BASE = "http://fake.local/";
+/** The modal that "新增使用者" opens — a form that is not present until clicked. */
+const USER_MODAL_FORM = { action: "/admin/users", method: "post", fields: [
+  { name: "username", type: "text", required: true, label: "Username" },
+  { name: "role", type: "select", required: true, label: "Role" },
+] };
 
-function probe(path: string): PageProbe {
+function probe(path: string, modalOpen = false): PageProbe {
   const page = SITE[path] ?? SITE["/login"];
+  const forms = [...(page.forms ?? [])];
+  if (modalOpen && path === "/admin/users") forms.push(USER_MODAL_FORM);
   return {
     url: BASE.replace(/\/$/, "") + path, path, title: page.title,
     headings: [page.title], links: page.links.map((h) => ({ href: BASE.replace(/\/$/, "") + h, text: h, visible: true })),
-    forms: page.forms ?? [], controls: [], landmarks: ["main"], scrollWidth: 1280, clientWidth: 1280, textLength: 500,
+    forms, controls: page.controls ?? [], landmarks: ["main"], scrollWidth: 1280, clientWidth: 1280, textLength: 500,
+    dialogs: modalOpen && path === "/admin/users" ? 1 : 0, overlay: false,
   };
 }
 
-/** A fake browser: tracks whether the current identity is admin, and where it is. */
+/** A fake browser: tracks the identity, the current path, and whether a modal is open. */
 class FakeComputer {
   loggedInAsAdmin = false;
   current = "/login";
+  modalOpen = false;
+  clicks: string[] = [];
   async health() { return { ok: true, width: 1280, height: 800 }; }
-  async cdpReset() { this.loggedInAsAdmin = false; return { ok: true, action: "cdp_reset", durationMs: 1, detail: {} }; }
+  async cdpReset() { this.loggedInAsAdmin = false; this.modalOpen = false; return { ok: true, action: "cdp_reset", durationMs: 1, detail: {} }; }
   async cdpNavigate(_p: number, url: string): Promise<PageProbe> {
     const path = new URL(url).pathname.replace(/\/$/, "") || "/";
+    this.modalOpen = false; // navigation closes any modal
     const page = SITE[path];
-    // Unknown or admin-only page while not admin → bounced to /login.
     if (!page || (page.adminOnly && !this.loggedInAsAdmin)) { this.current = "/login"; return probe("/login"); }
     this.current = path; return probe(path);
   }
   async cdpFill() { return { ok: true, action: "cdp_fill", durationMs: 1, detail: {} }; }
   async cdpClick(_p: number, text: string) {
-    // The admin login form's submit; mark the session and move to /admin.
+    this.clicks.push(text);
     if (text.toLowerCase().includes("sign")) { this.loggedInAsAdmin = true; this.current = "/admin"; }
-    return { ok: true, action: "cdp_click", durationMs: 1, detail: { before: BASE + "login", navigated: true, url: BASE.replace(/\/$/, "") + this.current } };
+    else if (text === "新增使用者" && this.current === "/admin/users") { this.modalOpen = true; }
+    else if (["取消", "Cancel", "關閉", "Close"].includes(text)) { this.modalOpen = false; }
+    return { ok: true, action: "cdp_click", durationMs: 1, detail: { before: BASE, navigated: false, url: BASE.replace(/\/$/, "") + this.current } };
   }
   async cdpCurrent() { return { url: BASE.replace(/\/$/, "") + this.current, path: this.current, title: "x" }; }
+  async cdpKey(_p: number, key = "Escape") { if (key === "Escape") this.modalOpen = false; return { ok: true, action: "cdp_key", durationMs: 1, detail: {} }; }
   async screenshot() { return { ok: true, action: "screenshot", durationMs: 1, image: Buffer.from("png").toString("base64"), detail: {} }; }
   async setViewport() { return { ok: true, action: "set_viewport", durationMs: 1, detail: {} }; }
   async clearViewport() { return { ok: true, action: "clear_viewport", durationMs: 1, detail: {} }; }
   async perform() { return { ok: true, action: "noop", durationMs: 1, detail: {} }; }
-  async domSnapshot(_p: number) { return probe(this.current); }
+  async domSnapshot(_p: number) { return probe(this.current, this.modalOpen); }
 }
 
 describe("explore mode (e2e, no docker)", () => {
@@ -66,9 +88,10 @@ describe("explore mode (e2e, no docker)", () => {
   let owner: string;
   let targetId: string;
   let synthCall = 0;
+  let fakeComputer: FakeComputer;
 
   beforeAll(async () => {
-    const fakeComputer = new FakeComputer();
+    fakeComputer = new FakeComputer();
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
       .overrideProvider(ComputerService).useValue(fakeComputer)
       .overrideProvider(SandboxService).useValue({
@@ -169,6 +192,28 @@ describe("explore mode (e2e, no docker)", () => {
       where: { runId: run!.id, nodeId: adminNode!.id, identityId: guest!.id, kind: "page_snapshot" },
     });
     expect(guestSawAdmin).toBeNull();
+  });
+
+  it("clicks openers to discover a modal, records its fields, and never clicks the destructive button", async () => {
+    const run = await prisma.explorationRun.findFirst({ where: { targetId }, orderBy: { startedAt: "desc" } });
+    // The modal opened by 新增使用者 became a child state node under /admin/users.
+    const modal = await prisma.siteNode.findFirst({
+      where: { runId: run!.id, routeKey: "/admin/users ▸ 新增使用者" },
+      include: { observations: true, inEdges: true },
+    });
+    expect(modal).not.toBeNull();
+    expect(modal!.kind).toBe("modal");
+    // Its snapshot captured the modal's own form fields (username + role).
+    const snap = modal!.observations[0].data as { forms: { fields: { name: string }[] }[] };
+    const fieldNames = snap.forms.flatMap((f) => f.fields.map((x) => x.name));
+    expect(fieldNames).toEqual(expect.arrayContaining(["username", "role"]));
+    // It hangs off the page that opens it, via a control edge.
+    const page = await prisma.siteNode.findFirstOrThrow({ where: { runId: run!.id, routeKey: "/admin/users" } });
+    expect(modal!.inEdges.some((e) => e.fromId === page.id && e.kind === "control")).toBe(true);
+
+    // The destructive "刪除" button was on the page but must never have been clicked.
+    expect(fakeComputer.clicks).toContain("新增使用者");
+    expect(fakeComputer.clicks).not.toContain("刪除");
   });
 
   it("keeps viewers out of starting an exploration (a real member, not a stranger)", async () => {

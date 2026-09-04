@@ -13,6 +13,9 @@ export interface PageProbe {
   scrollWidth: number;
   clientWidth: number;
   textLength: number;
+  /** Visible modal/dialog count and a generic big-overlay flag (modal detection). */
+  dialogs: number;
+  overlay: boolean;
 }
 
 export interface ActionResult {
@@ -33,7 +36,7 @@ export const CONTAINER_ACTIONS: ReadonlySet<string> = new Set([
   // Driven by the worker around a case, never proposed by the model.
   "record_start", "record_stop",
   // Deterministic DOM + navigation for the explorer (CDP-backed), also worker-only.
-  "dom_snapshot", "cdp_navigate", "cdp_fill", "cdp_click", "cdp_current", "cdp_reset",
+  "dom_snapshot", "cdp_navigate", "cdp_fill", "cdp_click", "cdp_current", "cdp_key", "cdp_reset",
   "set_viewport", "clear_viewport",
 ]);
 
@@ -102,6 +105,11 @@ export class ComputerService {
 
   async clearViewport(port: number): Promise<ActionResult> {
     return this.perform(port, "clear_viewport", {}, 10_000);
+  }
+
+  /** Send a single key (Escape by default) — used to close a modal. */
+  async cdpKey(port: number, key = "Escape"): Promise<ActionResult> {
+    return this.perform(port, "cdp_key", { key }, 10_000);
   }
 
   /** Clear cookies + storage so the next identity starts from a clean session. */

@@ -229,6 +229,7 @@ function LiveFeed({ events, running }: { events: ExploreEvent[]; running: boolea
     else if (e.type === "visit") text = `  [${e.identity}] ${e.routeKey}${e.denied ? "（被擋）" : ""}`;
     else if (e.type === "rwd" && e.issues > 0) text = `  RWD ${e.routeKey} @${e.breakpoint}：${e.issues} 個問題`;
     else if (e.type === "matrix") text = `權限矩陣：${e.routes} 條路由，${e.suspicious} 個可疑`;
+    else if (e.type === "interact") text = `  互動 ${e.routeKey} 點「${e.opener}」→ 發現${e.found === "modal" ? "彈窗" : e.found === "menu" ? "選單" : "面板"}`;
     else if (e.type === "synth") text = `  設計 ${e.routeKey} → ${e.cases} 條`;
     else if (e.type === "paused") text = `⏸ ${e.message}`;
     else if (e.type === "resumed") text = `▶ ${e.message}`;
@@ -358,37 +359,78 @@ function PermissionMatrix({ detail }: { detail: ExploreDetail }) {
   );
 }
 
+const STATE_KINDS = new Set(["modal", "panel", "menu"]);
+const STATE_LABEL: Record<string, string> = { modal: "彈窗", panel: "面板", menu: "選單" };
+
 function SiteMap({ detail }: { detail: ExploreDetail }) {
   const [shot, setShot] = useState<string | null>(null);
-  const byDepth = useMemo(() => {
-    const m = new Map<number, typeof detail.nodes>();
-    for (const n of detail.nodes) {
+
+  // Split real pages from the interaction states (modals/menus) that hang off
+  // them, and attach each state to the page whose button opened it.
+  const { byDepth, childrenOf, stateCount } = useMemo(() => {
+    const pages = detail.nodes.filter((n) => !STATE_KINDS.has(n.kind));
+    const states = detail.nodes.filter((n) => STATE_KINDS.has(n.kind));
+    const parentByTo = new Map<string, string>();
+    for (const e of detail.edges) if (e.kind === "control" && e.to) parentByTo.set(e.to, e.from);
+    const childrenOf = new Map<string, typeof states>();
+    for (const st of states) {
+      const parent = parentByTo.get(st.id);
+      if (!parent) continue;
+      const list = childrenOf.get(parent) ?? [];
+      list.push(st);
+      childrenOf.set(parent, list);
+    }
+    const m = new Map<number, typeof pages>();
+    for (const n of pages) {
       const list = m.get(n.depth) ?? [];
       list.push(n);
       m.set(n.depth, list);
     }
-    return [...m.entries()].sort((a, b) => a[0] - b[0]);
-  }, [detail.nodes]);
+    return { byDepth: [...m.entries()].sort((a, b) => a[0] - b[0]), childrenOf, stateCount: states.length };
+  }, [detail.nodes, detail.edges]);
+
+  const chip = (n: ExploreDetail["nodes"][number], isState: boolean) => (
+    <button
+      key={n.id}
+      type="button"
+      onClick={() => n.screenshotKey && setShot(evidenceUrl(detail.run.id, n.screenshotKey))}
+      className={`rounded-md border px-2 py-1 text-left text-xs ${
+        isState ? "border-purple-300 bg-purple-50" : n.kind === "form" ? "border-blue-300 bg-blue-50" : "border-gray-200 bg-white"
+      } ${n.screenshotKey ? "hover:bg-gray-100" : "cursor-default"}`}
+      title={n.title}
+    >
+      <div className="font-mono text-gray-800">
+        {isState && <span className="mr-1 rounded bg-purple-200 px-1 text-[10px] text-purple-800">{STATE_LABEL[n.kind] ?? n.kind}</span>}
+        {isState ? n.routeKey.split(" ▸ ").slice(1).join(" ▸ ") || n.title : n.routeKey}
+      </div>
+      <div className="text-gray-400">
+        {n.reachableBy.join("/") || "無人可進"}
+        {!isState && n.kind === "form" ? " · 表單" : ""}
+      </div>
+    </button>
+  );
 
   return (
-    <Card title={`站點地圖（${detail.nodes.length} 條路由）`}>
+    <Card title={`站點地圖（${byDepth.reduce((a, [, ns]) => a + ns.length, 0)} 頁${stateCount ? ` · ${stateCount} 個互動狀態` : ""}）`}>
       <div className="space-y-3">
         {byDepth.map(([depth, nodes]) => (
           <div key={depth}>
             <p className="mb-1 text-xs text-gray-400">深度 {depth}</p>
-            <div className="flex flex-wrap gap-2">
-              {nodes.map((n) => (
-                <button
-                  key={n.id}
-                  type="button"
-                  onClick={() => n.screenshotKey && setShot(evidenceUrl(detail.run.id, n.screenshotKey))}
-                  className={`rounded-md border px-2 py-1 text-left text-xs ${n.kind === "form" ? "border-blue-300 bg-blue-50" : "border-gray-200 bg-white"} ${n.screenshotKey ? "hover:bg-gray-100" : "cursor-default"}`}
-                  title={n.title}
-                >
-                  <div className="font-mono text-gray-800">{n.routeKey}</div>
-                  <div className="text-gray-400">{n.reachableBy.join("/") || "無人可進"}{n.kind === "form" ? " · 表單" : ""}</div>
-                </button>
-              ))}
+            <div className="flex flex-col gap-2">
+              {nodes.map((n) => {
+                const kids = childrenOf.get(n.id) ?? [];
+                return (
+                  <div key={n.id} className="flex flex-wrap items-start gap-2">
+                    {chip(n, false)}
+                    {kids.length > 0 && (
+                      <>
+                        <span className="self-center text-gray-300">›</span>
+                        {kids.map((k) => chip(k, true))}
+                      </>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           </div>
         ))}

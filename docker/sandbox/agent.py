@@ -293,6 +293,21 @@ def act_cdp_click(p):
     return res
 
 
+def act_cdp_key(p):
+    """Dispatch a single key via CDP — mainly Escape, to close a modal."""
+    key = p.get("key", "Escape")
+    codes = {
+        "Escape": {"key": "Escape", "code": "Escape", "windowsVirtualKeyCode": 27},
+        "Enter": {"key": "Enter", "code": "Enter", "windowsVirtualKeyCode": 13},
+        "Tab": {"key": "Tab", "code": "Tab", "windowsVirtualKeyCode": 9},
+    }
+    spec = codes.get(key, codes["Escape"])
+    _cdp.call("Input.dispatchKeyEvent", {"type": "keyDown", **spec})
+    _cdp.call("Input.dispatchKeyEvent", {"type": "keyUp", **spec})
+    settle(250)
+    return {"key": key}
+
+
 def act_cdp_reset(_):
     """Clear cookies and storage so the next identity starts from a clean session.
     Without this, one identity's login leaks into the next and the permission
@@ -363,6 +378,22 @@ PAGE_PROBE_JS = r"""
   }
   const landmarks = [...document.querySelectorAll('[role], nav, main, header, footer, aside')]
     .map((el) => el.getAttribute('role') || el.tagName.toLowerCase());
+  // Overlay/dialog detection: covers the common UI libraries plus a generic
+  // "big fixed high-z-index layer" fallback. This is how the crawler tells a
+  // modal opening from a link navigating.
+  const dialogSel = '[role="dialog"],[aria-modal="true"],dialog[open],.modal,.ReactModal__Content,.ant-modal,.MuiDialog-container,[class*="modal"],[class*="Modal"],[class*="drawer"],[class*="Drawer"]';
+  let dialogs = 0;
+  for (const el of document.querySelectorAll(dialogSel)) {
+    if (visible(el)) dialogs++;
+  }
+  let overlay = false;
+  for (const el of document.querySelectorAll('body *')) {
+    const s = getComputedStyle(el);
+    if ((s.position === 'fixed' || s.position === 'absolute') && Number(s.zIndex) >= 1000 && visible(el)) {
+      const r = el.getBoundingClientRect();
+      if (r.width > window.innerWidth * 0.3 && r.height > window.innerHeight * 0.3) { overlay = true; break; }
+    }
+  }
   const headings = [...document.querySelectorAll('h1,h2,h3')].map((h) => txt(h)).filter(Boolean).slice(0, 30);
   const body = document.body;
   return {
@@ -378,6 +409,8 @@ PAGE_PROBE_JS = r"""
     scrollWidth: body ? body.scrollWidth : 0,
     clientWidth: document.documentElement.clientWidth,
     textLength: (body ? (body.innerText || '') : '').length,
+    dialogs,
+    overlay,
   };
 })()
 """
@@ -621,6 +654,7 @@ ACTIONS = {
     "cdp_fill": act_cdp_fill,
     "cdp_click": act_cdp_click,
     "cdp_current": act_cdp_current,
+    "cdp_key": act_cdp_key,
     "cdp_reset": act_cdp_reset,
     "set_viewport": act_set_viewport,
     "clear_viewport": act_clear_viewport,

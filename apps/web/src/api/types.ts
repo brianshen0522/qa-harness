@@ -1116,6 +1116,7 @@ export type ExploreEvent =
   | { type: "visit"; identity: string; routeKey: string; depth: number; denied: boolean; nodes: number }
   | { type: "rwd"; routeKey: string; breakpoint: string; issues: number }
   | { type: "matrix"; routes: number; suspicious: number }
+  | { type: "interact"; identity: string; routeKey: string; opener: string; found: string }
   | { type: "synth"; routeKey: string; cases: number }
   | { type: "paused"; reason: string; message: string }
   | { type: "resumed"; message: string }

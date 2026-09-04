@@ -24,6 +24,7 @@ export type ExploreEvent =
   | { type: "phase"; phase: "crawl" | "rwd" | "synthesis"; message: string }
   | { type: "login"; identity: string; ok: boolean; message: string }
   | { type: "visit"; identity: string; routeKey: string; depth: number; denied: boolean; nodes: number }
+  | { type: "interact"; identity: string; routeKey: string; opener: string; found: string }
   | { type: "rwd"; routeKey: string; breakpoint: string; issues: number }
   | { type: "matrix"; routes: number; suspicious: number }
   | { type: "synth"; routeKey: string; cases: number }
@@ -43,6 +44,11 @@ export interface ExploreConfig {
   deepBudget: number;
   /** Route-key substrings never to follow (logout etc.). */
   avoid: string[];
+  /** Click non-destructive buttons to discover modals/menus (interaction probing). */
+  doInteract: boolean;
+  /** Openers to click per page, and across the whole run. */
+  interactPerPage: number;
+  interactBudget: number;
 }
 
 export interface ExploreStats {
@@ -62,6 +68,8 @@ interface ActiveRun {
   events: ExploreEvent[];
   subscribers: Set<(e: ExploreEvent) => void>;
   abort: AbortController;
+  /** Remaining run-wide interaction-probe clicks (interaction probing). */
+  interactLeft: number;
   finished: boolean;
 }
 
@@ -135,6 +143,9 @@ export class ExploreService implements OnModuleInit {
       doSynthesis: partial.doSynthesis ?? true,
       deepBudget: partial.deepBudget ?? 8,
       avoid: partial.avoid ?? [],
+      doInteract: partial.doInteract ?? true,
+      interactPerPage: partial.interactPerPage ?? 8,
+      interactBudget: partial.interactBudget ?? 60,
     };
 
     const run = await this.prisma.explorationRun.create({
@@ -166,7 +177,7 @@ export class ExploreService implements OnModuleInit {
   }
 
   private spawn(runId: string, targetId: string, url: string, config: ExploreConfig, identities: CrawlIdentity[], userId: string) {
-    const record: ActiveRun = { runId, targetId, events: [], subscribers: new Set(), abort: new AbortController(), finished: false };
+    const record: ActiveRun = { runId, targetId, events: [], subscribers: new Set(), abort: new AbortController(), interactLeft: 0, finished: false };
     this.active.set(targetId, record);
     void this.execute(record, url, config, identities, userId)
       .catch(async (err) => {
@@ -191,6 +202,7 @@ export class ExploreService implements OnModuleInit {
     const target = await this.prisma.qaTarget.findUniqueOrThrow({ where: { id: record.targetId }, select: { name: true } });
     this.publish(record, { type: "started", runId: record.runId, target: target.name, identities: identities.map((i) => i.name) });
 
+    record.interactLeft = config.doInteract ? config.interactBudget : 0;
     const avoid = [...DEFAULT_AVOID, ...config.avoid].map((s) => new RegExp(s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
     const limits: CrawlLimits = { maxNodes: config.maxNodes, maxDepth: config.maxDepth, seeds: config.seeds, avoid };
 
@@ -226,6 +238,9 @@ export class ExploreService implements OnModuleInit {
             await this.recordVisit(record.runId, identity, visit);
             const nodes = await this.prisma.siteNode.count({ where: { runId: record.runId } });
             this.publish(record, { type: "visit", identity: identity.name, routeKey: visit.routeKey, depth: visit.depth, denied: visit.denied, nodes });
+            if (config.doInteract && !visit.denied && record.interactLeft > 0) {
+              await this.probeInteractions(record, identity, port, baseUrl, visit, config.interactPerPage);
+            }
           },
           () => record.abort.signal.aborted,
           async (routeKey) => this.snap(record.runId, port, identity.id, routeKey),
@@ -315,6 +330,128 @@ export class ExploreService implements OnModuleInit {
     const safe = routeKey.replace(/[^a-z0-9]/gi, "_").slice(0, 60) || "root";
     const stored = await this.evidence.put(`explore/${runId}/${identityId}/${safe}.png`, Buffer.from(shot.image, "base64"), "image/png");
     return stored?.key ?? null;
+  }
+
+
+  // ---------- interaction probing (click openers → discover modals/menus) ----------
+
+  /** Buttons we must never click: they finalize or destroy rather than reveal. */
+  private static readonly DESTRUCTIVE =
+    /(刪除|移除|清除|delete|remove|登出|logout|sign\s*out|確認|confirm|送出|submit|儲存|save|新增至|付款|pay|purchase|下單|結帳|checkout|停用|封存|archive|重設|reset|登入|sign\s*in|log\s*in)/i;
+  /** Buttons worth clicking: they tend to open a dialog, drawer, menu or panel. */
+  private static readonly OPENER =
+    /(新增|建立|add|create|new|編輯|edit|檢視|查看|view|詳情|detail|設定|manage|篩選|filter|展開|more|更多|選單|menu|選擇|invite|邀請|分享|share|匯入|import|匯出|export|開啟|open)/i;
+
+  /**
+   * Click the non-destructive controls on a page and see what opens. A modal or
+   * menu is not a URL, so the link-following crawl never sees it — this is where
+   * "click 新增使用者 → a form pops up" gets discovered. Strictly read-only: we
+   * open the thing and record its fields, but never click its submit; and we
+   * always close it (Escape → Cancel/Close → re-navigate) before the next one.
+   */
+  private async probeInteractions(
+    record: ActiveRun,
+    identity: CrawlIdentity,
+    port: number,
+    baseUrl: string,
+    visit: VisitResult,
+    perPage: number,
+  ) {
+    const base = visit.probe;
+    const baseFormSig = new Set(base.forms.map(formSig));
+    const openers = base.controls
+      .filter((c) => !c.disabled && c.text && ExploreService.OPENER.test(c.text) && !ExploreService.DESTRUCTIVE.test(c.text))
+      .slice(0, perPage);
+    if (!openers.length) return;
+
+    const pageNode = await this.prisma.siteNode.findUnique({
+      where: { runId_routeKey: { runId: record.runId, routeKey: visit.routeKey } },
+    });
+    if (!pageNode) return;
+
+    const seenHere = new Set<string>();
+    for (const opener of openers) {
+      if (record.abort.signal.aborted || record.interactLeft <= 0) return;
+      if (seenHere.has(opener.text)) continue;
+      seenHere.add(opener.text);
+      record.interactLeft--;
+
+      const clicked = await this.computer.cdpClick(port, opener.text, { exact: true });
+      // A click that navigated is just a link the crawl already handles; go back.
+      const cur = await this.computer.cdpCurrent(port);
+      const navigated = !!cur && normalizeRoute(cur.url, baseUrl)?.key !== visit.routeKey;
+      if (!clicked.ok || navigated) {
+        if (navigated) await this.computer.cdpNavigate(port, visit.sampleUrl, 500);
+        continue;
+      }
+
+      const after = await this.computer.domSnapshot(port);
+      if (after) {
+        const opened =
+          after.dialogs > base.dialogs ||
+          after.overlay ||
+          after.forms.length > base.forms.length ||
+          after.forms.some((f) => !baseFormSig.has(formSig(f)));
+        if (opened) {
+          const kind = after.dialogs > base.dialogs || after.overlay ? "modal" : after.forms.length > base.forms.length ? "panel" : "menu";
+          const newForms = after.forms.filter((f) => !baseFormSig.has(formSig(f)));
+          const shot = await this.snapNamed(record.runId, port, `modal/${visit.routeKey}/${opener.text}`);
+          await this.recordState(record.runId, identity, pageNode.id, visit.routeKey, opener.text, kind, {
+            ...after, forms: newForms.length ? newForms : after.forms,
+          }, shot);
+          this.publish(record, { type: "interact", identity: identity.name, routeKey: visit.routeKey, opener: opener.text, found: kind });
+        }
+      }
+
+      // Close whatever opened and get back to a known state before the next opener.
+      await this.computer.cdpKey(port, "Escape");
+      let check = await this.computer.cdpCurrent(port);
+      let still = await this.computer.domSnapshot(port);
+      if (still && (still.dialogs > base.dialogs || still.overlay)) {
+        for (const label of ["取消", "Cancel", "關閉", "Close", "×", "返回"]) {
+          const c = await this.computer.cdpClick(port, label, { exact: false });
+          if (c.ok) break;
+        }
+        still = await this.computer.domSnapshot(port);
+      }
+      const off = check && normalizeRoute(check.url, baseUrl)?.key !== visit.routeKey;
+      if (off || (still && (still.dialogs > base.dialogs || still.overlay))) {
+        await this.computer.cdpNavigate(port, visit.sampleUrl, 500);
+      }
+    }
+  }
+
+  /** A discovered modal/menu/panel: a child state node hanging off its page. */
+  private async recordState(
+    runId: string,
+    identity: CrawlIdentity,
+    pageId: string,
+    pageRoute: string,
+    opener: string,
+    kind: string,
+    probe: PageProbe,
+    screenshot: string | null,
+  ) {
+    const routeKey = `${pageRoute} ▸ ${opener}`;
+    const node = await this.prisma.siteNode.upsert({
+      where: { runId_routeKey: { runId, routeKey } },
+      create: {
+        runId, routeKey, sampleUrl: probe.url, title: probe.title || opener,
+        kind, depth: 99, reachableBy: [identity.role],
+      },
+      update: { reachableBy: { push: identity.role } },
+    });
+    await this.prisma.siteObservation.create({
+      data: {
+        runId, nodeId: node.id, identityId: identity.id, kind: ObservationKind.page_snapshot,
+        data: { title: probe.title, headings: probe.headings, forms: probe.forms, controls: probe.controls, opener, stateKind: kind } as Prisma.InputJsonValue,
+        screenshotKey: screenshot, note: `${opener} → ${kind}`,
+      },
+    });
+    // The edge from the page to the state it opens.
+    await this.prisma.siteEdge.create({
+      data: { runId, fromId: pageId, toId: node.id, kind: "control", label: opener.slice(0, 200) },
+    }).catch(() => undefined);
   }
 
   // ---------- stage C ----------
@@ -653,6 +790,10 @@ interface GeneratedCase {
   expected: string;
   priority: string;
   type: string;
+}
+
+function formSig(f: { method: string; fields: { name: string | null; type: string }[] }): string {
+  return `${f.method}|${f.fields.map((x) => `${x.name ?? ""}:${x.type}`).join(",")}`;
 }
 
 function probeToJson(probe: PageProbe) {

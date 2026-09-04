@@ -37,7 +37,7 @@ npm run infra:up                # 起 db / redis / minio
 npm run build -w packages/schemas
 npm run db:migrate              # prisma migrate dev
 npm run db:seed                 # 建立 ADMIN_EMAIL / ADMIN_PASSWORD 的 admin
-docker build -t qa-harness-sandbox:0.4 docker/sandbox   # sandbox 桌面 image
+docker build -t qa-harness-sandbox:0.5 docker/sandbox   # sandbox 桌面 image
 npm run dev:api                 # http://localhost:3001/api
 npm run dev:web                 # http://localhost:5173
 ```
@@ -95,6 +95,7 @@ Target 設定裡若含 `Authorization` 之類的欄位，送進模型前會遮�
 1. **確定性爬取（A）**：CDP 讀 DOM → BFS 走訪。路由正規化把 `/todos/1`、`/todos/2` 收斂成 `/todos/:id`，否則一份清單就是無限多頁、永遠爬不完。每頁存 DOM 探針、截圖、連結邊。
 2. **逐身份 + 權限矩陣（B）**：每個「身份」是一個角色加上登入用的憑證，一個一個登入、各爬一遍。「誰能看到什麼」是**比對**出來的，不是猜的 —— 一條看起來該受保護的路由被低權限身份進入了，就標成可疑。這是最容易漏又最容易出事的一類問題。
 3. **RWD 斷點掃描（C）**：機械化地在各斷點 resize + 截圖，用 DOM 指標（橫向溢出等）先篩，只有可疑的才值得細看。
+3.5. **互動探測**：每頁點開「開啟型」控制項（新增/編輯/檢視/篩選…），用 DOM diff 偵測 modal / drawer / 選單，記成掛在那頁底下的**子狀態節點**（含它的表單欄位、截圖）。像「點『新增使用者』→ 彈出表單」這種不改 URL 的東西就是這樣抓到的。**全程唯讀**：只打開、記欄位，絕不點送出；黑名單擋掉 delete / logout / submit / 付款 等會改狀態的按鈕；點完一定 Escape →（取消/關閉）→ 必要時重新導航，回到原狀態才試下一個。有 per-page 與 run-wide 預算。
 4. **從地圖設計案例（D）**：對每個實際存在的頁面各發一次小的合成呼叫（reasoning effort 壓低，避開 90 秒天花板），加一次專門處理跨身份權限的呼叫。案例直接進既有的測試清單。
 5. **有預算的深入查看（E）**：對有表單的頁面用視覺深入盤點情境與當下可見的缺陷。**全程唯讀** —— prompt 明令不得送出表單，而且這個階段根本不給模型 click 動作，所以它動不了資料（把破壞性操作的風險從設計上關掉）。
 

@@ -499,3 +499,135 @@ export interface SessionSendResult {
   interjected: boolean;
   status: SessionStatus;
 }
+
+// ---------- 測試清單與生成 pipeline（spec §4.3） ----------
+
+export type Priority = "P0" | "P1" | "P2" | "P3";
+export type CaseType = "happy" | "edge" | "negative";
+export type CaseSource = "generated" | "manual" | "change_proposal";
+export type CaseStatus = "active" | "outdated" | "deprecated";
+export type FeatureStatus = "active" | "removed";
+export type GenerationMode = "replace" | "append";
+export type GenerationStatus = "running" | "succeeded" | "failed";
+
+export interface Feature {
+  id: string;
+  targetId: string;
+  name: string;
+  description: string;
+  status: FeatureStatus;
+  /** Description version this feature was derived from; older than the target's means stale. */
+  basedOnDescriptionVersion: number;
+  order: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface TestCase {
+  id: string;
+  targetId: string;
+  featureId: string | null;
+  title: string;
+  precondition: string;
+  steps: string[];
+  expected: string;
+  priority: Priority;
+  type: CaseType;
+  source: CaseSource;
+  status: CaseStatus;
+  currentVersion: number;
+  order: number;
+  basedOnDescriptionVersion: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface FeatureWithCases extends Feature {
+  stale: boolean;
+  cases: TestCase[];
+}
+
+export interface TestCaseCounts {
+  features: number;
+  cases: number;
+  active: number;
+  outdated: number;
+  deprecated: number;
+}
+
+/** `GET /targets/:id/test-cases` — the whole list in one shot, grouped by feature. */
+export interface TestCaseListData {
+  target: {
+    name: string;
+    kind: TargetKind;
+    status: TargetStatus;
+    descriptionVersion: number;
+    myRole: Role;
+    locked: boolean;
+  };
+  counts: TestCaseCounts;
+  features: FeatureWithCases[];
+  /** Cases that belong to no feature — rendered as 未分類. */
+  unassigned: TestCase[];
+}
+
+/** What a version row stores: the case as it looked at that version. */
+export interface TestCaseSnapshot {
+  title: string;
+  precondition: string;
+  steps: string[];
+  expected: string;
+  priority: Priority;
+  type: CaseType;
+  featureId: string | null;
+}
+
+export interface TestCaseVersion {
+  id: string;
+  testCaseId: string;
+  version: number;
+  content: TestCaseSnapshot;
+  changeId?: string | null;
+  createdBy: string | null;
+  createdAt: string;
+}
+
+export interface TestCaseInput {
+  title: string;
+  precondition?: string;
+  steps: string[];
+  expected: string;
+  priority?: Priority;
+  type?: CaseType;
+  featureId?: string | null;
+}
+
+export interface GenerationRun {
+  id: string;
+  targetId: string;
+  status: GenerationStatus;
+  mode: GenerationMode;
+  descriptionVersion: number;
+  featureCount: number;
+  caseCount: number;
+  duplicatesDropped: number;
+  /** 現況探索 summary, shape depends on the target kind. */
+  discovery: unknown;
+  model: string | null;
+  error: string | null;
+  triggeredById: string;
+  startedAt: string;
+  endedAt: string | null;
+}
+
+/** One `data:` payload of `POST /targets/:id/generate`. */
+export type GenerationEvent =
+  | { type: "started"; runId: string; target: string; kind: TargetKind; mode: GenerationMode; descriptionVersion: number }
+  | { type: "discovery"; ok: boolean; source: string | null; note: string }
+  | { type: "features"; features: { name: string; description: string }[]; model: string }
+  | { type: "feature_started"; index: number; total: number; name: string }
+  | { type: "feature_cases"; index: number; total: number; name: string; count: number; model: string }
+  | { type: "deduped"; kept: number; dropped: number }
+  | { type: "saved"; featureCount: number; caseCount: number }
+  | { type: "error"; message: string; detail?: unknown }
+  | { type: "finished"; runId: string; featureCount: number; caseCount: number; durationMs: number };

@@ -1,4 +1,18 @@
-import type { Completeness, HandoffApplyMode, LlmPurpose, ProposalStatus, Role, TargetKind, TargetStatus } from "../api/types";
+import type {
+  CaseStatus,
+  CaseSource,
+  CaseType,
+  Completeness,
+  GenerationMode,
+  GenerationStatus,
+  HandoffApplyMode,
+  LlmPurpose,
+  Priority,
+  ProposalStatus,
+  Role,
+  TargetKind,
+  TargetStatus,
+} from "../api/types";
 
 const RANK: Record<Role, number> = { viewer: 0, editor: 1, owner: 2 };
 
@@ -135,4 +149,71 @@ export function formatBytes(n: number): string {
   if (n < 1024) return `${n} B`;
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
   return `${(n / 1024 / 1024).toFixed(1)} MB`;
+}
+
+// ---------- 測試清單（spec §4.3） ----------
+
+export const PRIORITIES: Priority[] = ["P0", "P1", "P2", "P3"];
+
+export const CASE_TYPES: CaseType[] = ["happy", "edge", "negative"];
+
+export const CASE_TYPE_LABEL: Record<CaseType, string> = {
+  happy: "正常流程",
+  edge: "邊界",
+  negative: "異常",
+};
+
+export const CASE_TYPE_TONE: Record<CaseType, "green" | "amber" | "purple"> = {
+  happy: "green",
+  edge: "amber",
+  negative: "purple",
+};
+
+export const CASE_STATUSES: CaseStatus[] = ["active", "outdated", "deprecated"];
+
+export const CASE_STATUS_LABEL: Record<CaseStatus, string> = {
+  active: "正常",
+  outdated: "待處理",
+  deprecated: "已淘汰",
+};
+
+export const CASE_STATUS_TONE: Record<CaseStatus, "green" | "amber" | "gray"> = {
+  active: "green",
+  outdated: "amber",
+  deprecated: "gray",
+};
+
+export const CASE_SOURCE_LABEL: Record<CaseSource, string> = {
+  generated: "LLM 生成",
+  manual: "手動撰寫",
+  change_proposal: "變更提案",
+};
+
+export const GENERATION_MODES: GenerationMode[] = ["replace", "append"];
+
+export const GENERATION_MODE_LABEL: Record<GenerationMode, string> = {
+  replace: "重新生成",
+  append: "附加",
+};
+
+export const GENERATION_STATUS_LABEL: Record<GenerationStatus, string> = {
+  running: "執行中",
+  succeeded: "成功",
+  failed: "失敗",
+};
+
+export const GENERATION_STATUS_TONE: Record<GenerationStatus, "amber" | "green" | "red"> = {
+  running: "amber",
+  succeeded: "green",
+  failed: "red",
+};
+
+/** 毫秒 -> 「1 分 12 秒」／「8.4 秒」。 */
+export function formatDuration(ms: number | null | undefined): string {
+  if (ms === null || ms === undefined || !Number.isFinite(ms)) return "-";
+  if (ms < 1000) return `${Math.round(ms)} 毫秒`;
+  const seconds = ms / 1000;
+  if (seconds < 60) return `${seconds.toFixed(1)} 秒`;
+  const minutes = Math.floor(seconds / 60);
+  return `${minutes} 分 ${Math.round(seconds - minutes * 60)} 秒`;
 }

@@ -241,6 +241,31 @@ describe("the probe loop", () => {
     expect(rows[0].probeAttempts).toBe(6);
   });
 
+  it("a hand-run probe on a healthy config respects the failure threshold", async () => {
+    const { service, rows } = build([row()], () => {
+      throw new LlmProviderError("network", "refused");
+    });
+    for (let i = 1; i < FAILURE_THRESHOLD; i++) {
+      await service.probeConfig("a");
+      expect(rows[0].health).toBe(LlmHealth.degraded);
+    }
+    await service.probeConfig("a");
+    expect(rows[0].health).toBe(LlmHealth.down);
+  });
+
+  it("a probe on an already-down config records the reason without counting again", async () => {
+    const { service, rows } = build([row({ health: LlmHealth.down, consecutiveFailures: 3 })], () => {
+      throw new LlmProviderError("timeout", "still slow");
+    });
+    await service.probeConfig("a");
+    expect(rows[0]).toMatchObject({
+      health: LlmHealth.down,
+      consecutiveFailures: 3,
+      lastFailureKind: "timeout",
+      lastFailureMessage: "still slow",
+    });
+  });
+
   it("a failing config cannot stop the sweep from checking the others", async () => {
     let call = 0;
     const { service, probeCalls } = build(

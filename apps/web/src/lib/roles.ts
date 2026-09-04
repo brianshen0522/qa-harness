@@ -6,6 +6,8 @@ import type {
   GenerationMode,
   GenerationStatus,
   HandoffApplyMode,
+  LlmHealth,
+  LlmPauseReason,
   LlmPurpose,
   Priority,
   ProposalStatus,
@@ -47,6 +49,45 @@ export const PURPOSE_LABEL: Record<LlmPurpose, string> = {
 };
 
 export const PURPOSES: LlmPurpose[] = ["discuss", "generate", "execute"];
+
+/** Short form, for chips and table cells where the English name would not fit. */
+export const PURPOSE_SHORT_LABEL: Record<LlmPurpose, string> = {
+  discuss: "討論",
+  generate: "生成",
+  execute: "執行",
+};
+
+export const LLM_HEALTH_LABEL: Record<LlmHealth, string> = {
+  healthy: "正常",
+  degraded: "不穩",
+  down: "失效",
+};
+
+export const LLM_HEALTH_TONE: Record<LlmHealth, "green" | "amber" | "red"> = {
+  healthy: "green",
+  degraded: "amber",
+  down: "red",
+};
+
+/** Why a round or a pipeline is waiting for a model. */
+export const PAUSE_REASON_LABEL: Record<LlmPauseReason, string> = {
+  not_configured: "此用途尚未設定任何 LLM",
+  all_down: "此用途的 LLM 都被斷路器停用",
+  all_failed: "此用途的 LLM 全部嘗試失敗",
+};
+
+/** The backend also stores free-form pause reasons on the run row. */
+export function pauseReasonLabel(reason: string | null | undefined): string {
+  if (!reason) return "-";
+  return PAUSE_REASON_LABEL[reason as LlmPauseReason] ?? reason;
+}
+
+/** 毫秒 -> 「約 30 秒」／「約 5 分鐘」，給重測間隔這種粗略的數字用。 */
+export function formatInterval(ms: number): string {
+  if (!Number.isFinite(ms) || ms <= 0) return "-";
+  if (ms < 60_000) return `約 ${Math.round(ms / 1000)} 秒`;
+  return `約 ${Math.round(ms / 60_000)} 分鐘`;
+}
 
 export const CONFIG_FIELDS: Record<TargetKind, { key: string; label: string; json?: boolean; placeholder?: string }[]> = {
   api: [
@@ -198,12 +239,14 @@ export const GENERATION_MODE_LABEL: Record<GenerationMode, string> = {
 
 export const GENERATION_STATUS_LABEL: Record<GenerationStatus, string> = {
   running: "執行中",
+  paused: "等待 LLM",
   succeeded: "成功",
   failed: "失敗",
 };
 
 export const GENERATION_STATUS_TONE: Record<GenerationStatus, "amber" | "green" | "red"> = {
   running: "amber",
+  paused: "amber",
   succeeded: "green",
   failed: "red",
 };

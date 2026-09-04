@@ -1,11 +1,12 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, apiEventStream, errorMessage } from "../api/client";
+import { api, apiEventSource, apiEventStream, errorMessage } from "../api/client";
 import type {
   CaseStatus,
   CaseType,
   Feature,
   FeatureWithCases,
+  GenerationCancelResult,
   GenerationEvent,
   GenerationMode,
   GenerationRun,
@@ -42,10 +43,12 @@ import {
   GENERATION_MODE_LABEL,
   GENERATION_STATUS_LABEL,
   GENERATION_STATUS_TONE,
+  PAUSE_REASON_LABEL,
   PRIORITIES,
   formatDate,
   formatDuration,
   hasRole,
+  pauseReasonLabel,
 } from "../lib/roles";
 
 const listKey = (targetId: string) => ["target", targetId, "test-cases"];
@@ -592,15 +595,80 @@ function GenerationPanel({
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const sourceRef = useRef<EventSource | null>(null);
+  /** A re-attach is only worth doing once per mount, however the runs query settles. */
+  const attachedRef = useRef(false);
 
-  // A run outlives this panel only as a `generation_runs` row; leaving the tab
-  // hangs up the stream rather than leaving a dangling reader.
-  useEffect(() => () => abortRef.current?.abort(), []);
+  // The run lives on the server, so leaving the tab only hangs up this reader.
+  useEffect(
+    () => () => {
+      abortRef.current?.abort();
+      sourceRef.current?.close();
+    },
+    [],
+  );
 
   const runs = useQuery({
     queryKey: runsKey(targetId),
     queryFn: () => api<GenerationRun[]>(`/targets/${targetId}/generation-runs`),
   });
+
+  const finish = useCallback(() => {
+    sourceRef.current?.close();
+    sourceRef.current = null;
+    setRunning(false);
+    qc.invalidateQueries({ queryKey: runsKey(targetId) });
+  }, [qc, targetId]);
+
+  /**
+   * Re-attach to a run already in progress. The server replays the whole history
+   * on connect and `GenerationEvent` carries no sequence number, so each `open`
+   * starts the transcript over instead of appending a second copy.
+   */
+  const attach = useCallback(() => {
+    if (sourceRef.current) return;
+    setError(null);
+    setRunning(true);
+    const source = apiEventSource(`/targets/${targetId}/generate/stream`);
+    sourceRef.current = source;
+    let seen = 0;
+    source.onopen = () => {
+      seen = 0;
+      setEvents([]);
+    };
+    source.onmessage = (e) => {
+      let event: GenerationEvent;
+      try {
+        event = JSON.parse(e.data as string) as GenerationEvent;
+      } catch {
+        return; // a malformed frame is not worth tearing the panel down over
+      }
+      // The run finished between the runs query and this connect: there is
+      // nothing to re-attach to, which is not a failure worth shouting about.
+      if (event.type === "error" && seen === 0) {
+        finish();
+        return;
+      }
+      seen++;
+      setEvents((prev) => [...prev, event]);
+      if (event.type === "finished") onFinished();
+      // The server ends the stream on a terminal event; close first so
+      // `EventSource` does not reconnect and replay it forever.
+      if (event.type === "finished" || event.type === "error") finish();
+    };
+    source.onerror = () => {
+      if (source.readyState === EventSource.CLOSED) finish();
+    };
+  }, [targetId, onFinished, finish]);
+
+  // A reload during a long run should pick the run back up, not look idle.
+  useEffect(() => {
+    if (attachedRef.current || running || !runs.data) return;
+    const latest = runs.data[0];
+    if (!latest || (latest.status !== "running" && latest.status !== "paused")) return;
+    attachedRef.current = true;
+    attach();
+  }, [runs.data, running, attach]);
 
   const start = async () => {
     if (running) return;
@@ -608,9 +676,10 @@ function GenerationPanel({
       mode === "replace"
         ? "「重新生成」會清掉先前由 LLM 生成的案例（手動撰寫的會保留），再重跑整個 pipeline。"
         : "「附加」會保留現有清單，把新生成的功能與案例加在後面。";
-    if (!window.confirm(`${explain}\n\n整個流程需要數分鐘（每個功能大約 25 秒），期間請保持這個分頁開著。要開始嗎？`)) {
+    if (!window.confirm(`${explain}\n\n整個流程需要數分鐘（每個功能大約 25 秒）。生成在伺服器上進行，關掉分頁也不會中斷，回來時會自動接上。要開始嗎？`)) {
       return;
     }
+    attachedRef.current = true;
     setEvents([]);
     setError(null);
     setRunning(true);
@@ -635,12 +704,18 @@ function GenerationPanel({
     }
   };
 
+  const cancel = useMutation({
+    mutationFn: () => api<GenerationCancelResult>(`/targets/${targetId}/generate/cancel`, { method: "POST" }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: runsKey(targetId) }),
+  });
+
   const streamError = pick(events, "error")[0] ?? null;
+  const paused = pauseState(events);
 
   return (
     <Card
       title="生成測試清單"
-      actions={running ? <Badge tone="amber">生成中</Badge> : undefined}
+      actions={running ? <Badge tone="amber">{paused ? "等待 LLM" : "生成中"}</Badge> : undefined}
     >
       <div className="space-y-3">
         <p className="text-xs text-gray-400">
@@ -664,8 +739,13 @@ function GenerationPanel({
             </Field>
           </div>
           <Button disabled={!canEdit || running} onClick={start}>
-            {running ? "生成中…" : "生成"}
+            {running ? (paused ? "等待 LLM…" : "生成中…") : "生成"}
           </Button>
+          {running && (
+            <Button variant="danger" disabled={!canEdit || cancel.isPending} onClick={() => cancel.mutate()}>
+              {cancel.isPending ? "中止中…" : "中止"}
+            </Button>
+          )}
           <span className="text-xs text-gray-500">
             {mode === "replace"
               ? "重新生成：先前生成的案例會被取代，手動撰寫的會保留。"
@@ -676,8 +756,9 @@ function GenerationPanel({
 
         {error && <Notice tone="red">{error}</Notice>}
         {streamError && <Notice tone="red">生成失敗：{streamError.message}</Notice>}
+        <ErrorText error={cancel.error} />
 
-        {events.length > 0 && <GenerationProgress events={events} running={running} />}
+        {events.length > 0 && <GenerationProgress events={events} running={running} paused={!!paused} />}
 
         <div className="border-t border-gray-100 pt-3">
           <p className="mb-2 text-xs font-medium text-gray-500">生成紀錄</p>
@@ -705,6 +786,12 @@ function GenerationPanel({
                     <td className="text-xs">{GENERATION_MODE_LABEL[r.mode]}</td>
                     <td>
                       <Badge tone={GENERATION_STATUS_TONE[r.status]}>{GENERATION_STATUS_LABEL[r.status]}</Badge>
+                      {r.status === "paused" && (
+                        <p className="mt-1 text-xs text-amber-700">
+                          {pauseReasonLabel(r.pausedReason)}
+                          {r.pausedAt && <span className="text-gray-400"> · {formatDate(r.pausedAt)}</span>}
+                        </p>
+                      )}
                       {r.error && <p className="mt-1 text-xs text-red-600">{r.error}</p>}
                     </td>
                     <td className="text-xs">{r.featureCount}</td>
@@ -714,7 +801,9 @@ function GenerationPanel({
                     <td className="whitespace-nowrap text-xs text-gray-500">
                       {r.endedAt
                         ? formatDuration(new Date(r.endedAt).getTime() - new Date(r.startedAt).getTime())
-                        : "進行中"}
+                        : r.status === "paused"
+                          ? "等待中"
+                          : "進行中"}
                     </td>
                   </tr>
                 ))}
@@ -727,8 +816,26 @@ function GenerationPanel({
   );
 }
 
+/** The pause still in force, if any — a later `resumed` or terminal event clears it. */
+function pauseState(events: GenerationEvent[]): Extract<GenerationEvent, { type: "paused" }> | null {
+  for (let i = events.length - 1; i >= 0; i--) {
+    const e = events[i];
+    if (e.type === "resumed" || e.type === "finished" || e.type === "error") return null;
+    if (e.type === "paused") return e;
+  }
+  return null;
+}
+
 /** The live step list: discovery → feature inventory → per-feature cases → dedupe → saved. */
-function GenerationProgress({ events, running }: { events: GenerationEvent[]; running: boolean }) {
+function GenerationProgress({
+  events,
+  running,
+  paused,
+}: {
+  events: GenerationEvent[];
+  running: boolean;
+  paused: boolean;
+}) {
   const started = pick(events, "started")[0] ?? null;
   const discovery = pick(events, "discovery")[0] ?? null;
   const featureList = pick(events, "features")[0] ?? null;
@@ -738,6 +845,13 @@ function GenerationProgress({ events, running }: { events: GenerationEvent[]; ru
   const saved = pick(events, "saved")[0] ?? null;
   const finished = pick(events, "finished")[0] ?? null;
   const failed = pick(events, "error").length > 0;
+  // Pauses and resumes are interleaved with the feature loop; keep them in order.
+  const pauses = events
+    .map((event, index) => ({ event, index }))
+    .filter(
+      (e): e is { event: Extract<GenerationEvent, { type: "paused" | "resumed" }>; index: number } =>
+        e.event.type === "paused" || e.event.type === "resumed",
+    );
 
   return (
     <div className="space-y-2 rounded-md bg-gray-50 p-3">
@@ -782,6 +896,13 @@ function GenerationProgress({ events, running }: { events: GenerationEvent[]; ru
             </StepLine>
           );
         }
+        if (paused) {
+          return (
+            <StepLine key={f.index} tone="warn">
+              [{f.index}/{f.total}] {f.name} → 等待 LLM 恢復
+            </StepLine>
+          );
+        }
         if (!running) {
           return (
             <StepLine key={f.index} tone="warn">
@@ -791,6 +912,26 @@ function GenerationProgress({ events, running }: { events: GenerationEvent[]; ru
         }
         return <PendingLine key={f.index} label={`[${f.index}/${f.total}] ${f.name} 展開案例中…`} />;
       })}
+
+      {pauses.map(({ event, index }) =>
+        event.type === "paused" ? (
+          <div key={index} className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-amber-800">
+            <p className="text-sm font-semibold">等待 LLM</p>
+            <p className="mt-1 whitespace-pre-wrap text-sm">{event.message}</p>
+            <p className="mt-1 text-xs">
+              {PAUSE_REASON_LABEL[event.reason] ?? event.reason} · 已完成 {event.featureIndex} / {event.total}{" "}
+              個功能。進度都保留著，有模型恢復後會自動從這裡接續。
+            </p>
+          </div>
+        ) : (
+          <p
+            key={index}
+            className="rounded-md border border-green-200 bg-green-50 px-3 py-1.5 text-sm text-green-800"
+          >
+            {event.message}
+          </p>
+        ),
+      )}
 
       {deduped && (
         <StepLine tone="ok">
@@ -808,7 +949,9 @@ function GenerationProgress({ events, running }: { events: GenerationEvent[]; ru
         </StepLine>
       )}
       {running && !finished && !failed && (
-        <p className="text-xs text-gray-400">整個流程需要數分鐘，離開這個分頁不會中斷伺服器上的生成，但畫面上的進度會停止更新。</p>
+        <p className="text-xs text-gray-400">
+          整個流程需要數分鐘。生成在伺服器上進行，離開或重新整理這個分頁都不會中斷，回到這裡會自動接回進度。
+        </p>
       )}
     </div>
   );

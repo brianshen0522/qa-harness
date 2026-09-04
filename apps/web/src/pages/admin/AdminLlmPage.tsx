@@ -1,16 +1,34 @@
 import { useEffect, useState, type DragEvent, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../api/client";
-import type { ChainEntry, Chains, Coverage, LlmConfig, LlmConfigInput, LlmProvider, LlmPurpose, LlmTestResult } from "../../api/types";
-import { Badge, Button, Card, Dialog, Empty, ErrorText, Field, Input, Notice, Select, Spinner, Textarea } from "../../components/ui";
-import { PURPOSES, PURPOSE_LABEL } from "../../lib/roles";
+import type {
+  ChainEntry,
+  Chains,
+  LlmConfig,
+  LlmConfigHealth,
+  LlmConfigInput,
+  LlmHealthStatus,
+  LlmProbeResult,
+  LlmProvider,
+  LlmPurpose,
+  LlmTestResult,
+} from "../../api/types";
+import { Badge, Button, Card, Dialog, Empty, ErrorText, Field, Input, Notice, Select, Spinner, Table, Textarea } from "../../components/ui";
+import {
+  LLM_HEALTH_LABEL,
+  LLM_HEALTH_TONE,
+  PURPOSES,
+  PURPOSE_LABEL,
+  PURPOSE_SHORT_LABEL,
+  formatDate,
+  formatInterval,
+} from "../../lib/roles";
 
 const PROVIDERS: LlmProvider[] = ["anthropic", "openai", "ollama"];
 
 export default function AdminLlmPage() {
   const qc = useQueryClient();
   const configs = useQuery({ queryKey: ["admin", "llm", "configs"], queryFn: () => api<LlmConfig[]>("/admin/llm/configs") });
-  const coverage = useQuery({ queryKey: ["admin", "llm", "coverage"], queryFn: () => api<Coverage>("/admin/llm/coverage") });
   const [editing, setEditing] = useState<LlmConfig | null | "new">(null);
   const [testingId, setTestingId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
@@ -25,8 +43,6 @@ export default function AdminLlmPage() {
     },
   });
 
-  const missing = coverage.data ? PURPOSES.filter((p) => !coverage.data[p]) : [];
-
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
@@ -34,12 +50,7 @@ export default function AdminLlmPage() {
         <Button onClick={() => setEditing("new")}>新增設定</Button>
       </div>
 
-      {missing.length > 0 && (
-        <Notice tone="red">
-          以下用途尚未設定任何可用的 LLM：{missing.map((p) => PURPOSE_LABEL[p]).join("、")}。相關功能將無法運作。
-        </Notice>
-      )}
-      <ErrorText error={coverage.error} />
+      <HealthSection />
 
       <Card title={`設定清單${configs.data ? `（${configs.data.length}）` : ""}`}>
         {configs.isPending && <Spinner />}
@@ -111,6 +122,180 @@ export default function AdminLlmPage() {
         </div>
       </Dialog>
     </div>
+  );
+}
+
+/* -------------------------------------------------------------- 健康狀態 */
+
+const HEALTH_KEY = ["admin", "llm", "health"];
+
+function coverageTone(c: { configured: number; usable: number }): "green" | "amber" | "red" {
+  if (c.usable === 0 && c.configured > 0) return "red";
+  if (c.usable < c.configured) return "amber";
+  return "green";
+}
+
+/**
+ * The circuit breaker's view of every config, plus what it costs: a purpose with
+ * nothing usable does not fail any more, it pauses the work that needs it. The
+ * poll tightens to 10s while anything is unhealthy so a recovery shows up fast.
+ */
+function HealthSection() {
+  const qc = useQueryClient();
+  const health = useQuery({
+    queryKey: HEALTH_KEY,
+    queryFn: () => api<LlmHealthStatus>("/admin/llm/health"),
+    refetchInterval: (query) =>
+      query.state.data?.configs.some((c) => c.health !== "healthy") ? 10_000 : 60_000,
+  });
+
+  const probeAll = useMutation({
+    mutationFn: () => api<{ recovered: number }>("/admin/llm/probe-all", { method: "POST" }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: HEALTH_KEY }),
+  });
+
+  const data = health.data;
+  const starved = data ? PURPOSES.filter((p) => data.coverage[p].usable === 0) : [];
+
+  return (
+    <Card
+      title="健康狀態"
+      actions={
+        <>
+          {probeAll.data && (
+            <span className="text-xs text-gray-500">
+              {probeAll.data.recovered > 0 ? `已恢復 ${probeAll.data.recovered} 組` : "沒有恢復任何一組"}
+            </span>
+          )}
+          <Button size="sm" variant="secondary" disabled={probeAll.isPending} onClick={() => probeAll.mutate()}>
+            {probeAll.isPending ? "重測中…" : "全部重測"}
+          </Button>
+        </>
+      }
+    >
+      {health.isPending && <Spinner />}
+      <ErrorText error={health.error} />
+      <ErrorText error={probeAll.error} />
+
+      {data && (
+        <div className="space-y-3">
+          <div className="flex flex-wrap items-center gap-2">
+            {PURPOSES.map((p) => {
+              const c = data.coverage[p];
+              return (
+                <Badge key={p} tone={coverageTone(c)}>
+                  {PURPOSE_SHORT_LABEL[p]} {c.usable} / {c.configured}
+                </Badge>
+              );
+            })}
+            <span className="text-xs text-gray-400">可用 / 已設定（僅計入啟用的設定）</span>
+          </div>
+
+          {starved.length > 0 && (
+            <Notice tone="red">
+              以下用途目前沒有可用的 LLM：
+              {starved
+                .map((p) =>
+                  data.coverage[p].configured === 0
+                    ? `${PURPOSE_LABEL[p]}（尚未設定）`
+                    : `${PURPOSE_LABEL[p]}（全部失效）`,
+                )
+                .join("、")}
+              。需要這些用途的工作不會失敗，而是會暫停並保留進度，等有模型恢復後自動接續。
+            </Notice>
+          )}
+
+          <p className="text-xs text-gray-400">
+            失效的設定會自動重測，間隔{formatInterval(data.probeIntervalMs)}
+            （連續失敗會逐次拉長），只要有一次成功就立刻放回輪替；這個機制不會停止，也不需要手動介入。
+          </p>
+
+          {data.configs.length === 0 ? (
+            <Empty>尚無 LLM 設定。</Empty>
+          ) : (
+            <Table>
+              <thead>
+                <tr>
+                  <th>名稱</th>
+                  <th>健康</th>
+                  <th>連續失敗</th>
+                  <th>最近一次失敗</th>
+                  <th>失效起於</th>
+                  <th>上次重測</th>
+                  <th>下次重測</th>
+                  <th />
+                </tr>
+              </thead>
+              <tbody>
+                {data.configs.map((c) => (
+                  <HealthRow key={c.id} config={c} />
+                ))}
+              </tbody>
+            </Table>
+          )}
+        </div>
+      )}
+    </Card>
+  );
+}
+
+function HealthRow({ config }: { config: LlmConfigHealth }) {
+  const qc = useQueryClient();
+  const probe = useMutation({
+    mutationFn: () => api<LlmProbeResult>(`/admin/llm/configs/${config.id}/probe`, { method: "POST" }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: HEALTH_KEY }),
+  });
+
+  return (
+    <tr>
+      <td>
+        <p className="font-medium">{config.name}</p>
+        <p className="text-xs text-gray-400">
+          {config.provider} · {config.model}
+        </p>
+        <div className="mt-1 flex flex-wrap gap-1">
+          {!config.enabled && <Badge tone="gray">停用</Badge>}
+          {config.purposes.map((p) => (
+            <Badge key={p}>{PURPOSE_SHORT_LABEL[p]}</Badge>
+          ))}
+        </div>
+      </td>
+      <td>
+        <Badge tone={LLM_HEALTH_TONE[config.health]}>{LLM_HEALTH_LABEL[config.health]}</Badge>
+        {config.health !== "down" && config.lastRecoveredAt && (
+          <p className="mt-1 whitespace-nowrap text-xs text-gray-400">{formatDate(config.lastRecoveredAt)} 恢復</p>
+        )}
+      </td>
+      <td className="text-xs">{config.consecutiveFailures}</td>
+      <td className="max-w-xs text-xs text-gray-600">
+        {config.lastFailureAt ? (
+          <>
+            {config.lastFailureKind && <Badge tone="red">{config.lastFailureKind}</Badge>}
+            <p className="mt-1 break-words">{config.lastFailureMessage ?? "（無訊息）"}</p>
+            <p className="mt-0.5 text-gray-400">{formatDate(config.lastFailureAt)}</p>
+          </>
+        ) : (
+          <span className="text-gray-400">-</span>
+        )}
+      </td>
+      <td className="whitespace-nowrap text-xs text-gray-500">{formatDate(config.downSince)}</td>
+      <td className="whitespace-nowrap text-xs text-gray-500">
+        {formatDate(config.lastProbeAt)}
+        {config.probeAttempts > 0 && <span className="ml-1 text-gray-400">（第 {config.probeAttempts} 次）</span>}
+      </td>
+      <td className="whitespace-nowrap text-xs text-gray-500">{formatDate(config.nextProbeAt)}</td>
+      <td>
+        <Button size="sm" variant="secondary" disabled={probe.isPending} onClick={() => probe.mutate()}>
+          {probe.isPending ? "測試中…" : "立即測試"}
+        </Button>
+        {probe.data && (
+          <p className={`mt-1 text-xs ${probe.data.ok ? "text-green-700" : "text-red-600"}`}>
+            {probe.data.ok ? `成功 · ${probe.data.latencyMs} ms` : `失敗 · ${probe.data.error ?? "未知錯誤"}`}
+          </p>
+        )}
+        <ErrorText error={probe.error} />
+      </td>
+    </tr>
   );
 }
 

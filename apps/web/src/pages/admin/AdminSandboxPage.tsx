@@ -27,7 +27,7 @@ import {
   Tabs,
   Textarea,
 } from "../../components/ui";
-import { formatDate } from "../../lib/roles";
+import { PAUSE_REASON_LABEL, formatDate } from "../../lib/roles";
 
 const TABS = [
   { key: "console" as const, label: "主控台" },
@@ -538,6 +538,10 @@ function AgentPanel({ instance, defaultMaxSteps }: { instance: SandboxInstance; 
   };
 
   const running = status === "running";
+  // A paused round is still alive — it is waiting for an LLM to come back — so it
+  // keeps the same affordances as a running one, 中止本輪 included.
+  const paused = status === "paused";
+  const active = running || paused;
   const visible = useMemo(() => visibleEvents(events, running), [events, running]);
   // Rounds are numbered for the reader; `runId` is an opaque id.
   const rounds = useMemo(() => {
@@ -552,7 +556,7 @@ function AgentPanel({ instance, defaultMaxSteps }: { instance: SandboxInstance; 
       title={`與 LLM 對話 — ${instance.name}`}
       actions={
         <>
-          <Badge tone={running ? "amber" : "gray"}>{running ? "執行中" : "閒置"}</Badge>
+          <Badge tone={active ? "amber" : "gray"}>{paused ? "等待 LLM" : running ? "執行中" : "閒置"}</Badge>
           <Button size="sm" variant="ghost" disabled={clear.isPending || events.length === 0} onClick={confirmClear}>
             {clear.isPending ? "清除中…" : "清除對話"}
           </Button>
@@ -594,9 +598,11 @@ function AgentPanel({ instance, defaultMaxSteps }: { instance: SandboxInstance; 
           <Field
             label="訊息"
             hint={
-              running
-                ? "執行中，送出的訊息會在下一步前插入"
-                : "送出後會開始新的一輪，先前的對話會保留"
+              paused
+                ? "本輪正在等待可用的模型，現在送出的訊息會在恢復後被讀取"
+                : running
+                  ? "執行中，送出的訊息會在下一步前插入"
+                  : "送出後會開始新的一輪，先前的對話會保留"
             }
           >
             <Textarea
@@ -628,7 +634,7 @@ function AgentPanel({ instance, defaultMaxSteps }: { instance: SandboxInstance; 
             <Button onClick={submit} disabled={!draft.trim() || send.isPending}>
               {send.isPending ? "送出中…" : "送出"}
             </Button>
-            {running && (
+            {active && (
               <Button variant="danger" disabled={stop.isPending} onClick={() => stop.mutate()}>
                 {stop.isPending ? "中止中…" : "中止本輪"}
               </Button>
@@ -718,6 +724,24 @@ function TranscriptRow({ event, round }: { event: SessionEvent; round: number })
         </p>
         <p className="mt-1 whitespace-pre-wrap text-sm">{event.summary}</p>
       </div>
+    );
+  }
+
+  if (event.type === "paused") {
+    return (
+      <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-amber-800">
+        <p className="text-sm font-semibold">等待 LLM</p>
+        <p className="mt-1 whitespace-pre-wrap text-sm">{event.message}</p>
+        <p className="mt-1 text-xs">
+          {PAUSE_REASON_LABEL[event.reason] ?? event.reason}。本輪的進度都保留著，有模型恢復後會自動接續，不需要重新送出。
+        </p>
+      </div>
+    );
+  }
+
+  if (event.type === "resumed") {
+    return (
+      <p className="rounded-md border border-green-200 bg-green-50 px-3 py-1.5 text-sm text-green-800">{event.message}</p>
     );
   }
 

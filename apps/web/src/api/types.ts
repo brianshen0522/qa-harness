@@ -169,6 +169,51 @@ export type LlmTestResult =
     }
   | { ok: false; errorKind: string; error: string; status?: number; latencyMs: number };
 
+// ---------- LLM 健康狀態與斷路器 ----------
+
+/** `degraded` is still in the rotation; `down` has been taken out by the breaker. */
+export type LlmHealth = "healthy" | "degraded" | "down";
+
+/** Why a long-running job had to stop and wait for a model. */
+export type LlmPauseReason = "not_configured" | "all_down" | "all_failed";
+
+export interface LlmConfigHealth {
+  id: string;
+  name: string;
+  provider: LlmProvider;
+  model: string;
+  enabled: boolean;
+  purposes: LlmPurpose[];
+  health: LlmHealth;
+  consecutiveFailures: number;
+  downSince: string | null;
+  lastFailureAt: string | null;
+  /** e.g. "timeout" | "rate_limit" | "server" | "auth" | "network" */
+  lastFailureKind: string | null;
+  lastFailureMessage: string | null;
+  lastProbeAt: string | null;
+  nextProbeAt: string | null;
+  probeAttempts: number;
+  lastRecoveredAt: string | null;
+}
+
+/** Per purpose: how many enabled configs exist, and how many the breaker still trusts. */
+export type HealthCoverage = Record<LlmPurpose, { configured: number; usable: number }>;
+
+/** `GET /admin/llm/health` */
+export interface LlmHealthStatus {
+  configs: LlmConfigHealth[];
+  coverage: HealthCoverage;
+  /** How often the background prober retries a config the breaker took out. */
+  probeIntervalMs: number;
+}
+
+export interface LlmProbeResult {
+  ok: boolean;
+  error?: string;
+  latencyMs: number;
+}
+
 export interface ChainEntry {
   purpose: LlmPurpose;
   llmConfigId: string;
@@ -454,7 +499,8 @@ export interface SandboxActionResult {
 
 export type AgentPhase = "setup" | "executing" | "verifying" | "judging";
 
-export type SessionStatus = "idle" | "running";
+/** `paused` means the round is alive but waiting for an LLM to come back. */
+export type SessionStatus = "idle" | "running" | "paused";
 
 export interface SessionStepEvent {
   type: "step";
@@ -482,6 +528,9 @@ export type SessionEvent = { seq: number; at: string } & (
   | { type: "thinking"; step: number }
   | SessionStepEvent
   | { type: "finished"; reason: "done" | "max_steps" | "aborted"; steps: number; summary: string }
+  /** No model was available; the round keeps its progress and waits. */
+  | { type: "paused"; reason: LlmPauseReason; message: string }
+  | { type: "resumed"; message: string }
   | { type: "error"; message: string; detail?: unknown }
   | { type: "reset" }
 );
@@ -508,7 +557,8 @@ export type CaseSource = "generated" | "manual" | "change_proposal";
 export type CaseStatus = "active" | "outdated" | "deprecated";
 export type FeatureStatus = "active" | "removed";
 export type GenerationMode = "replace" | "append";
-export type GenerationStatus = "running" | "succeeded" | "failed";
+/** `paused` keeps its partial results and resumes by itself once a model returns. */
+export type GenerationStatus = "running" | "paused" | "succeeded" | "failed";
 
 export interface Feature {
   id: string;
@@ -615,6 +665,9 @@ export interface GenerationRun {
   discovery: unknown;
   model: string | null;
   error: string | null;
+  /** Set while `status === "paused"`: why the pipeline is waiting. */
+  pausedReason: string | null;
+  pausedAt: string | null;
   triggeredById: string;
   startedAt: string;
   endedAt: string | null;
@@ -629,5 +682,12 @@ export type GenerationEvent =
   | { type: "feature_cases"; index: number; total: number; name: string; count: number; model: string }
   | { type: "deduped"; kept: number; dropped: number }
   | { type: "saved"; featureCount: number; caseCount: number }
+  /** No model was available; progress is kept and the pipeline waits. */
+  | { type: "paused"; reason: LlmPauseReason; message: string; featureIndex: number; total: number }
+  | { type: "resumed"; message: string }
   | { type: "error"; message: string; detail?: unknown }
   | { type: "finished"; runId: string; featureCount: number; caseCount: number; durationMs: number };
+
+export interface GenerationCancelResult {
+  cancelled: boolean;
+}

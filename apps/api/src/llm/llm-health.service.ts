@@ -296,6 +296,7 @@ export class LlmHealthService implements OnModuleInit, OnModuleDestroy {
       return { ok: true, latencyMs: Date.now() - started };
     } catch (err) {
       const kind = err instanceof LlmProviderError ? err.kind : "unknown";
+      const wasDown = config.health === LlmHealth.down;
       const attempts = config.probeAttempts + 1;
       const delay = Math.min(PROBE_BASE_MS * 2 ** (attempts - 1), PROBE_MAX_MS);
       await this.prisma.llmConfig.update({
@@ -304,12 +305,15 @@ export class LlmHealthService implements OnModuleInit, OnModuleDestroy {
           lastProbeAt: new Date(),
           probeAttempts: attempts,
           nextProbeAt: new Date(Date.now() + delay),
-          lastFailureKind: kind,
-          lastFailureMessage: (err as Error).message.slice(0, 1000),
-          // Stay down; a probe failure is not a new user-facing failure.
-          health: LlmHealth.down,
+          ...(wasDown
+            ? // Already out of rotation: record why, but this is not a new failure.
+              { lastFailureKind: kind, lastFailureMessage: (err as Error).message.slice(0, 1000) }
+            : {}),
         },
       });
+      // A healthy config that fails a hand-run probe goes through the same
+      // threshold as any other failure, rather than dropping out on one bad call.
+      if (!wasDown) await this.recordFailure(config.id, kind, (err as Error).message);
       return { ok: false, error: (err as Error).message, latencyMs: Date.now() - started };
     }
   }

@@ -21,6 +21,8 @@ export async function createApp(): Promise<{ app: INestApplication; prisma: Pris
 
 export async function resetDb(prisma: PrismaService) {
   // Order matters for FKs; cascades handle the rest.
+  // Dropping the settings row makes it come back with the current schema defaults.
+  await prisma.sandboxSettings.deleteMany();
   await prisma.auditLog.deleteMany();
   await prisma.llmCallLog.deleteMany();
   await prisma.llmConfig.deleteMany();

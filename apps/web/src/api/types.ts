@@ -400,3 +400,76 @@ export interface HandoffDocumentListItem {
   importedById: string | null;
   appliedToDescriptionVersion: number | null;
 }
+
+// ---------- Sandbox 主控台（spec §4.5） ----------
+
+export interface SandboxInstance {
+  id: string;
+  name: string;
+  purpose: string;
+  image: string;
+  /** Docker container state: "running" | "exited" | "created" … */
+  status: string;
+  /** "healthy" | "starting" | "unhealthy" | "none" */
+  health: string;
+  running: boolean;
+  createdAt: string;
+  expiresAt: string | null;
+  novncPort: number | null;
+  agentPort: number | null;
+  /** noVNC page for the live view; loopback only. */
+  viewUrl: string | null;
+  createdBy: string | null;
+  /** e.g. "1280x800" */
+  resolution: string | null;
+}
+
+export interface SandboxStatus {
+  docker: { ok: boolean; version?: string; error?: string };
+  image: { name: string; present: boolean };
+  settings: SandboxSettings;
+  running: number;
+  maxConcurrent: number;
+  instances: SandboxInstance[];
+}
+
+export interface SandboxScreenshot {
+  ok: boolean;
+  error: string | null;
+  /** data: URL */
+  image: string | null;
+  width: number | null;
+  height: number | null;
+}
+
+export interface SandboxActionResult {
+  ok: boolean;
+  action: string;
+  durationMs: number;
+  error?: string;
+  detail: Record<string, unknown>;
+  /** data: URL, screenshot only. */
+  image?: string;
+}
+
+export type AgentPhase = "setup" | "executing" | "verifying" | "judging";
+
+export interface AgentStepEvent {
+  type: "step";
+  seq: number;
+  phase: AgentPhase;
+  intent: string;
+  observation: string;
+  action: { type: string; params: Record<string, unknown> };
+  result: { ok: boolean; durationMs: number; error?: string; detail?: Record<string, unknown> };
+  model: string;
+  llmMs: number;
+}
+
+/** One `data:` payload of the agent SSE stream. */
+export type AgentEvent =
+  | { type: "started"; instruction: string; maxSteps: number; screen: string; sandbox: string }
+  | { type: "thinking"; seq: number }
+  | AgentStepEvent
+  | { type: "finished"; reason: "done" | "max_steps" | "aborted"; steps: number; summary: string }
+  | { type: "error"; message: string; detail?: unknown };

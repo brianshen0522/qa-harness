@@ -1,0 +1,96 @@
+import { Injectable, Logger } from "@nestjs/common";
+import type { ActionType } from "@qa-harness/schemas";
+
+export interface ActionResult {
+  ok: boolean;
+  action: string;
+  durationMs: number;
+  /** base64 PNG, only for screenshot */
+  image?: string;
+  error?: string;
+  /** Everything else the in-container agent returned. */
+  detail: Record<string, unknown>;
+}
+
+/** Actions the sandbox container can perform; the rest are handled host-side. */
+export const CONTAINER_ACTIONS: ReadonlySet<string> = new Set([
+  "screenshot", "click", "double_click", "right_click", "move",
+  "type", "key", "scroll", "navigate", "run_command", "cursor",
+]);
+
+/** Actions the worker resolves without touching the container. */
+export const HOST_ACTIONS: ReadonlySet<ActionType> = new Set(["wait", "http_request", "done"]);
+
+/** HTTP client for the computer-use agent running inside a sandbox container. */
+@Injectable()
+export class ComputerService {
+  private readonly log = new Logger(ComputerService.name);
+
+  async health(port: number, timeoutMs = 3000): Promise<{ ok: boolean; width?: number; height?: number; error?: string }> {
+    try {
+      const res = await this.fetchJson(port, "/health", undefined, timeoutMs, "GET");
+      return { ok: !!res.ok, width: res.width as number, height: res.height as number };
+    } catch (err) {
+      return { ok: false, error: (err as Error).message };
+    }
+  }
+
+  async screenshot(port: number): Promise<ActionResult> {
+    return this.perform(port, "screenshot", {});
+  }
+
+  /** Run one action. Agent errors come back as `ok: false`, not as a throw. */
+  async perform(port: number, action: string, params: Record<string, unknown>, timeoutMs = 60_000): Promise<ActionResult> {
+    if (!CONTAINER_ACTIONS.has(action)) {
+      return { ok: false, action, durationMs: 0, error: `sandbox 不支援的動作：${action}`, detail: {} };
+    }
+    const started = Date.now();
+    try {
+      const body = await this.fetchJson(port, `/${action}`, params, timeoutMs, "POST");
+      const { ok, action: _a, duration_ms, image, error, ...detail } = body as Record<string, unknown> & {
+        ok: boolean; duration_ms?: number; image?: string; error?: string;
+      };
+      return {
+        ok: !!ok,
+        action,
+        durationMs: (duration_ms as number) ?? Date.now() - started,
+        image: image as string | undefined,
+        error: error as string | undefined,
+        detail: detail as Record<string, unknown>,
+      };
+    } catch (err) {
+      this.log.warn(`action ${action} failed: ${(err as Error).message}`);
+      return { ok: false, action, durationMs: Date.now() - started, error: (err as Error).message, detail: {} };
+    }
+  }
+
+  private async fetchJson(
+    port: number,
+    path: string,
+    params: Record<string, unknown> | undefined,
+    timeoutMs: number,
+    method: "GET" | "POST",
+  ): Promise<Record<string, unknown>> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const res = await fetch(`http://127.0.0.1:${port}${path}`, {
+        method,
+        signal: controller.signal,
+        ...(method === "POST"
+          ? { headers: { "content-type": "application/json" }, body: JSON.stringify(params ?? {}) }
+          : {}),
+      });
+      const text = await res.text();
+      if (!res.ok && !text.trim().startsWith("{")) {
+        throw new Error(`agent HTTP ${res.status}`);
+      }
+      return JSON.parse(text) as Record<string, unknown>;
+    } catch (err) {
+      if ((err as Error).name === "AbortError") throw new Error(`動作逾時（${timeoutMs}ms）`);
+      throw err;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+}

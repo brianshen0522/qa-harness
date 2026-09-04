@@ -12,6 +12,7 @@ import { AdminModule } from "./admin/admin.module";
 import { LlmModule } from "./llm/llm.module";
 import { DiscussionModule } from "./discussion/discussion.module";
 import { HandoffModule } from "./handoff/handoff.module";
+import { SandboxModule } from "./sandbox/sandbox.module";
 
 @Module({
   imports: [
@@ -28,6 +29,7 @@ import { HandoffModule } from "./handoff/handoff.module";
     LlmModule,
     DiscussionModule,
     HandoffModule,
+    SandboxModule,
   ],
 })
 export class AppModule {}

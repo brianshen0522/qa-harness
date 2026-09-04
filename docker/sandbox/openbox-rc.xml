@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<openbox_config xmlns="http://openbox.org/3.4/rc">
+  <theme><name>Clearlooks</name><titleLayout>NLIMC</titleLayout></theme>
+  <desktops><number>1</number></desktops>
+  <applications>
+    <!-- Keep the browser full-screen and undecorated so screenshots are all content. -->
+    <application class="*">
+      <decor>no</decor>
+      <maximized>yes</maximized>
+      <position force="yes"><x>0</x><y>0</y></position>
+    </application>
+  </applications>
+</openbox_config>

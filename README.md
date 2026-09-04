@@ -36,6 +36,7 @@ npm run infra:up                # 起 db / redis / minio
 npm run build -w packages/schemas
 npm run db:migrate              # prisma migrate dev
 npm run db:seed                 # 建立 ADMIN_EMAIL / ADMIN_PASSWORD 的 admin
+docker build -t qa-harness-sandbox:0.1 docker/sandbox   # sandbox 桌面 image
 npm run dev:api                 # http://localhost:3001/api
 npm run dev:web                 # http://localhost:5173
 ```
@@ -57,6 +58,15 @@ npm run test:e2e -w apps/api    # e2e：auth、CRUD、權限規則 §2.3、admin
 **討論區**：Project 與 Target 各一條討論串。LLM 帶著 scope 對應的「必須釐清項目」清單主動提問，每輪最多 3 題，每題標註它要釐清哪一項；回覆同時更新完整度（未知 / 部分 / 清楚）與描述草稿。使用者訊息中的連結會自動抓取，內容送進 context 並存為 `project_attachments`。被測面清楚後 LLM 會提出 Target 提案卡，**只提案不建立**，由 Project owner 接受後才真的建立 Target。一鍵「儲存為描述」產生新的 description version（`source=discussion`）。
 
 **Context Handoff**：依 scope 與 target kind 產生交接 prompt → 貼給 coding agent → 把回傳的 Markdown 貼回來 → 預覽解析結果 → 選擇覆蓋 / 合併 / 當作附件套用。解析採寬鬆策略：認得的 section 結構化匯入，未知 section 原樣保留，完全無法解析則強制走附件。偵測到疑似憑證時會標示行號與遮罩預覽，並**從寫入的描述中移除**，原始文件另存於 `handoff_documents`。
+
+## Sandbox 主控台（§4.8 / §5.1）
+
+Admin → Sandbox → 主控台可以直接起一個容器、看畫面、下指令給 LLM 操作它。
+
+- **容器 image**（`docker/sandbox/`）：Debian + Xvfb + openbox + x11vnc + noVNC + Chromium，加一個純標準函式庫的 computer-use agent（`agent.py`），對外開 6080（noVNC）與 8000（動作 API）。動作集合就是 `execution_step` schema 的 action：screenshot / click / double_click / right_click / move / type / key / scroll / navigate / run_command。
+- **Sandbox Manager**：直接走 Docker Engine API 的 unix socket，不額外裝套件。負責建立、健康檢查、ephemeral port 配置、TTL 到期回收，並套用 sandbox 設定的 CPU、記憶體、解析度與並行上限。
+- **即時畫面**：容器內建的 noVNC，瀏覽器直接連 `127.0.0.1:<port>`（只綁 loopback）。第一版不經過 API 轉發，所以只有在跑 API 的那台機器上看得到。
+- **LLM 操作**：輸入一句話，agent loop 就會「截圖 → 問 vision model 下一個 `execution_step` → 在容器裡執行 → 把結果餵回去」，直到模型回 `done` 或達到步數上限。過程以 SSE 串到前端，每步顯示 phase、動作、意圖、觀察、耗時與使用的 model。這個迴圈就是步驟 8 Agent Worker 要用的核心。
 
 ## LLM Gateway
 

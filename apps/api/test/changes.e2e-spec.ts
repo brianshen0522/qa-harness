@@ -393,44 +393,66 @@ describe("change management (e2e)", () => {
   });
 
   it("refuses an empty decision set", async () => {
-    nextProposal = proposalFor({ description_after: "" });
+    nextProposal = proposalFor({
+      description_after: "",
+      test_case_changes: [{ op: "mark_outdated", case_id: otherCaseId, reason: "先擱著" }],
+    });
     const proposal = (await api(app).post(`/api/targets/${targetId}/changes/analyze`)
-      .set("Cookie", editor).send({ note: "沒什麼變" }).expect(201)).body;
+      .set("Cookie", editor).send({ note: "有東西但先不套用" }).expect(201)).body;
     await api(app).post(`/api/changes/${proposal.id}/apply`).set("Cookie", editor).send({}).expect(400);
   });
 
+  it("does not file a proposal when nothing is affected", async () => {
+    nextProposal = proposalFor({ description_after: "", feature_changes: [], test_case_changes: [] });
+    const res = await api(app).post(`/api/targets/${targetId}/changes/analyze`)
+      .set("Cookie", editor).send({ note: "改了一個註解" }).expect(400);
+    expect(res.body.message).toContain("沒有對描述、功能或測試案例造成任何影響");
+    expect(await prisma.changeProposal.count()).toBe(0);
+  });
+
   it("can be created during a run but not applied during one", async () => {
-    nextProposal = proposalFor({ feature_changes: [], test_case_changes: [] });
+    nextProposal = proposalFor({
+      description_after: "",
+      test_case_changes: [{ op: "mark_outdated", case_id: otherCaseId, reason: "執行中先記著" }],
+    });
     await prisma.qaTarget.update({ where: { id: targetId }, data: { status: "running" } });
     try {
       const proposal = (await api(app).post(`/api/targets/${targetId}/changes/from-discussion`)
         .set("Cookie", editor).send({ note: "執行中也要能先記下來" }).expect(201)).body;
       await api(app).post(`/api/changes/${proposal.id}/apply`).set("Cookie", editor)
-        .send({ description: true }).expect(409);
+        .send({ items: { [proposal.caseChanges[0].id]: true } }).expect(409);
     } finally {
       await prisma.qaTarget.update({ where: { id: targetId }, data: { status: "idle" } });
     }
   });
 
   it("lets an editor reject a proposal outright", async () => {
-    nextProposal = proposalFor();
+    nextProposal = proposalFor({
+      description_after: "",
+      test_case_changes: [{ op: "mark_outdated", case_id: otherCaseId, reason: "看看" }],
+    });
     const proposal = (await api(app).post(`/api/targets/${targetId}/changes/analyze`)
       .set("Cookie", editor).send({ note: "看看" }).expect(201)).body;
     const rejected = await api(app).post(`/api/changes/${proposal.id}/reject`).set("Cookie", editor).expect(201);
     expect(rejected.body.state).toBe("rejected");
-    await api(app).post(`/api/changes/${proposal.id}/apply`).set("Cookie", editor).send({ description: true }).expect(400);
+    await api(app).post(`/api/changes/${proposal.id}/apply`).set("Cookie", editor)
+      .send({ items: { [proposal.caseChanges[0].id]: true } }).expect(400);
   });
 
   // ---------- permissions ----------
 
   it("keeps viewers read-only", async () => {
-    nextProposal = proposalFor();
+    nextProposal = proposalFor({
+      description_after: "",
+      test_case_changes: [{ op: "mark_outdated", case_id: otherCaseId, reason: "唯讀測試" }],
+    });
     await api(app).post(`/api/targets/${targetId}/changes/analyze`).set("Cookie", viewer).send({ note: "x" }).expect(403);
 
     const proposal = (await api(app).post(`/api/targets/${targetId}/changes/analyze`)
       .set("Cookie", editor).send({ note: "x" }).expect(201)).body;
     await api(app).get(`/api/changes/${proposal.id}`).set("Cookie", viewer).expect(200);
-    await api(app).post(`/api/changes/${proposal.id}/apply`).set("Cookie", viewer).send({ description: true }).expect(403);
+    await api(app).post(`/api/changes/${proposal.id}/apply`).set("Cookie", viewer)
+      .send({ items: { [proposal.caseChanges[0].id]: true } }).expect(403);
     await api(app).post(`/api/changes/${proposal.id}/reject`).set("Cookie", viewer).expect(403);
   });
 

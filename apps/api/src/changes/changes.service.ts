@@ -127,6 +127,12 @@ export class ChangesService {
     });
 
     const normalised = this.normalise(result.data, ctx, features, cases, scope, input.proposedDescription);
+    if (!normalised.descriptionAfter && !normalised.featureChanges.length && !normalised.caseChanges.length) {
+      // An empty proposal sitting in the pending list is noise nobody can act on.
+      throw new BadRequestException(
+        "模型判斷這次的說明沒有對描述、功能或測試案例造成任何影響。如果你認為有，請把變更講得更具體一點。",
+      );
+    }
     await this.fillCaseDetails(normalised, ctx, note);
 
     const proposal = await this.prisma.changeProposal.create({

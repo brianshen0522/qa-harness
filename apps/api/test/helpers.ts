@@ -56,3 +56,15 @@ function extractCookie(setCookie: string | string[] | undefined, name: string): 
 }
 
 export const api = (app: INestApplication) => request(app.getHttpServer());
+
+/**
+ * Node's global fetch keeps a connection pool alive between requests, which is
+ * enough to stop the test process exiting after a suite that streams responses.
+ * Closing the dispatcher is a no-op on runtimes that do not expose it.
+ */
+export async function closeFetchPool() {
+  const dispatcher = (globalThis as Record<symbol, unknown>)[
+    Symbol.for("undici.globalDispatcher.1")
+  ] as { close?: () => Promise<void>; destroy?: () => Promise<void> } | undefined;
+  await dispatcher?.close?.().catch(() => undefined);
+}

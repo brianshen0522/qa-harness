@@ -198,6 +198,14 @@ enum LlmPurpose {
   execute
 }
 
+/// Circuit-breaker state. `down` configs are skipped when picking a chain and
+/// are re-probed on a schedule until they answer again.
+enum LlmHealth {
+  healthy
+  degraded
+  down
+}
+
 model LlmConfig {
   id              String       @id @default(uuid())
   name            String
@@ -210,6 +218,18 @@ model LlmConfig {
   enabled         Boolean      @default(true)
   createdAt       DateTime     @default(now()) @map("created_at")
   updatedAt       DateTime     @updatedAt @map("updated_at")
+
+  health              LlmHealth @default(healthy)
+  consecutiveFailures Int       @default(0) @map("consecutive_failures")
+  downSince           DateTime? @map("down_since")
+  lastFailureAt       DateTime? @map("last_failure_at")
+  lastFailureKind     String?   @map("last_failure_kind")
+  lastFailureMessage  String?   @map("last_failure_message")
+  lastProbeAt         DateTime? @map("last_probe_at")
+  /// Probes back off while a config stays down; reset the moment it recovers.
+  nextProbeAt         DateTime? @map("next_probe_at")
+  probeAttempts       Int       @default(0) @map("probe_attempts")
+  lastRecoveredAt     DateTime? @map("last_recovered_at")
 
   fallbackEntries LlmFallbackChain[]
 
@@ -518,6 +538,8 @@ model TestCaseVersion {
 
 enum GenerationStatus {
   running
+  /// Waiting for an LLM to come back; resumes on its own.
+  paused
   succeeded
   failed
 }
@@ -540,6 +562,11 @@ model GenerationRun {
   discovery          Json?
   model              String?
   error              String?
+  /// Why the run is paused, shown to the user while it waits.
+  pausedReason       String?          @map("paused_reason")
+  pausedAt           DateTime?        @map("paused_at")
+  /// Partial results, so a paused run picks up where it stopped.
+  progress           Json?
   triggeredById      String           @map("triggered_by")
   startedAt          DateTime         @default(now()) @map("started_at")
   endedAt            DateTime?        @map("ended_at")

@@ -50,10 +50,15 @@ function build(script: ExecutionStep[] | ((call: number) => ExecutionStep), step
   };
 
   const agent = new SandboxAgentService(computer as never, gateway as never);
-  const service = new SandboxSessionService(sandbox as never, agent);
+  const health = {
+    hasUsable: jest.fn().mockResolvedValue(true),
+    waitForPurpose: jest.fn().mockResolvedValue(true),
+    onHealthChange: jest.fn().mockReturnValue(() => undefined),
+  };
+  const service = new SandboxSessionService(sandbox as never, agent, health as never);
   const events: SessionEvent[] = [];
   service.subscribe("sbx", (e) => events.push(e));
-  return { service, events, performed, seenTurns, gateway, computer, sandbox };
+  return { service, events, performed, seenTurns, gateway, computer, sandbox, health };
 }
 
 /**
@@ -178,6 +183,28 @@ describe("SandboxSessionService", () => {
     expect(service.stop("sbx")).toEqual({ stopped: false });
   });
 
+  it("marks a message sent while parked as an interjection", async () => {
+    const { service, gateway, health } = build([DONE]);
+    health.waitForPurpose.mockReturnValueOnce(new Promise<boolean>(() => undefined));
+    gateway.structured.mockRejectedValueOnce(new LlmExhaustedError("停擺", [], "all_down"));
+
+    await service.send("sbx", "做事");
+    await new Promise((r) => setTimeout(r, 30));
+    expect(service.snapshot("sbx").status).toBe("paused");
+    await expect(service.send("sbx", "改做另一件事")).resolves.toMatchObject({ interjected: true });
+  });
+
+  it("a round parked waiting for an LLM can still be stopped", async () => {
+    const { service, events, gateway, health } = build([DONE]);
+    health.waitForPurpose.mockReturnValueOnce(new Promise<boolean>(() => undefined)); // never resolves
+    gateway.structured.mockRejectedValueOnce(new LlmExhaustedError("停擺", [], "all_down"));
+
+    await service.send("sbx", "做事");
+    await new Promise((r) => setTimeout(r, 30));
+    expect(service.snapshot("sbx").status).toBe("paused");
+    expect(service.stop("sbx")).toEqual({ stopped: true });
+  });
+
   it("reset clears the transcript so the next round starts clean", async () => {
     const { service, events, seenTurns } = build([DONE]);
     await service.send("sbx", "舊的事情");
@@ -203,18 +230,67 @@ describe("SandboxSessionService", () => {
     expect(replayed.at(-1)).toMatchObject({ type: "status", status: "idle" });
   });
 
-  it("ends the round on an LLM failure but stays usable", async () => {
-    const { service, events, gateway } = build([DONE]);
+  it("pauses instead of failing when every model is unusable, then resumes the same step", async () => {
+    const { service, events, gateway, health } = build([DONE]);
     gateway.structured.mockRejectedValueOnce(
-      new LlmExhaustedError("no vision model", [
+      new LlmExhaustedError("所有 LLM 都無法使用", [
         { configId: "a", configName: "Local", model: "m", attempt: 0, outcome: "provider_error", durationMs: 1 },
-      ]),
+      ], "all_down"),
     );
     await service.send("sbx", "做事");
     await settle(service, events);
-    expect(events.find((e) => e.type === "error")).toMatchObject({
-      message: expect.stringContaining("Local:provider_error"),
-    });
+
+    const paused = events.find((e) => e.type === "paused") as Extract<SessionEvent, { type: "paused" }>;
+    expect(paused).toMatchObject({ reason: "all_down" });
+    expect(paused.message).toContain("自動接續");
+    expect(health.waitForPurpose).toHaveBeenCalledWith("execute", true, expect.anything());
+    expect(events.some((e) => e.type === "resumed")).toBe(true);
+    expect(events.some((e) => e.type === "error")).toBe(false);
+
+    // The retaken step still runs, so the round completes normally.
+    expect(events.at(-1)).toMatchObject({ type: "status", status: "idle" });
+    expect(events.find((e) => e.type === "finished")).toMatchObject({ reason: "done" });
+    // Step numbering does not skip the step that was interrupted.
+    const steps = events.filter((e) => e.type === "step") as Extract<SessionEvent, { type: "step" }>[];
+    expect(steps.map((x) => x.step)).toEqual([1]);
+  });
+
+  it("stays in the paused state for as long as no model is available", async () => {
+    const { service, events, gateway, health } = build([DONE]);
+    let release: (available: boolean) => void = () => undefined;
+    health.waitForPurpose.mockReturnValueOnce(new Promise<boolean>((r) => { release = r; }));
+    gateway.structured.mockRejectedValueOnce(new LlmExhaustedError("停擺", [], "all_down"));
+
+    await service.send("sbx", "做事");
+    await new Promise((r) => setTimeout(r, 30));
+    expect(service.snapshot("sbx").status).toBe("paused");
+    expect(events.filter((e) => e.type === "status").at(-1)).toMatchObject({ status: "paused" });
+    expect(events.some((e) => e.type === "finished")).toBe(false);
+
+    release(true);
+    await settle(service, events);
+    expect(service.snapshot("sbx").status).toBe("idle");
+    expect(events.find((e) => e.type === "finished")).toMatchObject({ reason: "done" });
+  });
+
+  it("a user abort while paused ends the round without losing the transcript", async () => {
+    const { service, events, gateway, health } = build([DONE]);
+    health.waitForPurpose.mockResolvedValueOnce(false); // aborted while waiting
+    gateway.structured.mockRejectedValueOnce(new LlmExhaustedError("停擺", [], "all_down"));
+
+    await service.send("sbx", "做事");
+    await settle(service, events);
+    expect(events.find((e) => e.type === "finished")).toMatchObject({ reason: "aborted" });
+    expect(service.snapshot("sbx").turns).toBeGreaterThan(0);
+  });
+
+  it("still fails the round on an error that is not about model availability", async () => {
+    const { service, events, gateway } = build([DONE]);
+    gateway.structured.mockRejectedValueOnce(new Error("sandbox 不見了"));
+    await service.send("sbx", "做事");
+    await settle(service, events);
+    expect(events.find((e) => e.type === "error")).toMatchObject({ message: "sandbox 不見了" });
+    expect(events.some((e) => e.type === "paused")).toBe(false);
     expect(service.snapshot("sbx").status).toBe("idle");
   });
 

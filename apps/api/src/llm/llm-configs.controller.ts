@@ -7,6 +7,7 @@ import type { AdminPrincipal } from "../common/types";
 import { AuditService } from "../audit/audit.service";
 import { LlmConfigsService } from "./llm-configs.service";
 import { LlmGatewayService } from "./llm-gateway.service";
+import { LlmHealthService } from "./llm-health.service";
 
 class CreateLlmConfigDto {
   @IsString() @MinLength(1) name!: string;
@@ -41,6 +42,7 @@ export class LlmConfigsController {
   constructor(
     private readonly configs: LlmConfigsService,
     private readonly gateway: LlmGatewayService,
+    private readonly health: LlmHealthService,
     private readonly audit: AuditService,
   ) {}
 
@@ -59,6 +61,9 @@ export class LlmConfigsController {
   @Patch("configs/:id")
   async update(@CurrentAdmin() admin: AdminPrincipal, @Param("id") id: string, @Body() dto: UpdateLlmConfigDto) {
     const row = await this.configs.update(id, dto);
+    // An edit is the admin saying "try this again": clear the breaker at once so
+    // anything waiting on this purpose wakes up.
+    await this.health.resetAfterEdit(id);
     const { apiKey, ...safe } = dto;
     await this.audit.log("admin", admin.id, "llm.config.update", id, { ...safe, apiKeyChanged: apiKey !== undefined });
     return row;
@@ -91,5 +96,26 @@ export class LlmConfigsController {
   @Get("coverage")
   coverage() {
     return this.configs.coverage();
+  }
+
+  /** Health of every config plus per-purpose coverage, for the admin page. */
+  @Get("health")
+  healthStatus() {
+    return this.health.status();
+  }
+
+  /** Probe one config now instead of waiting for the next sweep. */
+  @Post("configs/:id/probe")
+  async probe(@CurrentAdmin() admin: AdminPrincipal, @Param("id") id: string) {
+    const r = await this.health.probeConfig(id);
+    await this.audit.log("admin", admin.id, "llm.probe", id, { ok: r.ok });
+    return r;
+  }
+
+  /** Force a sweep of every config the breaker has taken out. */
+  @Post("probe-all")
+  async probeAll() {
+    const recovered = await this.health.probeOnce();
+    return { recovered };
   }
 }

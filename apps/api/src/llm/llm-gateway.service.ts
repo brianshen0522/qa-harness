@@ -6,6 +6,7 @@ import {
 } from "@qa-harness/schemas";
 import { PrismaService } from "../prisma/prisma.service";
 import { LlmConfigsService } from "./llm-configs.service";
+import { LlmHealthService } from "./llm-health.service";
 import {
   createProviderRegistry, FALLBACK_KINDS, LlmProviderError,
   type LlmMessage, type LlmProviderAdapter, type LlmRequest, type LlmResponse, type ResolvedLlmConfig,
@@ -42,10 +43,26 @@ export interface StructuredOptions {
   requireVision?: boolean;
 }
 
+/**
+ * Why no model could serve the request. All three are recoverable: a config may
+ * come back on its own, or an admin may fix or add one, so long-running work
+ * should wait rather than give up (§4.9 fallback, extended to whole-chain loss).
+ */
+export type UnavailableReason = "not_configured" | "all_down" | "all_failed";
+
 export class LlmExhaustedError extends Error {
-  constructor(message: string, public readonly attempts: AttemptLog[]) {
+  constructor(
+    message: string,
+    public readonly attempts: AttemptLog[],
+    public readonly reason: UnavailableReason = "all_failed",
+  ) {
     super(message);
     this.name = "LlmExhaustedError";
+  }
+
+  /** Always true today, but callers should ask rather than assume. */
+  get recoverable(): boolean {
+    return true;
   }
 }
 
@@ -56,7 +73,11 @@ export class LlmGatewayService {
   private readonly log = new Logger(LlmGatewayService.name);
   private providers: ProviderRegistry;
 
-  constructor(private readonly prisma: PrismaService, private readonly configs: LlmConfigsService) {
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly configs: LlmConfigsService,
+    private readonly health: LlmHealthService,
+  ) {
     this.providers = createProviderRegistry();
   }
 
@@ -99,6 +120,7 @@ export class LlmGatewayService {
           const a: AttemptLog = { configId: cfg.id, configName: cfg.name, model: cfg.model, attempt, outcome: "provider_error", errorKind: e.kind, error: e.message, durationMs: Date.now() - started };
           attempts.push(a);
           await this.record(purpose, schemaName, cfg, a, null, null);
+          await this.health.recordFailure(cfg.id, e.kind, e.message);
           this.log.warn(`[${purpose}/${schemaName}] ${cfg.name} attempt ${attempt} provider_error(${e.kind}): ${e.message}`);
           if (FALLBACK_KINDS.has(e.kind)) break; // next config
           continue;
@@ -117,6 +139,7 @@ export class LlmGatewayService {
           const a: AttemptLog = { configId: cfg.id, configName: cfg.name, model: res.model, attempt, outcome: "ok", durationMs: Date.now() - started };
           attempts.push(a);
           await this.record(purpose, schemaName, cfg, a, res, null);
+          await this.health.recordSuccess(cfg.id);
           return { data: validation.data, model: res.model, configId: cfg.id, configName: cfg.name, attempts, fallbacks: ci, raw: res.text };
         }
 
@@ -138,11 +161,16 @@ export class LlmGatewayService {
           { role: "user", content: `Your previous output did not satisfy the required JSON schema:\n${errorText}\n\nReturn ONLY a corrected JSON object that satisfies the schema. Include every required field, even when the value seems obvious.` },
         ];
       }
+
+      // Every retry on this config produced something unusable: it failed to
+      // serve the request, so it counts against the breaker like any other failure.
+      await this.health.recordFailure(cfg.id, "unknown", `無法產生合格的 ${schemaName} 輸出`);
     }
 
     throw new LlmExhaustedError(
-      `All LLM configs for purpose '${purpose}' failed to produce valid '${schemaName}' output (${attempts.length} attempts)`,
+      `「${purpose}」的所有 LLM 設定都無法產生合格的 ${schemaName} 輸出（共 ${attempts.length} 次嘗試）`,
       attempts,
+      "all_failed",
     );
   }
 
@@ -157,15 +185,17 @@ export class LlmGatewayService {
         const a: AttemptLog = { configId: cfg.id, configName: cfg.name, model: res.model, attempt: 0, outcome: "ok", durationMs: Date.now() - started };
         attempts.push(a);
         await this.record(purpose, null, cfg, a, res, null);
+        await this.health.recordSuccess(cfg.id);
         return { ...res, configId: cfg.id, attempts };
       } catch (err) {
         const e = err instanceof LlmProviderError ? err : new LlmProviderError("unknown", String(err));
         const a: AttemptLog = { configId: cfg.id, configName: cfg.name, model: cfg.model, attempt: 0, outcome: "provider_error", errorKind: e.kind, error: e.message, durationMs: Date.now() - started };
         attempts.push(a);
         await this.record(purpose, null, cfg, a, null, null);
+        await this.health.recordFailure(cfg.id, e.kind, e.message);
       }
     }
-    throw new LlmExhaustedError(`All LLM configs for purpose '${purpose}' failed`, attempts);
+    throw new LlmExhaustedError(`「${purpose}」的所有 LLM 設定都失敗了`, attempts, "all_failed");
   }
 
   /** Admin "send test prompt": one config, no chain, no retry. Returns latency and raw text. */
@@ -185,11 +215,38 @@ export class LlmGatewayService {
     }
   }
 
+  /**
+   * The configs to try, in order, skipping any the breaker has taken out.
+   * Distinguishes "nothing configured" from "everything is currently down" so
+   * the caller can tell the user which it is while it waits.
+   */
   private async chainFor(purpose: LlmPurpose, opts: StructuredOptions): Promise<ResolvedLlmConfig[]> {
-    let chain = opts.configId ? [await this.configs.resolveOne(opts.configId)] : await this.configs.resolveChain(purpose);
-    if (opts.requireVision || purpose === "execute") chain = chain.filter((c) => c.supportsVision);
-    if (!chain.length) throw new LlmExhaustedError(`No enabled LLM config for purpose '${purpose}'. Configure one in Admin → LLM Providers.`, []);
-    return chain;
+    const requireVision = !!opts.requireVision || purpose === "execute";
+    if (opts.configId) {
+      // An explicit config (the admin test button) bypasses the breaker on purpose.
+      return [await this.configs.resolveOne(opts.configId)];
+    }
+
+    let chain = await this.configs.resolveChain(purpose);
+    if (requireVision) chain = chain.filter((c) => c.supportsVision);
+    if (!chain.length) {
+      throw new LlmExhaustedError(
+        `目前沒有為「${purpose}」設定任何可用的 LLM${requireVision ? "（此用途需要支援 vision）" : ""}。請到 Admin → LLM Providers 新增一組。`,
+        [],
+        "not_configured",
+      );
+    }
+
+    const usable = new Set(await this.health.usableConfigIds(purpose, requireVision));
+    const healthy = chain.filter((c) => usable.has(c.id));
+    if (!healthy.length) {
+      throw new LlmExhaustedError(
+        `「${purpose}」的 ${chain.length} 組 LLM 目前全部無法使用，等待恢復中。`,
+        [],
+        "all_down",
+      );
+    }
+    return healthy;
   }
 
   private adapterFor(cfg: ResolvedLlmConfig): LlmProviderAdapter {

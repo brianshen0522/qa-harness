@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, Injectable, Logger } from "@nestjs/common";
+import { BadRequestException, ConflictException, Injectable, Logger, OnModuleInit } from "@nestjs/common";
 import {
   CaseSource, CaseStatus, GenerationMode, Prisma, Priority, Role, type CaseType, type TargetKind,
 } from "@prisma/client";
@@ -6,6 +6,7 @@ import type { FeatureList, TestCaseOutput } from "@qa-harness/schemas";
 import { PrismaService } from "../prisma/prisma.service";
 import { PermissionsService } from "../permissions/permissions.service";
 import { LlmExhaustedError, LlmGatewayService } from "../llm/llm-gateway.service";
+import { LlmHealthService } from "../llm/llm-health.service";
 import { AuditService } from "../audit/audit.service";
 import { DiscoveryService, type DiscoveryResult } from "./discovery.service";
 
@@ -18,162 +19,392 @@ export type GenerationEvent =
   | { type: "deduped"; kept: number; dropped: number }
   | { type: "saved"; featureCount: number; caseCount: number }
   | { type: "error"; message: string; detail?: unknown }
+  /** No usable model; the run is waiting and will pick up where it stopped. */
+  | { type: "paused"; reason: string; message: string; featureIndex: number; total: number }
+  | { type: "resumed"; message: string }
   | { type: "finished"; runId: string; featureCount: number; caseCount: number; durationMs: number };
+
+/** Partial results kept on the run row so a paused run resumes mid-pipeline. */
+export interface GenerationProgress {
+  features: { name: string; description: string }[];
+  /** Index of the next feature to expand. */
+  featureIndex: number;
+  cases: GeneratedCase[];
+  discovery: { ok: boolean; source: string | null; note: string; summary: string };
+  lastModel: string | null;
+}
 
 /** Cases per feature we ask for; more than this and quality drops off. */
 const MAX_CASES_PER_FEATURE = 12;
 const MAX_FEATURES = 40;
 
+type Subscriber = (event: GenerationEvent) => void;
+
+interface ActiveRun {
+  runId: string;
+  targetId: string;
+  events: GenerationEvent[];
+  subscribers: Set<Subscriber>;
+  abort: AbortController;
+  /** Set once the run reaches a terminal event; the record is evicted later. */
+  finished: boolean;
+}
+
+/**
+ * A finished run stays readable for a while. Without this, a fast run can be
+ * over before the browser's stream attaches, and its events would be lost.
+ */
+const RETAIN_FINISHED_MS = 120_000;
+
 @Injectable()
-export class GenerationService {
+export class GenerationService implements OnModuleInit {
   private readonly log = new Logger(GenerationService.name);
+  private readonly active = new Map<string, ActiveRun>();
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly perms: PermissionsService,
     private readonly gateway: LlmGatewayService,
     private readonly discovery: DiscoveryService,
+    private readonly health: LlmHealthService,
     private readonly audit: AuditService,
   ) {}
 
   /**
-   * Spec §4.3: description + config + attachments + handoff + discovery
-   * → feature inventory → cases per feature → dedupe and order → persist.
+   * A run left mid-flight by a restart is picked up again from its stored
+   * progress, so a crash or deploy does not silently abandon it.
    */
-  async *run(targetId: string, userId: string, mode: GenerationMode): AsyncGenerator<GenerationEvent> {
+  async onModuleInit() {
+    const orphans = await this.prisma.generationRun
+      .findMany({ where: { status: { in: ["running", "paused"] } } })
+      .catch(() => []);
+    for (const run of orphans) {
+      this.log.log(`resuming generation run ${run.id} after restart`);
+      this.spawn(run.id, run.targetId, run.triggeredById);
+    }
+  }
+
+  /**
+   * Starts a run in the background and returns immediately. Progress is streamed
+   * to subscribers, but the run does not depend on anyone listening: closing the
+   * browser does not stop it.
+   */
+  async start(targetId: string, userId: string, mode: GenerationMode): Promise<{ runId: string }> {
     await this.perms.requireTarget(targetId, userId, Role.editor);
 
     const target = await this.prisma.qaTarget.findUniqueOrThrow({
       where: { id: targetId },
-      include: { project: { select: { name: true, description: true, id: true } } },
+      select: { status: true, descriptionVersion: true },
     });
-    if (target.status === "running") {
-      throw new ConflictException("Target 執行中，無法重新生成測試清單。");
-    }
-    const inFlight = await this.prisma.generationRun.findFirst({ where: { targetId, status: "running" } });
+    if (target.status === "running") throw new ConflictException("Target 執行中，無法重新生成測試清單。");
+    if (this.isInFlight(targetId)) throw new ConflictException("已經有一個生成流程在進行中。");
+    const inFlight = await this.prisma.generationRun.findFirst({
+      where: { targetId, status: { in: ["running", "paused"] } },
+    });
     if (inFlight) throw new ConflictException("已經有一個生成流程在進行中。");
 
-    const startedAt = Date.now();
     const run = await this.prisma.generationRun.create({
       data: { targetId, mode, descriptionVersion: target.descriptionVersion, triggeredById: userId },
     });
+    this.spawn(run.id, targetId, userId);
+    return { runId: run.id };
+  }
 
-    yield {
-      type: "started", runId: run.id, target: target.name, kind: target.kind,
-      mode, descriptionVersion: target.descriptionVersion,
+  /** Replays what has happened so far, then streams the rest. */
+  subscribe(targetId: string, subscriber: Subscriber): () => void {
+    const run = this.active.get(targetId);
+    if (!run) return () => undefined;
+    for (const event of run.events) subscriber(event);
+    if (run.finished) return () => undefined;
+    run.subscribers.add(subscriber);
+    return () => run.subscribers.delete(subscriber);
+  }
+
+  /** A run that is still going, or finished recently enough to replay. */
+  activeRun(targetId: string) {
+    const run = this.active.get(targetId);
+    return run ? { runId: run.runId, events: run.events, finished: run.finished } : null;
+  }
+
+  /** True while a run is actually in flight, which is what blocks a new start. */
+  private isInFlight(targetId: string): boolean {
+    const run = this.active.get(targetId);
+    return !!run && !run.finished;
+  }
+
+  async cancel(targetId: string, userId: string) {
+    await this.perms.requireTarget(targetId, userId, Role.editor);
+    const run = this.active.get(targetId);
+    if (!run) return { cancelled: false };
+    run.abort.abort();
+    return { cancelled: true };
+  }
+
+  private spawn(runId: string, targetId: string, userId: string) {
+    const record: ActiveRun = {
+      runId, targetId, events: [], subscribers: new Set(), abort: new AbortController(), finished: false,
     };
+    this.active.set(targetId, record);
+    // The run itself is deliberately not awaited: it outlives the request that
+    // started it, so closing the browser does not stop it.
+    void this.execute(record, userId)
+      .catch(async (err) => {
+        this.log.error(`generation run ${runId} crashed: ${(err as Error).message}`);
+        this.publish(record, { type: "error", message: (err as Error).message });
+        await this.prisma.generationRun
+          .update({ where: { id: runId }, data: { status: "failed", error: String(err).slice(0, 2000), endedAt: new Date() } })
+          .catch(() => undefined);
+      })
+      .finally(() => {
+        record.finished = true;
+        record.subscribers.clear();
+        const evict = setTimeout(() => {
+          if (this.active.get(targetId) === record) this.active.delete(targetId);
+        }, RETAIN_FINISHED_MS);
+        evict.unref?.();
+      });
+  }
+
+  /**
+   * Spec §4.3: description + config + attachments + handoff + discovery
+   * → feature inventory → cases per feature → dedupe and order → persist.
+   *
+   * Every model call goes through `withLlm`, which pauses the run instead of
+   * failing it when no model can serve the request.
+   */
+  private async execute(record: ActiveRun, userId: string) {
+    const startedAt = Date.now();
+    const run = await this.prisma.generationRun.findUniqueOrThrow({ where: { id: record.runId } });
+    const target = await this.prisma.qaTarget.findUniqueOrThrow({
+      where: { id: record.targetId },
+      include: { project: { select: { name: true, description: true } } },
+    });
+
+    await this.prisma.generationRun.update({
+      where: { id: run.id },
+      data: { status: "running", pausedReason: null, pausedAt: null },
+    });
+
+    this.publish(record, {
+      type: "started", runId: run.id, target: target.name, kind: target.kind,
+      mode: run.mode, descriptionVersion: run.descriptionVersion,
+    });
 
     try {
-      // ----- context -----
-      const [attachments, handoffs] = await Promise.all([
-        this.prisma.projectAttachment.findMany({
-          where: { projectId: target.projectId },
-          orderBy: { createdAt: "desc" },
-          take: 5,
-          select: { filename: true, url: true, textContent: true },
-        }),
-        this.prisma.handoffDocument.findMany({
-          where: { OR: [{ targetId }, { projectId: target.projectId, scope: "project" }] },
-          orderBy: { importedAt: "desc" },
-          take: 2,
-          select: { parsed: true, scope: true },
-        }),
-      ]);
+      const saved = (run.progress as unknown as GenerationProgress | null) ?? null;
 
-      const discovery = await this.discovery.discover(
-        target.kind,
-        (target.config ?? {}) as Record<string, unknown>,
-      );
-      yield { type: "discovery", ok: discovery.ok, source: discovery.source, note: discovery.note };
+      // ----- discovery (recomputed only on a fresh run) -----
+      let discovery: DiscoveryResult;
+      if (saved?.discovery) {
+        discovery = { ...saved.discovery, kind: target.kind } as DiscoveryResult;
+      } else {
+        discovery = await this.discovery.discover(target.kind, (target.config ?? {}) as Record<string, unknown>);
+      }
+      this.publish(record, { type: "discovery", ok: discovery.ok, source: discovery.source, note: discovery.note });
 
-      const suggested = collectSuggestedCases(handoffs);
-      const context = buildContext({
-        projectName: target.project.name,
-        projectDescription: target.project.description,
-        targetName: target.name,
-        kind: target.kind,
-        config: (target.config ?? {}) as Record<string, unknown>,
-        targetDescription: target.description,
-        discovery,
-        attachments,
-        suggested,
-      });
+      const context = await this.buildRunContext(target, discovery);
 
       // ----- step 1: feature inventory -----
-      const featureRes = await this.gateway.structured("generate", "feature_list", {
-        system: FEATURE_SYSTEM,
-        messages: [{ role: "user", content: context }],
-        maxTokens: 4096,
-      });
-      const features = dedupeFeatures(featureRes.data).slice(0, MAX_FEATURES);
-      if (!features.length) throw new BadRequestException("模型沒有產出任何功能，請先補充描述再試一次。");
-      yield { type: "features", features, model: featureRes.model };
+      let features = saved?.features ?? [];
+      let lastModel = saved?.lastModel ?? null;
+      if (!features.length) {
+        const res = await this.withLlm(record, run.id, () =>
+          this.gateway.structured("generate", "feature_list", {
+            system: FEATURE_SYSTEM,
+            messages: [{ role: "user", content: context }],
+            maxTokens: 4096,
+          }),
+        );
+        if (!res) return; // cancelled while paused
+        features = dedupeFeatures(res.data).slice(0, MAX_FEATURES);
+        lastModel = res.model;
+        if (!features.length) throw new BadRequestException("模型沒有產出任何功能，請先補充描述再試一次。");
+      }
+      this.publish(record, { type: "features", features, model: lastModel ?? "" });
 
-      // ----- step 2: cases per feature -----
-      const collected: GeneratedCase[] = [];
-      let lastModel = featureRes.model;
-      for (const [index, feature] of features.entries()) {
-        yield { type: "feature_started", index: index + 1, total: features.length, name: feature.name };
-        const caseRes = await this.gateway.structured("generate", "test_case", {
-          system: caseSystem(target.kind),
-          messages: [
-            { role: "user", content: context },
-            { role: "user", content: featurePrompt(feature, features) },
-          ],
-          maxTokens: 8192,
-        });
-        lastModel = caseRes.model;
-        const cases = normaliseCases(caseRes.data, feature.name).slice(0, MAX_CASES_PER_FEATURE);
+      // ----- step 2: cases per feature, resumable -----
+      const collected: GeneratedCase[] = saved?.cases ?? [];
+      let index = saved?.featureIndex ?? 0;
+      while (index < features.length) {
+        if (record.abort.signal.aborted) return this.markCancelled(record, run.id);
+        const feature = features[index];
+        this.publish(record, { type: "feature_started", index: index + 1, total: features.length, name: feature.name });
+
+        const res = await this.withLlm(record, run.id, () =>
+          this.gateway.structured("generate", "test_case", {
+            system: caseSystem(target.kind),
+            messages: [
+              { role: "user", content: context },
+              { role: "user", content: featurePrompt(feature, features) },
+            ],
+            maxTokens: 8192,
+          }),
+          { features, featureIndex: index, cases: collected, discovery: toStoredDiscovery(discovery), lastModel },
+        );
+        if (!res) return; // cancelled while paused
+
+        lastModel = res.model;
+        const cases = normaliseCases(res.data, feature.name).slice(0, MAX_CASES_PER_FEATURE);
         collected.push(...cases);
-        yield {
-          type: "feature_cases", index: index + 1, total: features.length,
-          name: feature.name, count: cases.length, model: caseRes.model,
-        };
+        index++;
+        this.publish(record, {
+          type: "feature_cases", index, total: features.length,
+          name: feature.name, count: cases.length, model: res.model,
+        });
+        await this.saveProgress(run.id, {
+          features, featureIndex: index, cases: collected,
+          discovery: toStoredDiscovery(discovery), lastModel,
+        });
       }
 
-      // ----- step 3: dedupe and order -----
+      // ----- step 3: dedupe, order, persist -----
       const { kept, dropped } = dedupeCases(collected, features.map((f) => f.name));
-      yield { type: "deduped", kept: kept.length, dropped };
+      this.publish(record, { type: "deduped", kept: kept.length, dropped });
       if (!kept.length) throw new BadRequestException("模型沒有產出任何測試案例。");
 
-      const saved = await this.persist(targetId, userId, mode, target.descriptionVersion, features, kept);
-      yield { type: "saved", featureCount: saved.featureCount, caseCount: saved.caseCount };
+      const persisted = await this.persist(record.targetId, userId, run.mode, run.descriptionVersion, features, kept);
+      this.publish(record, { type: "saved", featureCount: persisted.featureCount, caseCount: persisted.caseCount });
 
       await this.prisma.generationRun.update({
         where: { id: run.id },
         data: {
           status: "succeeded",
-          featureCount: saved.featureCount,
-          caseCount: saved.caseCount,
+          featureCount: persisted.featureCount,
+          caseCount: persisted.caseCount,
           duplicatesDropped: dropped,
-          discovery: { ok: discovery.ok, source: discovery.source, note: discovery.note } as Prisma.InputJsonObject,
+          discovery: toStoredDiscovery(discovery) as unknown as Prisma.InputJsonObject,
           model: lastModel,
+          progress: Prisma.DbNull,
           endedAt: new Date(),
         },
       });
-      await this.audit.log("user", userId, "generation.run", targetId, {
-        runId: run.id, mode, features: saved.featureCount, cases: saved.caseCount,
+      await this.audit.log("user", userId, "generation.run", record.targetId, {
+        runId: run.id, mode: run.mode, features: persisted.featureCount, cases: persisted.caseCount,
       });
-
-      yield {
-        type: "finished", runId: run.id, featureCount: saved.featureCount,
-        caseCount: saved.caseCount, durationMs: Date.now() - startedAt,
-      };
+      this.publish(record, {
+        type: "finished", runId: run.id, featureCount: persisted.featureCount,
+        caseCount: persisted.caseCount, durationMs: Date.now() - startedAt,
+      });
     } catch (err) {
-      const message =
-        err instanceof LlmExhaustedError
-          ? `${err.message}（${err.attempts.map((a) => `${a.configName}:${a.outcome}`).join(", ")}）`
-          : (err as Error).message;
-      this.log.warn(`generation failed for ${targetId}: ${message}`);
+      const message = (err as Error).message;
+      this.log.warn(`generation failed for ${record.targetId}: ${message}`);
       await this.prisma.generationRun.update({
         where: { id: run.id },
         data: { status: "failed", error: message.slice(0, 2000), endedAt: new Date() },
       });
-      yield { type: "error", message, detail: err instanceof LlmExhaustedError ? err.attempts : undefined };
+      this.publish(record, { type: "error", message });
     }
   }
 
-  /** Replace drops previously generated rows; manual and proposal-sourced cases always survive. */
+  /**
+   * Runs one model call. If every config is unusable the run is parked rather
+   * than failed: progress is saved, the row is marked paused, and the call is
+   * retried the moment a model is available again. Returns null only if the run
+   * was cancelled while waiting.
+   */
+  private async withLlm<T>(
+    record: ActiveRun,
+    runId: string,
+    call: () => Promise<T>,
+    progress?: GenerationProgress,
+  ): Promise<T | null> {
+    for (;;) {
+      if (record.abort.signal.aborted) {
+        await this.markCancelled(record, runId);
+        return null;
+      }
+      try {
+        return await call();
+      } catch (err) {
+        if (!(err instanceof LlmExhaustedError) || !err.recoverable) throw err;
+        if (progress) await this.saveProgress(runId, progress);
+
+        const featureIndex = progress?.featureIndex ?? 0;
+        const total = progress?.features.length ?? 0;
+        await this.prisma.generationRun.update({
+          where: { id: runId },
+          data: { status: "paused", pausedReason: err.message.slice(0, 1000), pausedAt: new Date() },
+        });
+        this.publish(record, {
+          type: "paused",
+          reason: err.reason,
+          message: `${err.message} 已保留進度，有可用的 LLM 之後會自動接續。`,
+          featureIndex,
+          total,
+        });
+
+        const ok = await this.health.waitForPurpose("generate", false, record.abort.signal);
+        if (!ok) {
+          await this.markCancelled(record, runId);
+          return null;
+        }
+        await this.prisma.generationRun.update({
+          where: { id: runId },
+          data: { status: "running", pausedReason: null, pausedAt: null },
+        });
+        this.publish(record, { type: "resumed", message: "LLM 已恢復，從中斷的地方繼續。" });
+      }
+    }
+  }
+
+  private saveProgress(runId: string, progress: GenerationProgress) {
+    return this.prisma.generationRun.update({
+      where: { id: runId },
+      data: { progress: progress as unknown as Prisma.InputJsonObject },
+    });
+  }
+
+  private async markCancelled(record: ActiveRun, runId: string) {
+    await this.prisma.generationRun.update({
+      where: { id: runId },
+      data: { status: "failed", error: "已取消", endedAt: new Date() },
+    });
+    this.publish(record, { type: "error", message: "生成已取消。" });
+  }
+
+  private publish(record: ActiveRun, event: GenerationEvent) {
+    record.events.push(event);
+    for (const subscriber of record.subscribers) {
+      try {
+        subscriber(event);
+      } catch {
+        record.subscribers.delete(subscriber);
+      }
+    }
+  }
+
+  /** Context is rebuilt rather than stored: it can be large and is cheap to redo. */
+  private async buildRunContext(
+    target: { projectId: string; id: string; name: string; kind: TargetKind; config: Prisma.JsonValue; description: string; project: { name: string; description: string } },
+    discovery: DiscoveryResult,
+  ): Promise<string> {
+    const [attachments, handoffs] = await Promise.all([
+      this.prisma.projectAttachment.findMany({
+        where: { projectId: target.projectId },
+        orderBy: { createdAt: "desc" },
+        take: 5,
+        select: { filename: true, url: true, textContent: true },
+      }),
+      this.prisma.handoffDocument.findMany({
+        where: { OR: [{ targetId: target.id }, { projectId: target.projectId, scope: "project" }] },
+        orderBy: { importedAt: "desc" },
+        take: 2,
+        select: { parsed: true, scope: true },
+      }),
+    ]);
+    return buildContext({
+      projectName: target.project.name,
+      projectDescription: target.project.description,
+      targetName: target.name,
+      kind: target.kind,
+      config: (target.config ?? {}) as Record<string, unknown>,
+      targetDescription: target.description,
+      discovery,
+      attachments,
+      suggested: collectSuggestedCases(handoffs),
+    });
+  }
+
   private async persist(
     targetId: string,
     userId: string,
@@ -247,6 +478,8 @@ export class GenerationService {
       return { featureCount: featureIds.size, caseCount };
     }, { timeout: 120_000 });
   }
+
+  /** Discovery fields kept on the run row, without the bulky endpoint list. */
 
   runs(targetId: string, userId: string) {
     return this.perms.requireTarget(targetId, userId, Role.viewer).then(() =>
@@ -504,4 +737,8 @@ function buildContext(input: {
     parts.push("", `## 參考資料：${a.filename}${a.url ? `（${a.url}）` : ""}`, a.textContent.slice(0, 4000));
   }
   return parts.join("\n");
+}
+
+function toStoredDiscovery(d: DiscoveryResult) {
+  return { ok: d.ok, source: d.source, note: d.note, summary: d.summary };
 }

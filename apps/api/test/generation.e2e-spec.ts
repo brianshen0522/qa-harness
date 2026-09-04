@@ -1,10 +1,11 @@
 import { INestApplication } from "@nestjs/common";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
-import { api, createApp, loginUser, resetDb } from "./helpers";
+import { api, closeFetchPool, createApp, loginUser, resetDb } from "./helpers";
 import { PrismaService } from "../src/prisma/prisma.service";
 import { LlmGatewayService } from "../src/llm/llm-gateway.service";
-import type { LlmProviderAdapter } from "../src/llm/providers";
+import { LlmProviderError, type LlmProviderAdapter } from "../src/llm/providers";
+import { LlmHealthService } from "../src/llm/llm-health.service";
 
 const OPENAPI = {
   openapi: "3.0.3",
@@ -41,6 +42,7 @@ describe("test case generation and list (e2e)", () => {
   let projectId: string, targetId: string;
   let schemaServer: Server;
   let schemaUrl: string;
+  let port = 0;
 
   /** Deterministic stand-in for the generate model, keyed on which schema is asked for. */
   function stubGenerator(features: string[], casesPerFeature: (name: string) => unknown[]) {
@@ -94,6 +96,9 @@ describe("test case generation and list (e2e)", () => {
     });
     await new Promise<void>((r) => schemaServer.listen(0, "127.0.0.1", r));
     schemaUrl = `http://127.0.0.1:${(schemaServer.address() as AddressInfo).port}/openapi.json`;
+    // A real port, so a run that parks can be read without blocking supertest.
+    await app.listen(0);
+    port = (app.getHttpServer().address() as AddressInfo).port;
 
     const team = await api(app).post("/api/teams").set("Cookie", owner).send({ name: "T" }).expect(201);
     const project = await api(app).post("/api/projects").set("Cookie", owner)
@@ -111,17 +116,67 @@ describe("test case generation and list (e2e)", () => {
   afterAll(async () => {
     await new Promise<void>((r) => schemaServer.close(() => r()));
     await app.close();
+    await closeFetchPool();
   });
 
-  /** Runs the SSE generation endpoint and collects its events. */
-  async function generate(cookie: string, mode = "replace") {
-    const res = await api(app).post(`/api/targets/${targetId}/generate`).set("Cookie", cookie).send({ mode });
-    if (res.status !== 200) return { status: res.status, body: res.body, events: [] as Record<string, unknown>[] };
-    const events = res.text
-      .split("\n")
-      .filter((l) => l.startsWith("data: "))
-      .map((l) => JSON.parse(l.slice(6)) as Record<string, unknown>);
-    return { status: res.status, body: res.body, events };
+  type Event = Record<string, unknown> & { type: string };
+
+  /**
+   * Starts a run and reads its event stream. A run that parks waiting for an LLM
+   * never closes the stream, so `until` stops reading at the event we care about.
+   */
+  async function generate(
+    cookie: string,
+    mode = "replace",
+    opts: { target?: string; until?: (e: Event) => boolean; timeoutMs?: number } = {},
+  ) {
+    const id = opts.target ?? targetId;
+    const done = opts.until ?? ((e: Event) => e.type === "finished" || e.type === "error");
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), opts.timeoutMs ?? 30_000);
+    try {
+      const res = await fetch(`http://127.0.0.1:${port}/api/targets/${id}/generate`, {
+        method: "POST",
+        headers: { cookie, "content-type": "application/json" },
+        body: JSON.stringify({ mode }),
+        signal: controller.signal,
+      });
+      if (res.status !== 200) return { status: res.status, body: await res.json(), events: [] as Event[] };
+
+      const reader = res.body!.getReader();
+      const decoder = new TextDecoder();
+      const events: Event[] = [];
+      let buffer = "";
+      outer: while (true) {
+        const { value, done: finished } = await reader.read();
+        if (finished) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() ?? "";
+        for (const line of lines) {
+          if (!line.startsWith("data: ")) continue;
+          const event = JSON.parse(line.slice(6)) as Event;
+          events.push(event);
+          if (done(event)) break outer;
+        }
+      }
+      controller.abort();
+      return { status: 200, body: {}, events };
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  /** Waits for the run row to settle into one of the given states. */
+  async function runStatus(states: string[], timeoutMs = 15_000) {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      const run = await prisma.generationRun.findFirst({ where: { targetId }, orderBy: { startedAt: "desc" } });
+      if (run && states.includes(run.status)) return run;
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    const run = await prisma.generationRun.findFirst({ where: { targetId }, orderBy: { startedAt: "desc" } });
+    throw new Error(`run never reached ${states.join("/")}; last status was ${run?.status}`);
   }
 
   it("starts empty and is readable by any member", async () => {
@@ -155,7 +210,7 @@ describe("test case generation and list (e2e)", () => {
       expect(byType.started).toMatchObject({ kind: "api", mode: "replace", descriptionVersion: 1 });
       expect(byType.discovery).toMatchObject({ ok: true, source: schemaUrl });
       expect(String(byType.discovery.note)).toMatch(/2 個 endpoint/);
-      expect((byType.features as { features: unknown[] }).features).toHaveLength(2);
+      expect((byType.features as unknown as { features: unknown[] }).features).toHaveLength(2);
       expect(byType.deduped).toMatchObject({ kept: 4, dropped: 2 });
       expect(byType.saved).toMatchObject({ featureCount: 2, caseCount: 4 });
       expect(byType.finished).toMatchObject({ featureCount: 2, caseCount: 4 });
@@ -234,20 +289,66 @@ describe("test case generation and list (e2e)", () => {
       await prisma.qaTarget.update({ where: { id: targetId }, data: { status: "idle" } });
     });
 
-    it("reports a failed run instead of leaving it running", async () => {
+    it("parks the run instead of failing it when no model can serve, then finishes it on recovery", async () => {
       const bad: LlmProviderAdapter = {
         async complete() {
-          return { text: "not json", model: "stub", usage: { inputTokens: 1, outputTokens: 1 }, nativeJson: false };
+          throw new LlmProviderError("server", "upstream is down", 503);
         },
       };
       app.get(LlmGatewayService).setProviders({ anthropic: bad, openai: bad, ollama: bad });
-      const { events } = await generate(editor);
-      expect(events.at(-1)).toMatchObject({ type: "error" });
 
-      const runs = await api(app).get(`/api/targets/${targetId}/generation-runs`).set("Cookie", viewer).expect(200);
-      expect(runs.body[0]).toMatchObject({ status: "failed" });
-      expect(runs.body[0].error).toBeTruthy();
-    }, 60_000);
+      const { events } = await generate(editor, "replace", { until: (e) => e.type === "paused" });
+      const paused = events.find((e) => e.type === "paused")!;
+      expect(paused).toMatchObject({ reason: expect.stringMatching(/all_down|all_failed/) });
+      expect(String(paused.message)).toMatch(/自動接續/);
+
+      const parked = await runStatus(["paused"]);
+      expect(parked.pausedReason).toBeTruthy();
+      expect(parked.endedAt).toBeNull();
+
+      // The breaker has taken the config out; putting it back is what an admin
+      // fixing the provider, or the probe loop, would do.
+      stubGenerator(["恢復後的功能"], (name) => [caseFor(name, 1)]);
+      await app.get(LlmHealthService).resetAfterEdit(
+        (await prisma.llmConfig.findFirstOrThrow()).id,
+      );
+
+      const finished = await runStatus(["succeeded", "failed"], 30_000);
+      expect(finished.status).toBe("succeeded");
+      expect(finished.caseCount).toBeGreaterThan(0);
+      expect(finished.pausedReason).toBeNull();
+    }, 90_000);
+
+    it("keeps the work already done when it parks mid-pipeline", async () => {
+      let calls = 0;
+      const failsOnSecondFeature: LlmProviderAdapter = {
+        async complete(_cfg, req) {
+          calls++;
+          if (req.jsonSchema?.name === "test_case" && calls > 2) {
+            throw new LlmProviderError("server", "upstream is down", 503);
+          }
+          const isFeatures = req.jsonSchema?.name === "feature_list";
+          const body = isFeatures
+            ? { schema_version: "1.0", features: [{ name: "甲", description: "d" }, { name: "乙", description: "d" }] }
+            : { schema_version: "1.0", cases: [caseFor("甲", 1)] };
+          return { text: JSON.stringify(body), model: "stub", usage: { inputTokens: 1, outputTokens: 1 }, nativeJson: true };
+        },
+      };
+      await app.get(LlmHealthService).resetAfterEdit((await prisma.llmConfig.findFirstOrThrow()).id);
+      app.get(LlmGatewayService).setProviders({ anthropic: failsOnSecondFeature, openai: failsOnSecondFeature, ollama: failsOnSecondFeature });
+
+      await generate(editor, "replace", { until: (e) => e.type === "paused" });
+      const parked = await runStatus(["paused"]);
+      const progress = parked.progress as unknown as { features: unknown[]; featureIndex: number; cases: unknown[] };
+      expect(progress.features).toHaveLength(2);
+      expect(progress.featureIndex).toBe(1); // the first feature is done
+      expect(progress.cases.length).toBeGreaterThan(0);
+
+      stubGenerator(["甲", "乙"], (name) => [caseFor(name, 1)]);
+      await app.get(LlmHealthService).resetAfterEdit((await prisma.llmConfig.findFirstOrThrow()).id);
+      const finished = await runStatus(["succeeded", "failed"], 30_000);
+      expect(finished.status).toBe("succeeded");
+    }, 90_000);
   });
 
   describe("editing the list", () => {
@@ -343,10 +444,9 @@ describe("test case generation and list (e2e)", () => {
       .send({ name: "No schema", kind: "api", config: { base_url: "http://127.0.0.1:1" }, description: "只有描述" })
       .expect(201);
     stubGenerator(["只有描述的功能"], (name) => [caseFor(name, 1)]);
-    const res = await api(app).post(`/api/targets/${plain.body.id}/generate`).set("Cookie", owner).send({}).expect(200);
-    const events = res.text.split("\n").filter((l) => l.startsWith("data: ")).map((l) => JSON.parse(l.slice(6)));
+    const { events } = await generate(owner, "replace", { target: plain.body.id });
     expect(events.find((e) => e.type === "discovery")).toMatchObject({ ok: false });
-    expect(String(events.find((e) => e.type === "discovery").note)).toMatch(/openapi_url/);
+    expect(String(events.find((e) => e.type === "discovery")!.note)).toMatch(/openapi_url/);
     expect(events.at(-1)).toMatchObject({ type: "finished", caseCount: 1 });
   }, 60_000);
 

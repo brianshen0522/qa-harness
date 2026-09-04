@@ -247,16 +247,22 @@ describe("discussion area (e2e)", () => {
 
   it("answers 503 with a usable message when no discuss model is configured", async () => {
     await prisma.llmConfig.updateMany({ data: { enabled: false } });
-    const r = await api(app).post(`/api/projects/${projectId}/discussion/messages`).set("Cookie", editor).send({ content: "x" }).expect(503);
-    expect(r.body.message).toMatch(/No enabled LLM config for purpose 'discuss'/);
-    expect(r.body.error).toBe("LLM Unavailable");
-    await prisma.llmConfig.updateMany({ data: { enabled: true } });
+    try {
+      const r = await api(app).post(`/api/projects/${projectId}/discussion/messages`).set("Cookie", editor).send({ content: "x" }).expect(503);
+      expect(r.body.message).toMatch(/沒有為「discuss」設定任何可用的 LLM/);
+      expect(r.body.error).toBe("LLM Unavailable");
+    } finally {
+      // Restore even when the assertion fails, so the next test is not poisoned.
+      await prisma.llmConfig.updateMany({ data: { enabled: true } });
+    }
   });
 
   it("answers 503 listing each attempt when every model returns invalid output", async () => {
     const bad = { async complete() { return { text: "not json", model: "stub", usage: { inputTokens: 1, outputTokens: 1 }, nativeJson: false }; } };
     app.get(LlmGatewayService).setProviders({ anthropic: bad, openai: bad, ollama: bad });
     const r = await api(app).post(`/api/projects/${projectId}/discussion/messages`).set("Cookie", editor).send({ content: "x" }).expect(503);
+    // A chat turn is interactive, so it fails fast with a clear reason rather
+    // than parking like the background pipelines do.
     expect(r.body.message).toMatch(/discussion_turn/);
     expect(r.body.attempts).toHaveLength(3);
     expect(r.body.attempts.every((a: { outcome: string }) => a.outcome === "invalid_output")).toBe(true);

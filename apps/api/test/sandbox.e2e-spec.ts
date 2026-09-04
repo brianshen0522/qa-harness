@@ -1,6 +1,6 @@
 import { INestApplication } from "@nestjs/common";
 import type { AddressInfo } from "node:net";
-import { api, createApp, loginAdmin, loginUser, resetDb } from "./helpers";
+import { api, closeFetchPool, createApp, loginAdmin, loginUser, resetDb } from "./helpers";
 import { PrismaService } from "../src/prisma/prisma.service";
 import { DockerService } from "../src/sandbox/docker.service";
 import { SandboxService } from "../src/sandbox/sandbox.service";
@@ -45,6 +45,7 @@ describe("admin sandbox (e2e)", () => {
     const sandbox = app.get(SandboxService);
     await Promise.all(started.map((id) => sandbox.remove(id).catch(() => undefined)));
     await app.close();
+    await closeFetchPool();
   }, 60_000);
 
   it("is admin-only", async () => {
@@ -167,28 +168,35 @@ describe("admin sandbox (e2e)", () => {
       const empty = await api(app).get(`${base}/session`).set("Cookie", admin).expect(200);
       expect(empty.body).toMatchObject({ status: "idle", events: [], turns: 0 });
 
-      // No LLM is configured in this suite, so a round ends with an error event —
-      // which is exactly what proves the queue, stream and lifecycle are wired up.
+      // No LLM is configured in this suite, so the round parks rather than failing.
+      // That is the behaviour we want, and it still proves the queue, the stream
+      // and the lifecycle are wired up.
       const sent = await api(app).post(`${base}/messages`).set("Cookie", admin)
         .send({ content: "開啟 example.com", maxSteps: 3 }).expect(201);
       expect(sent.body).toMatchObject({ queued: true, interjected: false });
 
-      await new Promise((r) => setTimeout(r, 1500));
+      await new Promise((r) => setTimeout(r, 2000));
       const after = await api(app).get(`${base}/session`).set("Cookie", admin).expect(200);
       const kinds = after.body.events.map((e: { type: string }) => e.type);
       expect(kinds).toContain("user_message");
       expect(kinds).toContain("run_started");
-      expect(after.body.status).toBe("idle");
+      expect(kinds).toContain("paused");
+      expect(after.body.status).toBe("paused");
       const userMessage = after.body.events.find((e: { type: string }) => e.type === "user_message");
       expect(userMessage).toMatchObject({ content: "開啟 example.com", interjected: false });
+      const paused = after.body.events.find((e: { type: string }) => e.type === "paused");
+      expect(paused.reason).toBe("not_configured");
+      expect(paused.message).toMatch(/自動接續/);
 
-      // A second message continues the same transcript rather than replacing it.
-      await api(app).post(`${base}/messages`).set("Cookie", admin).send({ content: "再試一次" }).expect(201);
-      await new Promise((r) => setTimeout(r, 1500));
+      // A message sent while it waits is queued as an interjection, not lost.
+      const queued = await api(app).post(`${base}/messages`).set("Cookie", admin).send({ content: "再試一次" }).expect(201);
+      expect(queued.body).toMatchObject({ interjected: true });
       const second = await api(app).get(`${base}/session`).set("Cookie", admin).expect(200);
       expect(second.body.events.filter((e: { type: string }) => e.type === "user_message")).toHaveLength(2);
 
-      expect((await api(app).post(`${base}/stop`).set("Cookie", admin).expect(201)).body).toEqual({ stopped: false });
+      // A parked round is stoppable, so an outage never traps the conversation.
+      expect((await api(app).post(`${base}/stop`).set("Cookie", admin).expect(201)).body).toEqual({ stopped: true });
+      await new Promise((r) => setTimeout(r, 500));
       await api(app).delete(`${base}/session`).set("Cookie", admin).expect(200);
       const cleared = await api(app).get(`${base}/session`).set("Cookie", admin).expect(200);
       expect(cleared.body).toMatchObject({ turns: 0 });

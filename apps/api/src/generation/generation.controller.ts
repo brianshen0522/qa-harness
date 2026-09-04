@@ -62,8 +62,9 @@ export class GenerationController {
   // ---------- generation pipeline ----------
 
   /**
-   * Streams pipeline progress as server-sent events. A run can take minutes, and
-   * the outcome is durable in `generation_runs`, so a reload shows the result.
+   * Starts a run and streams its progress. The run itself lives in the service,
+   * not the request: closing this stream (or the browser) does not stop it, and
+   * reconnecting replays what has happened so far.
    */
   @Post("targets/:id/generate")
   async generate(
@@ -73,35 +74,64 @@ export class GenerationController {
     @Req() req: Request,
     @Res() res: Response,
   ) {
-    const iterator = this.generation.run(id, user.id, dto.mode ?? GenerationMode.replace);
-    // Pull the first event before switching to SSE, so permission and conflict
-    // errors still come back as a normal HTTP status the client can read.
-    const first = await iterator.next();
+    // Permission and conflict errors surface as a normal HTTP status.
+    await this.generation.start(id, user.id, dto.mode ?? GenerationMode.replace);
+    this.streamRun(id, req, res);
+  }
 
+  /** Re-attach to a run already in progress. */
+  @Get("targets/:id/generate/stream")
+  async stream(@CurrentUser() user: UserPrincipal, @Param("id") id: string, @Req() req: Request, @Res() res: Response) {
+    await this.cases.list(id, user.id); // 404/403 for anyone without access
+    this.streamRun(id, req, res);
+  }
+
+  @Post("targets/:id/generate/cancel")
+  cancel(@CurrentUser() user: UserPrincipal, @Param("id") id: string) {
+    return this.generation.cancel(id, user.id);
+  }
+
+  private streamRun(targetId: string, req: Request, res: Response) {
     res.writeHead(200, {
       "content-type": "text/event-stream; charset=utf-8",
       "cache-control": "no-cache, no-transform",
       connection: "keep-alive",
       "x-accel-buffering": "no",
     });
+    res.write(": connected\n\n");
+
     const send = (event: unknown) => {
       if (!res.writableEnded) res.write(`data: ${JSON.stringify(event)}\n\n`);
     };
-
-    let closed = false;
-    req.on("close", () => { closed = true; });
-
-    if (!first.done) send(first.value);
-    try {
-      for await (const event of iterator) {
-        send(event);
-        if (closed) break;
-      }
-    } catch (err) {
-      send({ type: "error", message: (err as Error).message });
-    } finally {
-      if (!res.writableEnded) res.end();
+    const existing = this.generation.activeRun(targetId);
+    if (!existing) {
+      send({ type: "error", message: "目前沒有進行中的生成流程。" });
+      res.end();
+      return;
     }
+
+    const unsubscribe = this.generation.subscribe(targetId, (event) => {
+      send(event);
+      if (event.type === "finished" || event.type === "error") {
+        if (!res.writableEnded) res.end();
+      }
+    });
+    // A run that already ended replayed its whole history above, terminal event
+    // included, so there is nothing left to wait for.
+    if (existing.finished) {
+      if (!res.writableEnded) res.end();
+      return;
+    }
+    // A paused run can wait a long time; keep the connection from being dropped.
+    const heartbeat = setInterval(() => {
+      if (!res.writableEnded) res.write(": ping\n\n");
+    }, 25_000);
+
+    req.on("close", () => {
+      clearInterval(heartbeat);
+      unsubscribe();
+      if (!res.writableEnded) res.end();
+    });
   }
 
   @Get("targets/:id/generation-runs")

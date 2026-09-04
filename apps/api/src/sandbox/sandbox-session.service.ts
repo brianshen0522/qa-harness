@@ -2,10 +2,11 @@ import { BadRequestException, Injectable, Logger } from "@nestjs/common";
 import { randomUUID } from "node:crypto";
 import type { ExecutionStep } from "@qa-harness/schemas";
 import { LlmExhaustedError } from "../llm/llm-gateway.service";
+import { LlmHealthService } from "../llm/llm-health.service";
 import { SandboxAgentService, clamp, type ActionOutcome, type AgentTurn } from "./sandbox-agent.service";
 import { SandboxService, parseResolution } from "./sandbox.service";
 
-export type SessionStatus = "idle" | "running";
+export type SessionStatus = "idle" | "running" | "paused";
 
 export interface SessionEventBase {
   seq: number;
@@ -31,6 +32,9 @@ export type SessionEventPayload =
     }
   | { type: "finished"; reason: "done" | "max_steps" | "aborted"; steps: number; summary: string }
   | { type: "error"; message: string; detail?: unknown }
+  /** No usable model: the round is waiting rather than failing. */
+  | { type: "paused"; reason: string; message: string }
+  | { type: "resumed"; message: string }
   | { type: "reset" };
 
 export type SessionEvent = SessionEventBase & SessionEventPayload;
@@ -70,6 +74,7 @@ export class SandboxSessionService {
   constructor(
     private readonly sandbox: SandboxService,
     private readonly agent: SandboxAgentService,
+    private readonly health: LlmHealthService,
   ) {}
 
   /** Current transcript, for the first render before the stream attaches. */
@@ -99,7 +104,9 @@ export class SandboxSessionService {
 
     const session = this.ensure(sandboxId);
     if (maxSteps) session.maxSteps = clamp(maxSteps, 1, 200);
-    const interjected = session.status === "running";
+    // A round that is parked waiting for an LLM is still in flight, so a message
+    // sent now is an interjection into it rather than the start of a new round.
+    const interjected = session.status !== "idle";
     session.pending.push(text);
     this.emit(session, { type: "user_message", content: text, interjected });
 
@@ -117,10 +124,14 @@ export class SandboxSessionService {
     return { queued: true, interjected, status: session.status };
   }
 
-  /** Stop the current round. History is kept, so the user can carry on afterwards. */
+  /**
+   * Stop the current round. History is kept, so the user can carry on afterwards.
+   * A round parked waiting for an LLM is stoppable too, otherwise the only way
+   * out of a long outage would be to delete the conversation.
+   */
   stop(sandboxId: string) {
     const session = this.sessions.get(sandboxId);
-    if (!session || session.status !== "running") return { stopped: false };
+    if (!session || session.status === "idle") return { stopped: false };
     session.abort.abort();
     return { stopped: true };
   }
@@ -247,14 +258,21 @@ export class SandboxSessionService {
             timeoutMs: stepTimeoutMs,
           }));
         } catch (err) {
-          const message =
-            err instanceof LlmExhaustedError
-              ? `${err.message}（${err.attempts.map((a) => `${a.configName}:${a.outcome}`).join(", ")}）`
-              : (err as Error).message;
-          this.emit(session, {
-            type: "error", message,
-            detail: err instanceof LlmExhaustedError ? err.attempts : undefined,
-          });
+          // Losing every model is a pause, not a failure: wait for one to come
+          // back (or for an admin to fix one) and retake the same step.
+          if (err instanceof LlmExhaustedError && err.recoverable) {
+            const resumed = await this.pauseUntilLlmReturns(session, err);
+            if (!resumed) {
+              this.emit(session, {
+                type: "finished", reason: "aborted", steps: stepInRound,
+                summary: "等待 LLM 期間被中止，對話紀錄保留。",
+              });
+              return;
+            }
+            stepInRound--; // that step never happened
+            continue;
+          }
+          this.emit(session, { type: "error", message: (err as Error).message });
           roundOpen = false;
           continue;
         }
@@ -302,6 +320,31 @@ export class SandboxSessionService {
         void this.loop(session);
       }
     }
+  }
+
+  /**
+   * Hold the round until a model for `execute` is usable again. Returns false
+   * only when the user aborted while it was waiting.
+   */
+  private async pauseUntilLlmReturns(session: Session, err: LlmExhaustedError): Promise<boolean> {
+    const detail = err.attempts.length
+      ? `（${err.attempts.map((a) => `${a.configName}:${a.outcome}`).join(", ")}）`
+      : "";
+    session.status = "paused";
+    this.emit(session, {
+      type: "paused",
+      reason: err.reason,
+      message: `${err.message}${detail} 一旦有可用的 LLM 就會自動接續，不需要重新下指令。`,
+    });
+    this.emit(session, { type: "status", status: "paused" });
+
+    const ok = await this.health.waitForPurpose("execute", true, session.abort.signal);
+    if (!ok) return false;
+
+    session.status = "running";
+    this.emit(session, { type: "resumed", message: "LLM 已恢復，從中斷的那一步繼續。" });
+    this.emit(session, { type: "status", status: "running" });
+    return true;
   }
 
   private emit(session: Session, event: SessionEventPayload) {

@@ -27,11 +27,17 @@ const validVerdict = JSON.stringify({
   schema_version: "1.0", verdict: "pass", reasoning: "ok", evidence_refs: [], repro_steps: [], possibly_changed: false,
 });
 
-function makeGateway(chain: ResolvedLlmConfig[]) {
+function makeGateway(chain: ResolvedLlmConfig[], usable?: string[]) {
   const prisma = { llmCallLog: { create: jest.fn().mockResolvedValue({}) } };
   const configs = { resolveChain: jest.fn().mockResolvedValue(chain), resolveOne: jest.fn() };
-  const gw = new LlmGatewayService(prisma as any, configs as any);
-  return { gw, prisma, configs };
+  const health = {
+    // By default every config in the chain is usable.
+    usableConfigIds: jest.fn().mockResolvedValue(usable ?? chain.map((c) => c.id)),
+    recordFailure: jest.fn().mockResolvedValue(undefined),
+    recordSuccess: jest.fn().mockResolvedValue(undefined),
+  };
+  const gw = new LlmGatewayService(prisma as any, configs as any, health as any);
+  return { gw, prisma, configs, health };
 }
 
 describe("LlmGatewayService.structured", () => {
@@ -124,8 +130,46 @@ describe("LlmGatewayService.structured", () => {
     expect(r.configId).toBe("vision");
   });
 
-  it("errors clearly when no config exists for the purpose", async () => {
+  it("says so when no config exists for the purpose at all", async () => {
     const { gw } = makeGateway([]);
-    await expect(gw.structured("discuss", "finding", { messages: [] })).rejects.toThrow(/No enabled LLM config/);
+    await expect(gw.structured("discuss", "finding", { messages: [] })).rejects.toMatchObject({
+      reason: "not_configured",
+      recoverable: true,
+    });
+  });
+
+  it("distinguishes configs that exist but are all currently down", async () => {
+    const { gw } = makeGateway([cfg("a", "anthropic"), cfg("b", "openai")], []);
+    const err = await gw.structured("discuss", "finding", { messages: [] }).catch((e) => e);
+    expect(err).toMatchObject({ reason: "all_down", recoverable: true });
+    expect(err.message).toMatch(/全部無法使用/);
+  });
+
+  it("skips a config the breaker has taken out and uses the next one", async () => {
+    const { gw } = makeGateway([cfg("down", "openai"), cfg("up", "anthropic")], ["up"]);
+    const skipped = fakeAdapter(() => validVerdict);
+    const used = fakeAdapter(() => validVerdict);
+    gw.setProviders({ openai: skipped, anthropic: used });
+    const r = await gw.structured("generate", "case_verdict", { messages: [{ role: "user", content: "x" }] });
+    expect(skipped.calls).toHaveLength(0);
+    expect(r.configId).toBe("up");
+  });
+
+  it("reports provider failures and successes to the breaker", async () => {
+    const { gw, health } = makeGateway([cfg("a", "ollama"), cfg("b", "anthropic")]);
+    gw.setProviders({
+      ollama: fakeAdapter(() => new LlmProviderError("server", "boom", 500)),
+      anthropic: fakeAdapter(() => validVerdict),
+    });
+    await gw.structured("generate", "case_verdict", { messages: [{ role: "user", content: "x" }] });
+    expect(health.recordFailure).toHaveBeenCalledWith("a", "server", "boom");
+    expect(health.recordSuccess).toHaveBeenCalledWith("b");
+  });
+
+  it("counts a config that never produced valid output as a failure", async () => {
+    const { gw, health } = makeGateway([cfg("a", "openai")]);
+    gw.setProviders({ openai: fakeAdapter(() => "not json") });
+    await gw.structured("generate", "finding", { messages: [] }, { maxRetries: 1 }).catch(() => undefined);
+    expect(health.recordFailure).toHaveBeenCalledWith("a", "unknown", expect.stringContaining("finding"));
   });
 });

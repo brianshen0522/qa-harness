@@ -8,9 +8,9 @@ function cx(...parts: (string | false | null | undefined)[]) {
 type Variant = "primary" | "secondary" | "danger" | "ghost";
 
 const VARIANT: Record<Variant, string> = {
-  primary: "bg-blue-600 text-white hover:bg-blue-700 disabled:bg-blue-300",
-  secondary: "bg-white dark:bg-gray-900 text-gray-800 dark:text-gray-100 border border-gray-300 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-800 disabled:text-gray-400 dark:disabled:text-gray-600",
-  danger: "bg-white dark:bg-gray-900 text-red-600 dark:text-red-400 border border-red-300 dark:border-red-900 hover:bg-red-50 dark:hover:bg-red-950/40 disabled:text-red-300",
+  primary: "bg-blue-600 text-white hover:bg-blue-700 disabled:bg-blue-300 dark:disabled:bg-blue-900 dark:disabled:text-blue-300/70",
+  secondary: "bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-100 border border-gray-300 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-700 disabled:text-gray-400 dark:disabled:text-gray-600",
+  danger: "bg-white dark:bg-gray-800 text-red-600 dark:text-red-400 border border-red-300 dark:border-red-900 hover:bg-red-50 dark:hover:bg-red-950/40 disabled:text-red-300",
   ghost: "bg-transparent text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 disabled:text-gray-400 dark:disabled:text-gray-600",
 };
 
@@ -35,7 +35,7 @@ export function Button({
 }
 
 const FIELD =
-  "w-full rounded-md border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 px-3 py-2 text-sm shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:bg-gray-100 dark:disabled:bg-gray-800 disabled:text-gray-500 dark:text-gray-100 dark:placeholder:text-gray-500";
+  "w-full rounded-md border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-950 px-3 py-2 text-sm shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:bg-gray-100 dark:disabled:bg-gray-800 disabled:text-gray-500 dark:text-gray-100 dark:placeholder:text-gray-500";
 
 export function Input({ className, ...props }: InputHTMLAttributes<HTMLInputElement>) {
   return <input {...props} className={cx(FIELD, className)} />;
@@ -184,7 +184,7 @@ export function Dialog({
 export function Table({ children }: { children: ReactNode }) {
   return (
     <div className="overflow-x-auto">
-      <table className="w-full text-left text-sm [&_th]:whitespace-nowrap [&_th]:px-3 [&_th]:py-2 [&_th]:text-xs [&_th]:font-medium [&_th]:text-gray-500 [&_td]:px-3 [&_td]:py-2 [&_td]:align-top [&_tbody_tr]:border-t [&_tbody_tr]:border-gray-100">
+      <table className="w-full text-left text-sm [&_th]:whitespace-nowrap [&_th]:px-3 [&_th]:py-2 [&_th]:text-xs [&_th]:font-medium [&_th]:text-gray-500 dark:[&_th]:text-gray-400 [&_td]:px-3 [&_td]:py-2 [&_td]:align-top [&_tbody_tr]:border-t [&_tbody_tr]:border-gray-100 dark:[&_tbody_tr]:border-gray-800">
         {children}
       </table>
     </div>

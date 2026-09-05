@@ -234,6 +234,7 @@ export interface SandboxSettings {
   resolution: string;
   maxConcurrent: number;
   maxStepsPerCase: number;
+  apiConcurrency: number;
   stepTimeoutSec: number;
   retentionDays: number;
   recordVideo: boolean;

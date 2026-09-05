@@ -2,7 +2,7 @@ import {
   Body, Controller, Get, Param, Post, Put, Query, Req, Res, UseGuards,
 } from "@nestjs/common";
 import {
-  ArrayNotEmpty, IsArray, IsEnum, IsOptional, IsString, IsUUID, MaxLength, MinLength,
+  ArrayNotEmpty, IsArray, IsEnum, IsInt, IsOptional, IsString, IsUUID, Max, MaxLength, Min, MinLength,
 } from "class-validator";
 import { CaseType, FindingStatus, Priority, Severity, Verdict } from "@prisma/client";
 import type { Request, Response } from "express";
@@ -16,6 +16,7 @@ import { ApiSetupService } from "./api-setup.service";
 
 class StartRunDto {
   @IsOptional() @IsArray() @IsUUID("4", { each: true }) caseIds?: string[];
+  @IsOptional() @IsInt() @Min(1) @Max(16) concurrency?: number;
 }
 class CaseIdDto {
   @IsUUID() caseId!: string;
@@ -82,7 +83,7 @@ export class RunsController {
 
   @Post("targets/:id/runs")
   start(@CurrentUser() user: UserPrincipal, @Param("id") id: string, @Body() dto: StartRunDto) {
-    return this.runs.start(id, user.id, dto.caseIds);
+    return this.runs.start(id, user.id, dto.caseIds, dto.concurrency);
   }
 
   /** Live progress. Everyone with access shares the same stream (§4.6). */

@@ -1,5 +1,5 @@
 import { Body, Controller, Get, Put, Query, UseGuards } from "@nestjs/common";
-import { IsBoolean, IsInt, IsNumber, IsOptional, IsString, Min } from "class-validator";
+import { IsBoolean, IsInt, IsNumber, IsOptional, IsString, Max, Min } from "class-validator";
 import { AdminGuard } from "../auth/guards/admin.guard";
 import { CurrentAdmin } from "../common/decorators";
 import type { UserPrincipal } from "../common/types";
@@ -14,6 +14,7 @@ class SandboxSettingsDto {
   @IsOptional() @IsString() resolution?: string;
   @IsOptional() @IsInt() @Min(1) maxConcurrent?: number;
   @IsOptional() @IsInt() @Min(1) maxStepsPerCase?: number;
+  @IsOptional() @IsInt() @Min(1) @Max(16) apiConcurrency?: number;
   @IsOptional() @IsInt() @Min(5) stepTimeoutSec?: number;
   @IsOptional() @IsInt() @Min(1) retentionDays?: number;
   @IsOptional() @IsBoolean() recordVideo?: boolean;

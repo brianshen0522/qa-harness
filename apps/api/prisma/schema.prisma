@@ -281,6 +281,8 @@ model SandboxSettings {
   resolution      String  @default("1280x800")
   maxConcurrent   Int     @default(2) @map("max_concurrent")
   maxStepsPerCase Int     @default(60) @map("max_steps_per_case")
+  /// How many api-target cases run concurrently in one QA run (1 = sequential). §4.6
+  apiConcurrency  Int     @default(4) @map("api_concurrency")
   stepTimeoutSec  Int     @default(60) @map("step_timeout")
   retentionDays   Int     @default(30) @map("retention_days")
   /// Record the screen for each case. Off makes runs cheaper on disk (§4.7 錄影).

@@ -69,6 +69,8 @@ interface ActiveRun {
   llm: LlmUsage;
   /** The case being executed, so a fallback can be pinned to where it happened. */
   currentCaseId: string | null;
+  /** Per-run override for api parallelism; falls back to the global setting. */
+  concurrency?: number;
   finished: boolean;
 }
 
@@ -149,7 +151,7 @@ export class RunService implements OnModuleInit {
    * Spec §4.5: one run per target at a time, enforced with a conditional update
    * so two requests cannot both win. Nothing queues and nothing takes over.
    */
-  async start(targetId: string, userId: string, caseIds?: string[]) {
+  async start(targetId: string, userId: string, caseIds?: string[], concurrency?: number) {
     await this.perms.requireTarget(targetId, userId, Role.editor);
     const target = await this.prisma.qaTarget.findUniqueOrThrow({ where: { id: targetId } });
 
@@ -193,7 +195,7 @@ export class RunService implements OnModuleInit {
         },
       });
       await this.audit.log("user", userId, "run.start", run.id, { targetId, cases: cases.length });
-      this.spawn(run.id, targetId, target.name, target.kind, cases.length);
+      this.spawn(run.id, targetId, target.name, target.kind, cases.length, concurrency);
       return { runId: run.id, total: cases.length };
     } catch (err) {
       await this.releaseTarget(targetId, null);
@@ -262,11 +264,11 @@ export class RunService implements OnModuleInit {
 
   // ---------- execution ----------
 
-  private spawn(runId: string, targetId: string, targetName: string, kind: TargetKind, total: number) {
+  private spawn(runId: string, targetId: string, targetName: string, kind: TargetKind, total: number, concurrency?: number) {
     const record: ActiveRun = {
       runId, targetId, events: [], subscribers: new Set(),
       abort: new AbortController(), skip: new Set(), projectId: null,
-      llm: emptyUsage(), currentCaseId: null, finished: false,
+      llm: emptyUsage(), currentCaseId: null, concurrency, finished: false,
     };
     this.active.set(targetId, record);
     this.publish(record, { type: "run_started", runId, target: targetName, kind, total });
@@ -364,85 +366,77 @@ export class RunService implements OnModuleInit {
         screen: { width: screen[0], height: screen[1] },
       };
 
-      // The queue is re-read each round so cases added mid-run are picked up.
-      for (;;) {
-        if (record.abort.signal.aborted) break;
-        const next = await this.prisma.runCaseQueue.findFirst({
-          where: { runId: record.runId, status: QueueStatus.queued },
-          orderBy: { order: "asc" },
-          include: { testCase: { include: { feature: { select: { name: true } } } } },
-        });
-        if (!next) break;
+      // Cases run in a bounded worker pool. API targets have no shared sandbox, so
+      // independent cases can run concurrently (§4.6); web/desktop share one sandbox
+      // and stay serial. concurrency=1 reproduces the old sequential behaviour.
+      const concurrency = needsSandbox ? 1 : Math.max(1, Math.min(record.concurrency ?? settings.apiConcurrency ?? 4, 16));
+      const featureSetupLocks = new Map<string, Promise<void>>();
 
-        if (record.skip.has(next.testCaseId)) {
-          await this.prisma.runCaseQueue.update({
-            where: { runId_testCaseId: { runId: record.runId, testCaseId: next.testCaseId } },
-            data: { status: QueueStatus.skipped },
-          });
-          await this.writeResult(record.runId, next.testCaseId, next.testCase.currentVersion, {
-            verdict: Verdict.skipped, reasoning: "使用者在執行中跳過。", possiblyChanged: false,
-            reproSteps: [], evidence: {}, stepCount: 0, durationMs: 0,
-          });
-          this.publish(record, { type: "case_skipped", caseId: next.testCaseId, title: next.testCase.title });
-          continue;
+      // Only one worker runs a given feature's setup; the rest await the same result.
+      const ensureFeatureSetup = async (featureId: string, featureName: string | undefined) => {
+        if (featureCaptured.has(featureId) || featureSetupFailed.has(featureId)) return;
+        if (!featureSetupLocks.has(featureId)) {
+          featureSetupLocks.set(featureId, (async () => {
+            const fsteps = await this.apiSetup.featureStepsFor(featureId);
+            if (!fsteps.length) { featureCaptured.set(featureId, {}); return; }
+            const r = await this.runSetupFlow(record, fsteps, setupConfig(), credentials, setupSeqUsed, "feature", featureName);
+            setupSeqUsed += r.recorded;
+            if (r.ok) {
+              featureCaptured.set(featureId, r.captured);
+              this.publish(record, { type: "setup_done", captured: Object.keys(r.captured), stepCount: r.recorded, scope: "feature", featureName });
+            } else {
+              featureSetupFailed.set(featureId, r.error ?? "前置流程失敗");
+              this.publish(record, { type: "setup_failed", message: r.error ?? "前置流程失敗", scope: "feature", featureName });
+            }
+          })());
         }
+        await featureSetupLocks.get(featureId);
+      };
 
+      // Atomically claim the next queued case (only one worker wins the row), handling
+      // user-requested skips. Re-reads the queue each time so mid-run added cases run too.
+      const claimNext = async () => {
+        for (;;) {
+          if (record.abort.signal.aborted) return null;
+          const next = await this.prisma.runCaseQueue.findFirst({
+            where: { runId: record.runId, status: QueueStatus.queued },
+            orderBy: { order: "asc" },
+            include: { testCase: { include: { feature: { select: { name: true } } } } },
+          });
+          if (!next) return null;
+          if (record.skip.has(next.testCaseId)) {
+            await this.prisma.runCaseQueue.updateMany({ where: { runId: record.runId, testCaseId: next.testCaseId, status: QueueStatus.queued }, data: { status: QueueStatus.skipped } });
+            await this.writeResult(record.runId, next.testCaseId, next.testCase.currentVersion, { verdict: Verdict.skipped, reasoning: "使用者在執行中跳過。", possiblyChanged: false, reproSteps: [], evidence: {}, stepCount: 0, durationMs: 0 });
+            this.publish(record, { type: "case_skipped", caseId: next.testCaseId, title: next.testCase.title });
+            continue;
+          }
+          const claim = await this.prisma.runCaseQueue.updateMany({
+            where: { runId: record.runId, testCaseId: next.testCaseId, status: QueueStatus.queued },
+            data: { status: QueueStatus.running, caseVersion: next.testCase.currentVersion },
+          });
+          if (claim.count !== 1) continue; // another worker took it first
+          return next;
+        }
+      };
+      type QueueRow = NonNullable<Awaited<ReturnType<typeof claimNext>>>;
+
+      const processCase = async (next: QueueRow) => {
         const total = await this.prisma.runCaseQueue.count({ where: { runId: record.runId } });
-        const index = await this.prisma.runCaseQueue.count({
-          where: { runId: record.runId, status: { not: QueueStatus.queued } },
-        });
+        const index = await this.prisma.runCaseQueue.count({ where: { runId: record.runId, status: { not: QueueStatus.queued } } });
+        this.publish(record, { type: "case_started", caseId: next.testCaseId, title: next.testCase.title, index, total, caseVersion: next.testCase.currentVersion });
+        record.currentCaseId = next.testCaseId; // best-effort; approximate under concurrency
 
-        // §4.5: the version is pinned the moment the case starts.
-        await this.prisma.runCaseQueue.update({
-          where: { runId_testCaseId: { runId: record.runId, testCaseId: next.testCaseId } },
-          data: { status: QueueStatus.running, caseVersion: next.testCase.currentVersion },
-        });
-        this.publish(record, {
-          type: "case_started", caseId: next.testCaseId, title: next.testCase.title,
-          index: index + 1, total, caseVersion: next.testCase.currentVersion,
-        });
-
-        record.currentCaseId = next.testCaseId;
-
-        // §4.4 feature 層級前置流程:在該 feature 第一條 case 前跑一次,擷取的變數只給
-        // 這個 feature 的 case;失敗只擋這個 feature 的 case,不影響其他 feature。
         const featureId = next.testCase.featureId;
         let caseCreds = credentials;
         let casePrompt = targetPrompt;
         if (!needsSandbox && featureId) {
-          if (!featureCaptured.has(featureId) && !featureSetupFailed.has(featureId)) {
-            const fsteps = await this.apiSetup.featureStepsFor(featureId);
-            if (fsteps.length) {
-              const fname = next.testCase.feature?.name ?? undefined;
-              const r = await this.runSetupFlow(record, fsteps, setupConfig(), credentials, setupSeqUsed, "feature", fname);
-              setupSeqUsed += r.recorded;
-              if (r.ok) {
-                featureCaptured.set(featureId, r.captured);
-                this.publish(record, { type: "setup_done", captured: Object.keys(r.captured), stepCount: r.recorded, scope: "feature", featureName: fname });
-              } else {
-                featureSetupFailed.set(featureId, r.error ?? "前置流程失敗");
-                this.publish(record, { type: "setup_failed", message: r.error ?? "前置流程失敗", scope: "feature", featureName: fname });
-              }
-            } else {
-              featureCaptured.set(featureId, {});
-            }
-          }
+          await ensureFeatureSetup(featureId, next.testCase.feature?.name ?? undefined);
           const failMsg = featureSetupFailed.get(featureId);
           if (failMsg) {
-            await this.writeResult(record.runId, next.testCaseId, next.testCase.currentVersion, {
-              verdict: Verdict.blocked, reasoning: `所屬功能的前置流程失敗,無法執行:${failMsg}`,
-              possiblyChanged: false, reproSteps: [], evidence: {}, stepCount: 0, durationMs: 0,
-            });
-            this.publish(record, {
-              type: "case_finished", caseId: next.testCaseId, verdict: Verdict.blocked,
-              reasoning: `所屬功能的前置流程失敗:${failMsg}`, possiblyChanged: false, stepCount: 0, durationMs: 0,
-            });
-            await this.prisma.runCaseQueue.update({
-              where: { runId_testCaseId: { runId: record.runId, testCaseId: next.testCaseId } },
-              data: { status: QueueStatus.done },
-            });
-            record.currentCaseId = null;
-            continue;
+            await this.writeResult(record.runId, next.testCaseId, next.testCase.currentVersion, { verdict: Verdict.blocked, reasoning: `所屬功能的前置流程失敗,無法執行:${failMsg}`, possiblyChanged: false, reproSteps: [], evidence: {}, stepCount: 0, durationMs: 0 });
+            this.publish(record, { type: "case_finished", caseId: next.testCaseId, verdict: Verdict.blocked, reasoning: `所屬功能的前置流程失敗:${failMsg}`, possiblyChanged: false, stepCount: 0, durationMs: 0 });
+            await this.prisma.runCaseQueue.update({ where: { runId_testCaseId: { runId: record.runId, testCaseId: next.testCaseId } }, data: { status: QueueStatus.done } });
+            return;
           }
           const extra = featureCaptured.get(featureId);
           if (extra && Object.keys(extra).length) {
@@ -451,18 +445,20 @@ export class RunService implements OnModuleInit {
           }
         }
 
-        await this.runCase(record, {
-          target, targetPrompt: casePrompt, credentials: caseCreds, settings, agentPort, skillsBlock, mcpTools: mcpForPrompt,
-          queueRow: next, needsSandbox,
-        });
-
-        await this.prisma.runCaseQueue.update({
-          where: { runId_testCaseId: { runId: record.runId, testCaseId: next.testCaseId } },
-          data: { status: QueueStatus.done },
-        });
-        record.currentCaseId = null;
+        await this.runCase(record, { target, targetPrompt: casePrompt, credentials: caseCreds, settings, agentPort, skillsBlock, mcpTools: mcpForPrompt, queueRow: next, needsSandbox });
+        await this.prisma.runCaseQueue.update({ where: { runId_testCaseId: { runId: record.runId, testCaseId: next.testCaseId } }, data: { status: QueueStatus.done } });
         await this.saveUsage(record);
-      }
+      };
+
+      const worker = async () => {
+        for (;;) {
+          if (record.abort.signal.aborted) return;
+          const next = await claimNext();
+          if (!next) return;
+          await processCase(next);
+        }
+      };
+      await Promise.all(Array.from({ length: concurrency }, () => worker()));
 
       const aborted = record.abort.signal.aborted;
       if (aborted) {

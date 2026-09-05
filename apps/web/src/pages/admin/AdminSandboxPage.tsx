@@ -979,6 +979,7 @@ const FIELDS: { key: Exclude<keyof SandboxSettings, "recordVideo">; label: strin
   { key: "resolution", label: "解析度", type: "text", hint: "例如 1280x800" },
   { key: "maxConcurrent", label: "並行上限", type: "number" },
   { key: "maxStepsPerCase", label: "每個 case 步數上限", type: "number" },
+  { key: "apiConcurrency", label: "API 並行數(每趟同時跑幾條,1=序列)", type: "number" },
   { key: "stepTimeoutSec", label: "每步逾時（秒）", type: "number" },
   { key: "retentionDays", label: "證據保留天數", type: "number" },
 ];

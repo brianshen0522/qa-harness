@@ -445,7 +445,8 @@ describe("test runs (e2e)", () => {
   describe("editing cases while a run is going (§4.5)", () => {
     it("allows a queued case to be edited but not the one executing", async () => {
       stubModel((call) => (call <= 6 ? { type: "wait", params: { ms: 300 } } : null));
-      await api(app).post(`/api/targets/${targetId}/runs`).set("Cookie", editor).send({}).expect(201);
+      // Serial run: this test asserts the "one executing / rest queued" §4.6 semantics.
+      await api(app).post(`/api/targets/${targetId}/runs`).set("Cookie", editor).send({ concurrency: 1 }).expect(201);
 
       // Wait until the first case is actually executing.
       const deadline = Date.now() + 10_000;
@@ -774,4 +775,43 @@ describe("test runs (e2e)", () => {
     // Lock released -> edits work again.
     await api(app).patch(`/api/test-cases/${caseIds[0]}`).set("Cookie", editor).send({ title: "改標題" }).expect(200);
   }, 60_000);
+
+  describe("bounded parallel execution (§4.6)", () => {
+    // Adapter that measures how many LLM calls overlap, and drives each case to do
+    // one http_request then finish (per-conversation, so it is parallel-safe).
+    function trackingStub() {
+      let inflight = 0, maxInflight = 0;
+      const adapter: LlmProviderAdapter = {
+        async complete(_c, req: LlmRequest) {
+          inflight++; maxInflight = Math.max(maxInflight, inflight);
+          await new Promise((r) => setTimeout(r, 60));
+          inflight--;
+          if (req.jsonSchema?.name === "case_verdict") {
+            return json({ schema_version: "1.0", verdict: "pass", reasoning: "ok", evidence_refs: ["step-1"], repro_steps: [], possibly_changed: false });
+          }
+          const first = req.messages.length <= 1;
+          return json({ schema_version: "1.0", phase: first ? "executing" : "judging", observation: "s", intent: "i", action: first ? { type: "http_request", params: { method: "GET", path: "/ok" } } : { type: "done", params: { summary: "done" } } });
+        },
+      };
+      app.get(LlmGatewayService).setProviders({ anthropic: adapter, openai: adapter, ollama: adapter });
+      return () => maxInflight;
+    }
+
+    it("runs api cases concurrently when concurrency > 1", async () => {
+      const maxInflight = trackingStub();
+      await api(app).post(`/api/targets/${targetId}/runs`).set("Cookie", editor).send({ concurrency: 4 }).expect(201);
+      const run = await waitForRun(["succeeded", "failed", "aborted"]);
+      expect(run.status).toBe("succeeded");
+      // 3 active cases with concurrency 4 → their LLM calls must have overlapped.
+      expect(maxInflight()).toBeGreaterThanOrEqual(2);
+    }, 60_000);
+
+    it("stays sequential when concurrency = 1 (no overlap)", async () => {
+      const maxInflight = trackingStub();
+      await api(app).post(`/api/targets/${targetId}/runs`).set("Cookie", editor).send({ concurrency: 1 }).expect(201);
+      const run = await waitForRun(["succeeded", "failed", "aborted"]);
+      expect(run.status).toBe("succeeded");
+      expect(maxInflight()).toBe(1);
+    }, 60_000);
+  });
 });

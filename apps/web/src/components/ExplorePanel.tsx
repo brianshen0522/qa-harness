@@ -304,9 +304,14 @@ function LiveFeed({ events, running }: { events: ExploreEvent[]; running: boolea
     else if (e.type === "error") text = `✗ ${e.message}`;
     return text ? <div key={i}>{text}</div> : null;
   });
+  const empty = lines.every((l) => l === null);
   return (
     <Card title={running ? "探索進行中…" : "探索紀錄"}>
-      <pre className="max-h-72 overflow-auto rounded bg-gray-900 p-3 text-xs leading-relaxed text-gray-200">{lines}</pre>
+      <pre className="max-h-72 overflow-auto rounded bg-gray-900 p-3 text-xs leading-relaxed text-gray-200">
+        {empty && running
+          ? "已在背景進行中。重新整理後即時記錄會從這一刻起重新累積;整體進度與結果請看下方(會持續更新)。"
+          : lines}
+      </pre>
     </Card>
   );
 }
@@ -318,20 +323,26 @@ function Results({ detail, targetId }: { detail: ExploreDetail; targetId: string
   const findings = detail.observations.filter((o) => o.kind === "finding");
   const rwd = detail.observations.filter((o) => o.kind === "rwd_issue");
   const deep = detail.observations.filter((o) => o.kind === "deep_note");
+  const active = detail.run.status === "running" || detail.run.status === "paused";
+  // run.stats is only written when the run finishes, so mid-run derive the counts
+  // from the persisted arrays (polled every few seconds) to show real progress.
+  const livePages = detail.nodes.filter((n) => !STATE_KINDS.has(n.kind)).length;
+  const num = (fromStats: number | undefined, live: number) => Math.max(fromStats ?? 0, live);
 
   return (
     <div className="space-y-4">
       <Card title="覆蓋率總覽" actions={<Badge tone={detail.run.status === "succeeded" ? "green" : detail.run.status === "failed" ? "red" : "amber"}>{detail.run.status}</Badge>}>
         <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
-          <Stat label="掃描頁面" value={s?.routes ?? 0} />
-          <Stat label="身份" value={s?.identities ?? 0} />
+          <Stat label="掃描頁面" value={num(s?.routes, livePages)} />
+          <Stat label="身份" value={num(s?.identities, detail.matrix.identities.length)} />
           <Stat label="產生案例" value={s?.casesGenerated ?? 0} />
-          <Stat label="RWD 問題" value={s?.rwdIssues ?? 0} />
-          <Stat label="即時發現" value={s?.findings ?? 0} />
-          <Stat label="可疑存取" value={s?.suspiciousAccess ?? 0} tone={s?.suspiciousAccess ? "red" : "gray"} />
+          <Stat label="RWD 問題" value={num(s?.rwdIssues, rwd.length)} />
+          <Stat label="即時發現" value={num(s?.findings, findings.length)} />
+          <Stat label="可疑存取" value={num(s?.suspiciousAccess, detail.matrix.suspicious.length)} tone={(s?.suspiciousAccess ?? detail.matrix.suspicious.length) ? "red" : "gray"} />
           <Stat label="有表單頁" value={s?.coverage?.withForms ?? 0} />
           <Stat label="模型呼叫" value={detail.run.llmCalls} />
         </div>
+        {active && <p className="mt-2 text-xs text-amber-700 dark:text-amber-300">探索進行中,以上數字每幾秒自動更新(重新整理也看得到)。</p>}
         {detail.run.startedAt && <p className="mt-2 text-xs text-gray-400 dark:text-gray-500">{formatDate(detail.run.startedAt)}</p>}
         {detail.run.error && <p className="mt-1 text-xs text-red-600 dark:text-red-400">{detail.run.error}</p>}
       </Card>

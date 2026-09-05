@@ -130,7 +130,27 @@ export function Empty({ children }: { children: ReactNode }) {
   return <p className="py-4 text-center text-sm text-gray-400">{children}</p>;
 }
 
-export function Dialog({ open, title, onClose, children }: { open: boolean; title: string; onClose: () => void; children: ReactNode }) {
+const DIALOG_SIZE = {
+  sm: "max-w-lg",
+  lg: "max-w-3xl",
+  xl: "max-w-[92rem]",
+} as const;
+
+export function Dialog({
+  open,
+  title,
+  onClose,
+  children,
+  size = "sm",
+  bodyClassName,
+}: {
+  open: boolean;
+  title: ReactNode;
+  onClose: () => void;
+  children: ReactNode;
+  size?: keyof typeof DIALOG_SIZE;
+  bodyClassName?: string;
+}) {
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
@@ -146,16 +166,16 @@ export function Dialog({ open, title, onClose, children }: { open: boolean; titl
       <div
         role="dialog"
         aria-modal="true"
-        className="w-full max-w-lg rounded-lg bg-white shadow-xl"
+        className={`flex max-h-[92vh] w-full ${DIALOG_SIZE[size]} flex-col rounded-lg bg-white shadow-xl`}
         onMouseDown={(e) => e.stopPropagation()}
       >
-        <header className="flex items-center justify-between border-b border-gray-100 px-5 py-3">
+        <header className="flex shrink-0 items-center justify-between border-b border-gray-100 px-5 py-3">
           <h3 className="text-base font-semibold">{title}</h3>
           <button type="button" onClick={onClose} className="text-gray-400 hover:text-gray-600" aria-label="關閉">
             ×
           </button>
         </header>
-        <div className="px-5 py-4">{children}</div>
+        <div className={bodyClassName ?? "overflow-y-auto px-5 py-4"}>{children}</div>
       </div>
     </div>
   );

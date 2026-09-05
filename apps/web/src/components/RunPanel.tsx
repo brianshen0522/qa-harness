@@ -27,6 +27,7 @@ import type {
   Verdict,
 } from "../api/types";
 import { Badge, Button, Card, Dialog, Empty, ErrorText, Field, Input, Notice, Select, Spinner, Table, Textarea } from "./ui";
+import { StepViewer, stepFromEvent, stepFromRow, type ViewStep } from "./StepViewer";
 import {
   ACTIVE_RUN_STATUSES,
   CASE_TYPE_LABEL,
@@ -834,7 +835,7 @@ function LiveRun({
                     return (
                       <li key={q.caseId} className={`py-2 ${q.caseId === current ? "-mx-3 border-l-2 border-blue-500 bg-blue-50/40 px-3" : ""}`}>
                         <div className="flex items-start gap-2">
-                          <button type="button" className="min-w-0 flex-1 text-left" onClick={() => setOpenCase(open ? null : q.caseId)}>
+                          <button type="button" className="min-w-0 flex-1 text-left" onClick={() => setOpenCase(q.caseId)}>
                             <p className="truncate text-sm text-gray-800">{q.title}</p>
                             <p className="mt-0.5 flex flex-wrap items-center gap-1">
                               <Badge tone={QUEUE_STATUS_TONE[cv.status]}>{QUEUE_STATUS_LABEL[cv.status]}</Badge>
@@ -847,22 +848,6 @@ function LiveRun({
                             <Button variant="ghost" size="sm" onClick={() => onSkip(q.caseId)}>跳過</Button>
                           )}
                         </div>
-                        {open && (
-                          <div className="mt-2 space-y-2">
-                            {cv.reasoning && (
-                              <p className="rounded-md bg-gray-50 p-2 text-sm text-gray-700">
-                                <span className="mr-1 text-xs font-medium text-gray-500">理由</span>{cv.reasoning}
-                              </p>
-                            )}
-                            {cv.liveSteps.length > 0 ? (
-                              cv.liveSteps.map((sc) => <LiveStepCard key={`${sc.caseId}-${sc.seq}`} step={sc} runId={runId} />)
-                            ) : cv.persistedSteps.length > 0 ? (
-                              cv.persistedSteps.map((sc) => <StepRow key={sc.id} step={sc} runId={runId ?? ""} />)
-                            ) : (
-                              <Empty>這條案例還沒有步驟。</Empty>
-                            )}
-                          </div>
-                        )}
                       </li>
                     );
                   })}
@@ -893,6 +878,24 @@ function LiveRun({
           </div>
         )}
       </div>
+
+      {openCase && (() => {
+        const cv = caseView(openCase);
+        const vs: ViewStep[] = cv.liveSteps.length > 0
+          ? cv.liveSteps.map(stepFromEvent)
+          : cv.persistedSteps.map(stepFromRow);
+        return (
+          <StepViewer
+            runId={runId ?? ""}
+            title={state.titles.get(openCase) ?? detailByCase.get(openCase)?.testCase.title ?? "案例"}
+            kind={kind}
+            steps={vs}
+            verdict={cv.verdict}
+            reasoning={cv.reasoning}
+            onClose={() => setOpenCase(null)}
+          />
+        );
+      })()}
 
       <AddCaseDialog
         open={addOpen}
@@ -1338,6 +1341,7 @@ function ResultCase({
   onReviewed: () => void;
 }) {
   const [open, setOpen] = useState(false);
+  const [viewerOpen, setViewerOpen] = useState(false);
   const result = item.result;
   const disagree = !!result?.humanVerdict && result.humanVerdict !== result.verdict;
 
@@ -1429,14 +1433,26 @@ function ResultCase({
           </div>
 
           <div>
-            <p className="mb-1 text-xs font-medium text-gray-500">步驟時間軸（{steps.length}）</p>
+            <div className="mb-1 flex items-center justify-between">
+              <p className="text-xs font-medium text-gray-500">步驟時間軸（{steps.length}）</p>
+              {steps.length > 0 && (
+                <Button size="sm" variant="secondary" onClick={() => setViewerOpen(true)}>逐步檢視（大圖）</Button>
+              )}
+            </div>
             {steps.length === 0 ? (
               <Empty>這條案例沒有步驟紀錄。</Empty>
             ) : (
               <ol className="space-y-2">
-                {steps.map((s) => (
+                {steps.slice(0, 3).map((s) => (
                   <StepRow key={s.id} runId={runId} step={s} />
                 ))}
+                {steps.length > 3 && (
+                  <li className="text-center">
+                    <button type="button" className="text-xs text-blue-700 hover:underline" onClick={() => setViewerOpen(true)}>
+                      展開其餘 {steps.length - 3} 步（大圖檢視）→
+                    </button>
+                  </li>
+                )}
               </ol>
             )}
           </div>
@@ -1459,8 +1475,25 @@ function ResultCase({
           )}
         </div>
       )}
+
+      {viewerOpen && (
+        <StepViewer
+          runId={runId}
+          title={item.testCase.title}
+          kind={kindOfSteps(steps)}
+          steps={steps.map(stepFromRow)}
+          verdict={result?.verdict}
+          reasoning={result?.llmReasoning}
+          onClose={() => setViewerOpen(false)}
+        />
+      )}
     </li>
   );
+}
+
+/** Steps that carry HTTP detail and no screenshot are an api run. */
+function kindOfSteps(steps: RunStepRow[]): "api" | "web" {
+  return steps.some((s) => s.screenshotKey) ? "web" : "api";
 }
 
 function ReviewControls({ result, onReviewed }: { result: TestResultRow; onReviewed: () => void }) {

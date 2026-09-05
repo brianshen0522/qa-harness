@@ -2,7 +2,6 @@ import { INestApplication, ValidationPipe } from "@nestjs/common";
 import { Test } from "@nestjs/testing";
 import cookieParser from "cookie-parser";
 import request from "supertest";
-import * as argon2 from "argon2";
 import { AppModule } from "../src/app.module";
 import { PrismaService } from "../src/prisma/prisma.service";
 import { LlmExceptionFilter } from "../src/llm/llm-exception.filter";
@@ -32,7 +31,6 @@ export async function resetDb(prisma: PrismaService) {
   await prisma.project.deleteMany();
   await prisma.team.deleteMany();
   await prisma.user.deleteMany();
-  await prisma.admin.deleteMany();
 }
 
 /** Log in via dev-login and return a cookie string for subsequent requests. */
@@ -41,14 +39,15 @@ export async function loginUser(app: INestApplication, email: string, name = ema
   return extractCookie(res.headers["set-cookie"], "qa_user");
 }
 
-export async function loginAdmin(app: INestApplication, prisma: PrismaService, email = "admin@test.local", password = "pw-admin-1"): Promise<string> {
-  await prisma.admin.upsert({
+/** Admin is now a role on the user identity: create an admin-flagged user and log in the normal way. */
+export async function loginAdmin(app: INestApplication, prisma: PrismaService, email = "admin@test.local"): Promise<string> {
+  await prisma.user.upsert({
     where: { email },
-    create: { email, passwordHash: await argon2.hash(password) },
-    update: {},
+    create: { email, name: email, authProvider: "seed", isAdmin: true },
+    update: { isAdmin: true },
   });
-  const res = await request(app.getHttpServer()).post("/api/admin/auth/login").send({ email, password }).expect(201);
-  return extractCookie(res.headers["set-cookie"], "qa_admin");
+  const res = await request(app.getHttpServer()).post("/api/auth/dev-login").send({ email }).expect(201);
+  return extractCookie(res.headers["set-cookie"], "qa_user");
 }
 
 function extractCookie(setCookie: string | string[] | undefined, name: string): string {

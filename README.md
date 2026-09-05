@@ -36,14 +36,14 @@ npm install
 npm run infra:up                # 起 db / redis / minio
 npm run build -w packages/schemas
 npm run db:migrate              # prisma migrate dev
-npm run db:seed                 # 建立 ADMIN_EMAIL / ADMIN_PASSWORD 的 admin
+npm run db:seed                 # 把 ADMIN_EMAIL 的使用者標記為 admin
 docker build -t qa-harness-sandbox:0.5 docker/sandbox   # sandbox 桌面 image
 npm run dev:api                 # http://localhost:3001/api
 npm run dev:web                 # http://localhost:5173
 ```
 
 - 使用者登入：Google / GitHub OAuth（設定 `GOOGLE_*` / `GITHUB_*`），或 `DEV_LOGIN_ENABLED=true` 時用 email 直接登入。
-- Admin 登入：`/admin/login`，帳號來自 seed。
+- 登入統一:所有人走同一個登入(OAuth/dev-login);`ADMIN_EMAIL` 的帳號登入後直接進 `/admin`。admin 是使用者身分上的角色,沒有獨立密碼。
 - API key 與 Target 憑證以 AES-256-GCM 加密（`CREDENTIAL_MASTER_KEY`）。
 
 ## 測試

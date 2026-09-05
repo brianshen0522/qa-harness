@@ -50,8 +50,9 @@ describe("admin sandbox (e2e)", () => {
 
   it("is admin-only", async () => {
     await api(app).get("/api/admin/sandbox/status").expect(401);
-    await api(app).get("/api/admin/sandbox/status").set("Cookie", user).expect(401);
-    await api(app).post("/api/admin/sandbox/instances").set("Cookie", user).send({}).expect(401);
+    // Authenticated but not an admin -> forbidden (was a separate 401 account system before unification).
+    await api(app).get("/api/admin/sandbox/status").set("Cookie", user).expect(403);
+    await api(app).post("/api/admin/sandbox/instances").set("Cookie", user).send({}).expect(403);
   });
 
   it("reports docker, image and capacity", async () => {

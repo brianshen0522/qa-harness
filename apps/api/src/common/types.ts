@@ -3,9 +3,5 @@ export interface UserPrincipal {
   id: string;
   email: string;
   name: string;
-}
-export interface AdminPrincipal {
-  kind: "admin";
-  id: string;
-  email: string;
+  isAdmin: boolean;
 }

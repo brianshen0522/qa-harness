@@ -22,7 +22,8 @@ describe("admin: users, LLM configs, fallback chains, gateway (e2e)", () => {
     await api(app).post("/api/admin/users").set("Cookie", admin).send({ email: "new@test.local" }).expect(400);
     await api(app).patch(`/api/admin/users/${u.body.id}`).set("Cookie", admin).send({ status: "disabled" }).expect(200);
     const list = await api(app).get("/api/admin/users").set("Cookie", admin).expect(200);
-    expect(list.body[0]).toMatchObject({ email: "new@test.local", status: "disabled", teams: [], projects: [] });
+    const invited = list.body.find((x: { email: string }) => x.email === "new@test.local");
+    expect(invited).toMatchObject({ email: "new@test.local", status: "disabled", teams: [], projects: [] });
   });
 
   let anthropicId: string, ollamaId: string;
@@ -122,7 +123,7 @@ describe("admin: users, LLM configs, fallback chains, gateway (e2e)", () => {
     const s = await api(app).put("/api/admin/sandbox").set("Cookie", admin).send({ maxConcurrent: 3, maxStepsPerCase: 80 }).expect(200);
     expect(s.body).toMatchObject({ maxConcurrent: 3, maxStepsPerCase: 80, resolution: "1280x800" });
     const audit = await api(app).get("/api/admin/audit").set("Cookie", admin).expect(200);
-    expect(audit.body.map((a: any) => a.action)).toEqual(expect.arrayContaining(["admin.login", "user.invite", "llm.config.create", "llm.chain.set", "sandbox.update"]));
+    expect(audit.body.map((a: any) => a.action)).toEqual(expect.arrayContaining(["auth.login", "user.invite", "llm.config.create", "llm.chain.set", "sandbox.update"]));
     // api keys never reach the audit log
     expect(JSON.stringify(audit.body)).not.toContain("sk-ant");
   });

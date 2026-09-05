@@ -20,6 +20,7 @@ model User {
   name         String
   authProvider String     @map("auth_provider")
   status       UserStatus @default(active)
+  isAdmin      Boolean    @default(false) @map("is_admin")
   createdAt    DateTime   @default(now()) @map("created_at")
 
   teamMemberships    TeamMember[]
@@ -30,14 +31,6 @@ model User {
   @@map("users")
 }
 
-model Admin {
-  id           String   @id @default(uuid())
-  email        String   @unique
-  passwordHash String   @map("password_hash")
-  createdAt    DateTime @default(now()) @map("created_at")
-
-  @@map("admins")
-}
 
 // ---------- Team / Project ----------
 

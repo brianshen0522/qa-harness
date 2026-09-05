@@ -20,7 +20,6 @@ export const env = {
   WEB_ORIGIN: opt("WEB_ORIGIN", "http://localhost:5173"),
   DATABASE_URL: req("DATABASE_URL"),
   USER_JWT_SECRET: req("USER_JWT_SECRET"),
-  ADMIN_JWT_SECRET: req("ADMIN_JWT_SECRET"),
   COOKIE_SECURE: bool("COOKIE_SECURE", false),
   CREDENTIAL_MASTER_KEY: req("CREDENTIAL_MASTER_KEY"),
   GOOGLE_CLIENT_ID: opt("GOOGLE_CLIENT_ID"),
@@ -40,4 +39,3 @@ export const env = {
 };
 
 export const USER_COOKIE = "qa_user";
-export const ADMIN_COOKIE = "qa_admin";

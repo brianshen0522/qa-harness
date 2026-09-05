@@ -16,13 +16,9 @@ export interface UserPrincipal {
   id: string;
   email: string;
   name: string | null;
+  isAdmin: boolean;
 }
 
-export interface AdminPrincipal {
-  kind: "admin";
-  id: string;
-  email: string;
-}
 
 export interface UserBrief {
   id: string;

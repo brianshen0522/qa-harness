@@ -1,9 +1,9 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, UseGuards } from "@nestjs/common";
 import { IsBoolean, IsOptional, IsString, MaxLength, MinLength } from "class-validator";
-import { AdminAuthGuard } from "../auth/guards/admin-auth.guard";
+import { AdminGuard } from "../auth/guards/admin.guard";
 import { UserAuthGuard } from "../auth/guards/user-auth.guard";
 import { CurrentAdmin, CurrentUser } from "../common/decorators";
-import type { AdminPrincipal, UserPrincipal } from "../common/types";
+import type { UserPrincipal } from "../common/types";
 import { SkillsService, type SkillInput } from "./skills.service";
 
 class SkillDto {
@@ -18,7 +18,7 @@ class SkillPatchDto {
 }
 
 @Controller("admin/skills")
-@UseGuards(AdminAuthGuard)
+@UseGuards(AdminGuard)
 export class AdminSkillsController {
   constructor(private readonly skills: SkillsService) {}
 
@@ -28,17 +28,17 @@ export class AdminSkillsController {
   }
 
   @Post()
-  create(@CurrentAdmin() admin: AdminPrincipal, @Body() dto: SkillDto) {
+  create(@CurrentAdmin() admin: UserPrincipal, @Body() dto: SkillDto) {
     return this.skills.createGlobal(admin.id, dto as SkillInput);
   }
 
   @Patch(":id")
-  update(@CurrentAdmin() admin: AdminPrincipal, @Param("id") id: string, @Body() dto: SkillPatchDto) {
+  update(@CurrentAdmin() admin: UserPrincipal, @Param("id") id: string, @Body() dto: SkillPatchDto) {
     return this.skills.updateGlobal(id, admin.id, dto);
   }
 
   @Delete(":id")
-  remove(@CurrentAdmin() admin: AdminPrincipal, @Param("id") id: string) {
+  remove(@CurrentAdmin() admin: UserPrincipal, @Param("id") id: string) {
     return this.skills.removeGlobal(id, admin.id);
   }
 }

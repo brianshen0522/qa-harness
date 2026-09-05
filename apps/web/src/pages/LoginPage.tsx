@@ -20,7 +20,8 @@ export default function LoginPage() {
     onSuccess: (user) => qc.setQueryData(["auth", "me"], user),
   });
 
-  if (me.data) return <Navigate to={from} replace />;
+  // One login for everyone; an admin account lands straight in the admin area.
+  if (me.data) return <Navigate to={me.data.isAdmin ? "/admin" : from} replace />;
 
   const submit = (e: FormEvent) => {
     e.preventDefault();
@@ -68,11 +69,6 @@ export default function LoginPage() {
           </div>
         )}
 
-        <p className="mt-6 text-center text-xs text-gray-400">
-          <Link to="/admin/login" className="hover:underline">
-            管理員登入
-          </Link>
-        </p>
       </div>
     </div>
   );

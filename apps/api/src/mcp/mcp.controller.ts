@@ -1,9 +1,9 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, UseGuards } from "@nestjs/common";
 import { IsBoolean, IsOptional, IsString, MaxLength, MinLength } from "class-validator";
-import { AdminAuthGuard } from "../auth/guards/admin-auth.guard";
+import { AdminGuard } from "../auth/guards/admin.guard";
 import { UserAuthGuard } from "../auth/guards/user-auth.guard";
 import { CurrentAdmin, CurrentUser } from "../common/decorators";
-import type { AdminPrincipal, UserPrincipal } from "../common/types";
+import type { UserPrincipal } from "../common/types";
 import { McpService, type McpInput } from "./mcp.service";
 
 class McpDto {
@@ -20,14 +20,14 @@ class McpPatchDto {
 }
 
 @Controller("admin/mcp")
-@UseGuards(AdminAuthGuard)
+@UseGuards(AdminGuard)
 export class AdminMcpController {
   constructor(private readonly mcp: McpService) {}
 
   @Get() list() { return this.mcp.listGlobal(); }
-  @Post() create(@CurrentAdmin() a: AdminPrincipal, @Body() dto: McpDto) { return this.mcp.createGlobal(a.id, dto as McpInput); }
-  @Patch(":id") update(@CurrentAdmin() a: AdminPrincipal, @Param("id") id: string, @Body() dto: McpPatchDto) { return this.mcp.updateGlobal(id, a.id, dto); }
-  @Delete(":id") remove(@CurrentAdmin() a: AdminPrincipal, @Param("id") id: string) { return this.mcp.removeGlobal(id, a.id); }
+  @Post() create(@CurrentAdmin() a: UserPrincipal, @Body() dto: McpDto) { return this.mcp.createGlobal(a.id, dto as McpInput); }
+  @Patch(":id") update(@CurrentAdmin() a: UserPrincipal, @Param("id") id: string, @Body() dto: McpPatchDto) { return this.mcp.updateGlobal(id, a.id, dto); }
+  @Delete(":id") remove(@CurrentAdmin() a: UserPrincipal, @Param("id") id: string) { return this.mcp.removeGlobal(id, a.id); }
   @Post(":id/test") test(@Param("id") id: string) { return this.mcp.testGlobal(id); }
 }
 

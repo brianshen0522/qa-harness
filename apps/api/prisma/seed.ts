@@ -1,19 +1,20 @@
 import "dotenv/config";
 import { PrismaClient } from "@prisma/client";
-import * as argon2 from "argon2";
 
 const prisma = new PrismaClient();
 
 async function main() {
+  // Admin is now a role on the user identity: seed an admin-flagged user.
+  // Login is the same for everyone (OAuth/dev-login); this account just lands
+  // in the admin area. No password — there is no separate admin credential.
   const email = (process.env.ADMIN_EMAIL ?? "admin@example.com").toLowerCase();
-  const password = process.env.ADMIN_PASSWORD ?? "admin12345";
-  const existing = await prisma.admin.findUnique({ where: { email } });
-  if (!existing) {
-    await prisma.admin.create({ data: { email, passwordHash: await argon2.hash(password) } });
-    console.log(`Created admin ${email}`);
-  } else {
-    console.log(`Admin ${email} already exists`);
-  }
+  await prisma.user.upsert({
+    where: { email },
+    create: { email, name: email, authProvider: "seed", isAdmin: true },
+    update: { isAdmin: true },
+  });
+  console.log(`Ensured admin user ${email}`);
+
   await prisma.sandboxSettings.upsert({ where: { id: 1 }, create: {}, update: {} });
 }
 

@@ -33,18 +33,23 @@ describe("auth (e2e)", () => {
     await api(app).post("/api/auth/dev-login").send({ email: "bob@test.local" }).expect(401);
   });
 
-  it("admin login is a separate account system; admin cookie does not grant user access and vice versa", async () => {
+  it("admin is a role on the user identity: one login, admin flag gates the admin area", async () => {
+    // Admins log in the same way; /auth/me exposes the flag and the same cookie
+    // reaches both the app and the admin area.
     const adminCookie = await loginAdmin(app, prisma);
-    await api(app).get("/api/admin/auth/me").set("Cookie", adminCookie).expect(200);
-    await api(app).get("/api/auth/me").set("Cookie", adminCookie).expect(401);
-    await api(app).get("/api/projects").set("Cookie", adminCookie).expect(401);
+    const me = await api(app).get("/api/auth/me").set("Cookie", adminCookie).expect(200);
+    expect(me.body.isAdmin).toBe(true);
+    await api(app).get("/api/admin/users").set("Cookie", adminCookie).expect(200);
+    await api(app).get("/api/projects").set("Cookie", adminCookie).expect(200);
 
+    // A normal user authenticates fine but is forbidden from the admin area.
     const userCookie = await loginUser(app, "carol@test.local");
-    await api(app).get("/api/admin/users").set("Cookie", userCookie).expect(401);
-  });
+    const cme = await api(app).get("/api/auth/me").set("Cookie", userCookie).expect(200);
+    expect(cme.body.isAdmin).toBe(false);
+    await api(app).get("/api/admin/users").set("Cookie", userCookie).expect(403);
 
-  it("admin login rejects wrong password", async () => {
-    await api(app).post("/api/admin/auth/login").send({ email: "admin@test.local", password: "nope" }).expect(401);
+    // Unauthenticated is rejected outright.
+    await api(app).get("/api/admin/users").expect(401);
   });
 
   it("logout clears the cookie", async () => {

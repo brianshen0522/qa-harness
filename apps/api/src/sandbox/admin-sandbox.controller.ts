@@ -1,9 +1,9 @@
 import { Body, Controller, Delete, Get, Param, Post, Query, Req, Res, UseGuards } from "@nestjs/common";
 import { IsInt, IsObject, IsOptional, IsString, Max, Min, MinLength } from "class-validator";
 import type { Request, Response } from "express";
-import { AdminAuthGuard } from "../auth/guards/admin-auth.guard";
+import { AdminGuard } from "../auth/guards/admin.guard";
 import { CurrentAdmin } from "../common/decorators";
-import type { AdminPrincipal } from "../common/types";
+import type { UserPrincipal } from "../common/types";
 import { AuditService } from "../audit/audit.service";
 import { ComputerService } from "./computer.service";
 import { SandboxService } from "./sandbox.service";
@@ -25,7 +25,7 @@ class AgentMessageDto {
 }
 
 @Controller("admin/sandbox")
-@UseGuards(AdminAuthGuard)
+@UseGuards(AdminGuard)
 export class AdminSandboxController {
   constructor(
     private readonly sandbox: SandboxService,
@@ -45,7 +45,7 @@ export class AdminSandboxController {
   }
 
   @Post("instances")
-  async create(@CurrentAdmin() admin: AdminPrincipal, @Body() dto: CreateSandboxDto) {
+  async create(@CurrentAdmin() admin: UserPrincipal, @Body() dto: CreateSandboxDto) {
     const instance = await this.sandbox.create(admin.id, {
       purpose: "admin-test",
       startUrl: dto.startUrl,
@@ -63,7 +63,7 @@ export class AdminSandboxController {
   }
 
   @Delete("instances/:id")
-  async remove(@CurrentAdmin() admin: AdminPrincipal, @Param("id") id: string) {
+  async remove(@CurrentAdmin() admin: UserPrincipal, @Param("id") id: string) {
     const r = await this.sandbox.remove(id);
     this.session.discard(id);
     await this.audit.log("admin", admin.id, "sandbox.stop", id);
@@ -91,7 +91,7 @@ export class AdminSandboxController {
 
   /** Run a single action by hand — useful for checking the environment without an LLM. */
   @Post("instances/:id/actions")
-  async perform(@CurrentAdmin() admin: AdminPrincipal, @Param("id") id: string, @Body() dto: PerformActionDto) {
+  async perform(@CurrentAdmin() admin: UserPrincipal, @Param("id") id: string, @Body() dto: PerformActionDto) {
     const { port } = await this.sandbox.requireAgentPort(id);
     const res = await this.computer.perform(port, dto.action, dto.params ?? {});
     await this.audit.log("admin", admin.id, "sandbox.action", id, { action: dto.action, ok: res.ok });
@@ -144,7 +144,7 @@ export class AdminSandboxController {
   /** Talk to the model: starts a round when idle, interrupts one that is running. */
   @Post("instances/:id/agent/messages")
   async sendMessage(
-    @CurrentAdmin() admin: AdminPrincipal,
+    @CurrentAdmin() admin: UserPrincipal,
     @Param("id") id: string,
     @Body() dto: AgentMessageDto,
   ) {
@@ -157,7 +157,7 @@ export class AdminSandboxController {
 
   /** Stop the current round but keep the conversation. */
   @Post("instances/:id/agent/stop")
-  async stopAgent(@CurrentAdmin() admin: AdminPrincipal, @Param("id") id: string) {
+  async stopAgent(@CurrentAdmin() admin: UserPrincipal, @Param("id") id: string) {
     const r = this.session.stop(id);
     await this.audit.log("admin", admin.id, "sandbox.agent.stop", id);
     return r;

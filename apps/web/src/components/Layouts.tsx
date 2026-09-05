@@ -1,5 +1,5 @@
 import { Link, NavLink, Navigate, Outlet, useLocation } from "react-router-dom";
-import { useAdminLogout, useAdminMe, useLogout, useMe } from "../api/auth";
+import { useLogout, useMe } from "../api/auth";
 import { Button, Spinner } from "./ui";
 
 function navClass({ isActive }: { isActive: boolean }) {
@@ -30,6 +30,11 @@ export function UserLayout() {
               <NavLink to="/teams" className={navClass}>
                 Teams
               </NavLink>
+              {me.data.isAdmin && (
+                <NavLink to="/admin" className={navClass}>
+                  管理
+                </NavLink>
+              )}
             </nav>
           </div>
           <div className="flex items-center gap-3 text-sm">
@@ -48,13 +53,15 @@ export function UserLayout() {
 }
 
 export function AdminLayout() {
-  const me = useAdminMe();
-  const logout = useAdminLogout();
+  const me = useMe();
+  const logout = useLogout();
   const location = useLocation();
 
   if (me.isPending) return <Spinner />;
   if (me.isError) return <p className="p-6 text-sm text-red-600">無法連線到伺服器：{me.error.message}</p>;
-  if (!me.data) return <Navigate to="/admin/login" replace state={{ from: location.pathname }} />;
+  // Not logged in -> login; logged in but not an admin -> back to the app.
+  if (!me.data) return <Navigate to="/login" replace state={{ from: location.pathname }} />;
+  if (!me.data.isAdmin) return <Navigate to="/" replace />;
 
   return (
     <div className="min-h-screen">

@@ -5,7 +5,6 @@ import ProjectsPage from "./pages/ProjectsPage";
 import TeamsPage from "./pages/TeamsPage";
 import ProjectDetailPage from "./pages/ProjectDetailPage";
 import TargetDetailPage from "./pages/TargetDetailPage";
-import AdminLoginPage from "./pages/admin/AdminLoginPage";
 import AdminUsersPage from "./pages/admin/AdminUsersPage";
 import AdminLlmPage from "./pages/admin/AdminLlmPage";
 import AdminSandboxPage from "./pages/admin/AdminSandboxPage";
@@ -24,7 +23,7 @@ export default function App() {
         <Route path="/targets/:id" element={<TargetDetailPage />} />
       </Route>
 
-      <Route path="/admin/login" element={<AdminLoginPage />} />
+      <Route path="/admin/login" element={<Navigate to="/login" replace />} />
       <Route path="/admin" element={<AdminLayout />}>
         <Route index element={<Navigate to="/admin/llm" replace />} />
         <Route path="users" element={<AdminUsersPage />} />

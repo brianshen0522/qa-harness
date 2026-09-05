@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, ApiError } from "./client";
-import type { AdminPrincipal, UserPrincipal } from "./types";
+import type { UserPrincipal } from "./types";
 
 async function fetchPrincipal<T>(path: string): Promise<T | null> {
   try {
@@ -20,15 +20,6 @@ export function useMe() {
   });
 }
 
-export function useAdminMe() {
-  return useQuery({
-    queryKey: ["admin", "me"],
-    queryFn: () => fetchPrincipal<AdminPrincipal>("/admin/auth/me"),
-    retry: false,
-    staleTime: 60_000,
-  });
-}
-
 export function useLogout() {
   const qc = useQueryClient();
   return useMutation({
@@ -36,17 +27,6 @@ export function useLogout() {
     onSuccess: () => {
       qc.setQueryData(["auth", "me"], null);
       qc.removeQueries({ predicate: (q) => q.queryKey[0] !== "auth" });
-    },
-  });
-}
-
-export function useAdminLogout() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: () => api<void>("/admin/auth/logout", { method: "POST" }),
-    onSuccess: () => {
-      qc.setQueryData(["admin", "me"], null);
-      qc.removeQueries({ predicate: (q) => q.queryKey[0] === "admin" && q.queryKey[1] !== "me" });
     },
   });
 }

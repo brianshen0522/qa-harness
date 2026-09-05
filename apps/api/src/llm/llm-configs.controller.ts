@@ -1,9 +1,9 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, Put, UseGuards } from "@nestjs/common";
 import { ArrayMinSize, IsArray, IsBoolean, IsEnum, IsOptional, IsString, IsUUID, MinLength } from "class-validator";
 import { LlmProvider, LlmPurpose } from "@prisma/client";
-import { AdminAuthGuard } from "../auth/guards/admin-auth.guard";
+import { AdminGuard } from "../auth/guards/admin.guard";
 import { CurrentAdmin } from "../common/decorators";
-import type { AdminPrincipal } from "../common/types";
+import type { UserPrincipal } from "../common/types";
 import { AuditService } from "../audit/audit.service";
 import { LlmConfigsService } from "./llm-configs.service";
 import { LlmGatewayService } from "./llm-gateway.service";
@@ -37,7 +37,7 @@ class SetChainDto {
 }
 
 @Controller("admin/llm")
-@UseGuards(AdminAuthGuard)
+@UseGuards(AdminGuard)
 export class LlmConfigsController {
   constructor(
     private readonly configs: LlmConfigsService,
@@ -52,14 +52,14 @@ export class LlmConfigsController {
   }
 
   @Post("configs")
-  async create(@CurrentAdmin() admin: AdminPrincipal, @Body() dto: CreateLlmConfigDto) {
+  async create(@CurrentAdmin() admin: UserPrincipal, @Body() dto: CreateLlmConfigDto) {
     const row = await this.configs.create({ ...dto, enabled: dto.enabled ?? true });
     await this.audit.log("admin", admin.id, "llm.config.create", row.id, { name: dto.name, provider: dto.provider, model: dto.model });
     return row;
   }
 
   @Patch("configs/:id")
-  async update(@CurrentAdmin() admin: AdminPrincipal, @Param("id") id: string, @Body() dto: UpdateLlmConfigDto) {
+  async update(@CurrentAdmin() admin: UserPrincipal, @Param("id") id: string, @Body() dto: UpdateLlmConfigDto) {
     const row = await this.configs.update(id, dto);
     // An edit is the admin saying "try this again": clear the breaker at once so
     // anything waiting on this purpose wakes up.
@@ -70,7 +70,7 @@ export class LlmConfigsController {
   }
 
   @Delete("configs/:id")
-  async remove(@CurrentAdmin() admin: AdminPrincipal, @Param("id") id: string) {
+  async remove(@CurrentAdmin() admin: UserPrincipal, @Param("id") id: string) {
     const r = await this.configs.remove(id);
     await this.audit.log("admin", admin.id, "llm.config.delete", id);
     return r;
@@ -87,7 +87,7 @@ export class LlmConfigsController {
   }
 
   @Put("chains/:purpose")
-  async setChain(@CurrentAdmin() admin: AdminPrincipal, @Param("purpose") purpose: LlmPurpose, @Body() dto: SetChainDto) {
+  async setChain(@CurrentAdmin() admin: UserPrincipal, @Param("purpose") purpose: LlmPurpose, @Body() dto: SetChainDto) {
     const r = await this.configs.setChain(purpose, dto.configIds);
     await this.audit.log("admin", admin.id, "llm.chain.set", purpose, { configIds: dto.configIds });
     return r;
@@ -106,7 +106,7 @@ export class LlmConfigsController {
 
   /** Probe one config now instead of waiting for the next sweep. */
   @Post("configs/:id/probe")
-  async probe(@CurrentAdmin() admin: AdminPrincipal, @Param("id") id: string) {
+  async probe(@CurrentAdmin() admin: UserPrincipal, @Param("id") id: string) {
     const r = await this.health.probeConfig(id);
     await this.audit.log("admin", admin.id, "llm.probe", id, { ok: r.ok });
     return r;

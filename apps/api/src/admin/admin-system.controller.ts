@@ -1,8 +1,8 @@
 import { Body, Controller, Get, Put, Query, UseGuards } from "@nestjs/common";
 import { IsBoolean, IsInt, IsNumber, IsOptional, IsString, Min } from "class-validator";
-import { AdminAuthGuard } from "../auth/guards/admin-auth.guard";
+import { AdminGuard } from "../auth/guards/admin.guard";
 import { CurrentAdmin } from "../common/decorators";
-import type { AdminPrincipal } from "../common/types";
+import type { UserPrincipal } from "../common/types";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { estimateCost } from "../llm/pricing";
@@ -20,7 +20,7 @@ class SandboxSettingsDto {
 }
 
 @Controller("admin")
-@UseGuards(AdminAuthGuard)
+@UseGuards(AdminGuard)
 export class AdminSystemController {
   constructor(private readonly prisma: PrismaService, private readonly audit: AuditService) {}
 
@@ -30,7 +30,7 @@ export class AdminSystemController {
   }
 
   @Put("sandbox")
-  async updateSandbox(@CurrentAdmin() admin: AdminPrincipal, @Body() dto: SandboxSettingsDto) {
+  async updateSandbox(@CurrentAdmin() admin: UserPrincipal, @Body() dto: SandboxSettingsDto) {
     const row = await this.prisma.sandboxSettings.upsert({ where: { id: 1 }, create: { ...dto }, update: { ...dto } });
     await this.audit.log("admin", admin.id, "sandbox.update", "1", dto as object);
     return row;

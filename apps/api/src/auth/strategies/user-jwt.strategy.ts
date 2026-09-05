@@ -22,6 +22,6 @@ export class UserJwtStrategy extends PassportStrategy(Strategy, "user-jwt") {
     if (payload.kind !== "user") throw new UnauthorizedException();
     const user = await this.prisma.user.findUnique({ where: { id: payload.sub } });
     if (!user || user.status !== "active") throw new UnauthorizedException();
-    return { kind: "user", id: user.id, email: user.email, name: user.name };
+    return { kind: "user", id: user.id, email: user.email, name: user.name, isAdmin: user.isAdmin };
   }
 }

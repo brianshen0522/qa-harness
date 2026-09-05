@@ -29,8 +29,21 @@ const PROJECT_SECTIONS: SectionSpec[] = [
   SUGGESTED_CASES,
 ];
 
+const SYSTEM_OVERVIEW: SectionSpec = {
+  title: "System Overview",
+  key: "system_overview",
+  ask: "用幾句話說清楚:這個系統/這個被測目標「是什麼、在做什麼、解決什麼問題、給誰用」,以及最核心的功能有哪些。讓沒看過的人能快速理解它到底在幹嘛(這對後續設計測試清單很重要)。",
+};
+const USER_ROLES: SectionSpec = {
+  title: "User Roles",
+  key: "user_roles",
+  ask: "系統有哪些使用者角色。每個角色分別說明:他是誰、在系統裡實際會做哪些事(典型操作/流程)、以及能存取與不能存取什麼。重點是「這個角色都在做什麼」,不只是權限表。",
+};
+
 const TARGET_SECTIONS: Record<TargetKind, SectionSpec[]> = {
   api: [
+    SYSTEM_OVERVIEW,
+    USER_ROLES,
     { title: "Endpoints", key: "endpoints", ask: "每個 endpoint 一行：`METHOD /path` — 參數、成功回應、錯誤碼。" },
     { title: "Authentication", key: "auth", ask: "認證方式（token / basic / oauth）與 header 格式。" },
     { title: "Test Accounts", key: "test_accounts", ask: "測試帳號如何取得。**不要寫出真實密碼或 token**，只說明取得方式與欄位名稱。" },
@@ -38,6 +51,8 @@ const TARGET_SECTIONS: Record<TargetKind, SectionSpec[]> = {
     SUGGESTED_CASES,
   ],
   web: [
+    SYSTEM_OVERVIEW,
+    USER_ROLES,
     { title: "Routes", key: "routes", ask: "路由表：路徑 — 頁面用途 — 是否需登入。" },
     { title: "Page Components", key: "page_components", ask: "各頁主要元件與可執行的操作。" },
     { title: "Forms And Validation", key: "forms", ask: "表單欄位、必填、格式限制與錯誤訊息。" },
@@ -46,6 +61,8 @@ const TARGET_SECTIONS: Record<TargetKind, SectionSpec[]> = {
     SUGGESTED_CASES,
   ],
   desktop: [
+    SYSTEM_OVERVIEW,
+    USER_ROLES,
     { title: "Launch", key: "launch", ask: "安裝指令或 image 名稱、啟動命令。" },
     { title: "Window Structure", key: "window_structure", ask: "主視窗、對話框、選單結構。" },
     { title: "Main Flows", key: "main_flows", ask: "主要操作路徑。" },

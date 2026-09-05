@@ -36,6 +36,15 @@ Bearer token，放在 Authorization header。
 - 使用錯誤密碼登入失敗
   - 送出錯誤密碼
   - Expected: 回傳 401
+
+## System Overview
+
+一個待辦事項的後端 API,讓使用者登入後管理自己的 todo。核心功能:登入取得 token、列出/新增/完成待辦。
+
+## User Roles
+
+- 一般使用者:登入後管理自己的 todo(建立、列出、完成、刪除)。
+- 匿名:只能呼叫登入,其它一律 401。
 `;
 
 describe("handoff front-matter", () => {
@@ -84,7 +93,7 @@ describe("parseHandoff", () => {
 
   it("extracts every canonical section", () => {
     expect(Object.keys(parsed.sections).sort()).toEqual(
-      ["auth", "data_dependencies", "endpoints", "suggested_test_cases", "test_accounts"],
+      ["auth", "data_dependencies", "endpoints", "suggested_test_cases", "system_overview", "test_accounts", "user_roles"].sort(),
     );
     expect(parsed.missingSections).toEqual([]);
     expect(parsed.unparsable).toBe(false);
@@ -205,7 +214,7 @@ describe("wrapping code fences", () => {
     const p = parseHandoff("```markdown\n" + API_DOC, "target", "api");
     expect(p.frontMatter.target_kind).toBe("api");
     expect(p.warnings).toEqual([]);
-    expect(Object.keys(p.sections)).toHaveLength(5);
+    expect(Object.keys(p.sections)).toHaveLength(7);
   });
 
   it("leaves inner fenced code blocks alone", () => {

@@ -1,5 +1,6 @@
 import { INestApplication } from "@nestjs/common";
 import type { AddressInfo } from "node:net";
+import { execSync } from "node:child_process";
 import { api, closeFetchPool, createApp, loginAdmin, loginUser, resetDb } from "./helpers";
 import { PrismaService } from "../src/prisma/prisma.service";
 import { DockerService } from "../src/sandbox/docker.service";
@@ -7,15 +8,33 @@ import { SandboxService } from "../src/sandbox/sandbox.service";
 
 /**
  * Spec §4.8: the admin must be able to start a sandbox and confirm the
- * environment works. These tests drive real containers, so they are skipped
- * when Docker or the sandbox image is unavailable.
+ * environment works. The container tests drive real Docker, so they are skipped
+ * (visibly — Jest marks them skipped, not passed) when Docker or the sandbox
+ * image is unavailable. The probe runs synchronously at load so the skip is
+ * decided at collection time rather than silently returning inside each test.
  */
+const SANDBOX_IMAGE = process.env.SANDBOX_IMAGE ?? "qa-harness-sandbox:0.5";
+function dockerReadySync(): boolean {
+  try {
+    execSync("docker version", { stdio: "ignore", timeout: 10_000 });
+    execSync(`docker image inspect ${SANDBOX_IMAGE}`, { stdio: "ignore", timeout: 10_000 });
+    return true;
+  } catch {
+    return false;
+  }
+}
+const DOCKER_READY = dockerReadySync();
+const describeDocker = DOCKER_READY ? describe : describe.skip;
+if (!DOCKER_READY) {
+  // eslint-disable-next-line no-console
+  console.warn(`[sandbox.e2e] Docker or image ${SANDBOX_IMAGE} unavailable — container tests will be SKIPPED (not passed).`);
+}
+
 describe("admin sandbox (e2e)", () => {
   let app: INestApplication;
   let prisma: PrismaService;
   let admin: string;
   let user: string;
-  let dockerReady = false;
   let port = 0;
   const started: string[] = [];
 
@@ -29,16 +48,10 @@ describe("admin sandbox (e2e)", () => {
     await app.listen(0);
     port = (app.getHttpServer().address() as AddressInfo).port;
 
-    const docker = app.get(DockerService);
-    const settings = await app.get(SandboxService).settings();
-    dockerReady = (await docker.ping()).ok && (await docker.imageExists(settings.image));
     // The daemon is shared with whatever else is running on this machine, so the
     // suite raises its own ceiling instead of competing for the configured one.
-    if (dockerReady) await prisma.sandboxSettings.update({ where: { id: 1 }, data: { maxConcurrent: 99 } });
-    if (!dockerReady) {
-      // eslint-disable-next-line no-console
-      console.warn(`skipping container tests: docker or image ${settings.image} unavailable`);
-    }
+    // resetDb drops the settings singleton; recreate it (and raise the ceiling when Docker is here).
+    await prisma.sandboxSettings.upsert({ where: { id: 1 }, create: { maxConcurrent: DOCKER_READY ? 99 : undefined }, update: { maxConcurrent: DOCKER_READY ? 99 : 3 } });
   }, 60_000);
 
   afterAll(async () => {
@@ -69,11 +82,10 @@ describe("admin sandbox (e2e)", () => {
     await api(app).delete("/api/admin/sandbox/instances/deadbeefdeadbeef").set("Cookie", admin).expect(404);
   });
 
-  describe("with a real container", () => {
+  describeDocker("with a real container", () => {
     let id: string;
 
     it("starts a sandbox that is running, healthy and reachable", async () => {
-      if (!dockerReady) return;
       const r = await api(app).post("/api/admin/sandbox/instances").set("Cookie", admin)
         .send({ startUrl: "about:blank", ttlMinutes: 10 }).expect(201);
       id = r.body.id;
@@ -88,7 +100,6 @@ describe("admin sandbox (e2e)", () => {
     }, 120_000);
 
     it("appears in the list and in the status counts", async () => {
-      if (!dockerReady) return;
       const list = await api(app).get("/api/admin/sandbox/instances").set("Cookie", admin).expect(200);
       expect(list.body.map((i: { id: string }) => i.id)).toContain(id);
       const status = await api(app).get("/api/admin/sandbox/status").set("Cookie", admin).expect(200);
@@ -96,7 +107,6 @@ describe("admin sandbox (e2e)", () => {
     });
 
     it("captures the screen at the configured resolution", async () => {
-      if (!dockerReady) return;
       const r = await api(app).get(`/api/admin/sandbox/instances/${id}/screenshot`).set("Cookie", admin).expect(200);
       expect(r.body.ok).toBe(true);
       expect(r.body.image).toMatch(/^data:image\/png;base64,/);
@@ -105,7 +115,6 @@ describe("admin sandbox (e2e)", () => {
     }, 30_000);
 
     it("performs actions and reports failures without throwing", async () => {
-      if (!dockerReady) return;
       const ok = await api(app).post(`/api/admin/sandbox/instances/${id}/actions`).set("Cookie", admin)
         .send({ action: "run_command", params: { command: "echo sandbox-ok" } }).expect(201);
       expect(ok.body).toMatchObject({ ok: true, action: "run_command" });
@@ -127,21 +136,18 @@ describe("admin sandbox (e2e)", () => {
     }, 60_000);
 
     it("clamps coordinates to the screen instead of erroring", async () => {
-      if (!dockerReady) return;
       const r = await api(app).post(`/api/admin/sandbox/instances/${id}/actions`).set("Cookie", admin)
         .send({ action: "move", params: { x: 99999, y: -50 } }).expect(201);
       expect(r.body).toMatchObject({ ok: true, detail: { x: 1279, y: 0 } });
     }, 30_000);
 
     it("exposes container logs", async () => {
-      if (!dockerReady) return;
       const r = await api(app).get(`/api/admin/sandbox/instances/${id}/logs?tail=50`).set("Cookie", admin).expect(200);
       expect(r.body.logs).toContain("[sandbox]");
       expect(r.body.logs).toContain("computer-use agent");
     }, 30_000);
 
     it("refuses to exceed the concurrency limit", async () => {
-      if (!dockerReady) return;
       // Set the ceiling to whatever is already running, so the next start must fail.
       const running = (await app.get(SandboxService).list()).filter((i) => i.running).length;
       await prisma.sandboxSettings.update({ where: { id: 1 }, data: { maxConcurrent: running } });
@@ -151,7 +157,6 @@ describe("admin sandbox (e2e)", () => {
     }, 60_000);
 
     it("reclaims an expired sandbox on sweep", async () => {
-      if (!dockerReady) return;
       const sandbox = app.get(SandboxService);
       const docker = app.get(DockerService);
       const expired = await sandbox.create("admin-test-user", { ttlMinutes: 5 });
@@ -163,7 +168,6 @@ describe("admin sandbox (e2e)", () => {
     }, 180_000);
 
     it("holds a steerable conversation: message, interject, stop, reset", async () => {
-      if (!dockerReady) return;
       const base = `/api/admin/sandbox/instances/${id}/agent`;
 
       const empty = await api(app).get(`${base}/session`).set("Cookie", admin).expect(200);
@@ -207,7 +211,6 @@ describe("admin sandbox (e2e)", () => {
     }, 60_000);
 
     it("streams the transcript over SSE and replays it on connect", async () => {
-      if (!dockerReady) return;
       await api(app).post(`/api/admin/sandbox/instances/${id}/agent/messages`).set("Cookie", admin)
         .send({ content: "串流測試" }).expect(201);
       await new Promise((r) => setTimeout(r, 1200));
@@ -239,7 +242,6 @@ describe("admin sandbox (e2e)", () => {
     }, 60_000);
 
     it("stops and removes the sandbox", async () => {
-      if (!dockerReady) return;
       await api(app).delete(`/api/admin/sandbox/instances/${id}`).set("Cookie", admin).expect(200);
       await api(app).get(`/api/admin/sandbox/instances/${id}`).set("Cookie", admin).expect(404);
       const list = await api(app).get("/api/admin/sandbox/instances").set("Cookie", admin).expect(200);
@@ -247,7 +249,6 @@ describe("admin sandbox (e2e)", () => {
     }, 60_000);
 
     it("records start and stop in the audit log", async () => {
-      if (!dockerReady) return;
       const actions = (await prisma.auditLog.findMany()).map((a) => a.action);
       expect(actions).toEqual(expect.arrayContaining([
         "sandbox.start", "sandbox.stop", "sandbox.action", "sandbox.agent.message", "sandbox.agent.stop",

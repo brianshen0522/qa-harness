@@ -63,6 +63,8 @@ export interface PromptContext {
   projectName: string;
   targetName?: string;
   existingDescription?: string;
+  /** §4.2 增量模式: the previous handoff, so the agent reports only what changed. */
+  previousHandoff?: string;
 }
 
 /** Spec §4.2: the prompt the user pastes into their coding agent. */
@@ -73,9 +75,12 @@ export function buildHandoffPrompt(ctx: PromptContext): string {
       ? `專案「${ctx.projectName}」`
       : `專案「${ctx.projectName}」底下的 QA Target「${ctx.targetName}」（種類：${ctx.kind}）`;
 
+  const incremental = !!ctx.previousHandoff?.trim();
   const lines: string[] = [
     `你正在協助一個 QA 系統（QA Harness）建立對 ${subject} 的理解。`,
-    `請閱讀這個 repo 的實際程式碼，回報下列資訊。回答的依據必須是程式碼現況，不要臆測；不確定的地方寫「不確定」並說明原因。`,
+    incremental
+      ? `這是「增量更新」：下面附上上一次的交接文件，請你比對程式碼現況，只回報「有變動的部分」——新增、修改、移除的 endpoint / 路由 / 表單 / 流程等。沒變的東西不要重覆抄。`
+      : `請閱讀這個 repo 的實際程式碼，回報下列資訊。回答的依據必須是程式碼現況，不要臆測；不確定的地方寫「不確定」並說明原因。`,
     "",
     "## 輸出格式（必須嚴格遵守）",
     "",
@@ -103,7 +108,20 @@ export function buildHandoffPrompt(ctx: PromptContext): string {
     "- **不要寫出任何真實密碼、token、API key**。需要憑證的地方只描述欄位名稱與取得方式，QA 系統會另外用加密欄位保存。",
   ];
 
-  if (ctx.existingDescription?.trim()) {
+  if (incremental) {
+    lines.push(
+      "",
+      "## 上一次的交接文件（請以程式碼為準，只回報與此不同之處）",
+      "",
+      "```markdown",
+      ctx.previousHandoff!.trim().slice(0, 12000),
+      "```",
+      "",
+      "在每個有變動的 section 裡，明確標出「新增 / 修改 / 移除」以及變動內容；完全沒變動的 section 內容寫「無變動」。",
+    );
+  }
+
+  if (!incremental && ctx.existingDescription?.trim()) {
     lines.push(
       "",
       "## 目前 QA 系統中的描述（可能過時，請以程式碼為準並指出差異）",

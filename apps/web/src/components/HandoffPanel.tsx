@@ -40,10 +40,13 @@ export function HandoffPanel({
   const [content, setContent] = useState("");
   const [mode, setMode] = useState<HandoffApplyMode>("overwrite");
   const [imported, setImported] = useState<HandoffImportResult | null>(null);
+  // §4.2 增量模式: attach the last handoff, ask the agent for only the diffs,
+  // and import the result through the change-proposal flow instead of overwriting.
+  const [incremental, setIncremental] = useState(false);
 
   const prompt = useQuery({
-    queryKey: ["handoff", scope, entityId, "prompt"],
-    queryFn: () => api<HandoffPrompt>(`${base}/handoff/prompt`),
+    queryKey: ["handoff", scope, entityId, "prompt", incremental],
+    queryFn: () => api<HandoffPrompt>(`${base}/handoff/prompt${incremental ? "?incremental=true" : ""}`),
   });
   const documents = useQuery({
     queryKey: ["handoff", scope, entityId, "documents"],
@@ -55,6 +58,13 @@ export function HandoffPanel({
     onSuccess: (data) => {
       setImported(null);
       setMode(data.unparsable ? "attachment" : data.recommendedMode);
+    },
+  });
+  const analyzeChanges = useMutation({
+    mutationFn: () => api<{ id: string }>(`${base}/handoff/analyze-changes`, { method: "POST", body: { content } }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: [scope, entityId, "changes"] });
+      qc.invalidateQueries({ queryKey: ["handoff", scope, entityId, "documents"] });
     },
   });
   const apply = useMutation({
@@ -83,6 +93,16 @@ export function HandoffPanel({
         <p className="mb-3 text-xs text-gray-500">
           複製這段 prompt 貼給你的 coding agent（Claude Code、Cursor 等），請它依格式回傳一份 Markdown 交接文件。
         </p>
+        <label className="mb-3 flex items-start gap-2 text-sm">
+          <input type="checkbox" className="mt-0.5" checked={incremental} onChange={(e) => setIncremental(e.target.checked)} />
+          <span>
+            <span className="text-gray-800">增量模式</span>
+            <span className="ml-1 text-xs text-gray-500">
+              附上「上一次的交接文件」，只請 agent 回報差異；匯入時會走「變更提案」流程，不覆蓋描述。
+              {prompt.data && !prompt.data.hasPrevious && incremental && <span className="ml-1 text-amber-600">（目前還沒有上一份文件可比對）</span>}
+            </span>
+          </span>
+        </label>
         {prompt.isPending && <Spinner />}
         <ErrorText error={prompt.error} />
         {prompt.data && (
@@ -213,6 +233,22 @@ export function HandoffPanel({
             </div>
 
             <div className="border-t border-gray-100 pt-3">
+              {incremental ? (
+                <>
+                  <h3 className="mb-2 text-xs font-medium text-gray-600">增量匯入</h3>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Button onClick={() => analyzeChanges.mutate()} disabled={!canApply || analyzeChanges.isPending}>
+                      {analyzeChanges.isPending ? "分析中…" : "分析為變更提案"}
+                    </Button>
+                    <span className="text-xs text-gray-400">會依差異產生變更提案，到「變更」分頁逐項確認，不直接改描述。</span>
+                  </div>
+                  {analyzeChanges.isSuccess && (
+                    <p className="mt-2 text-sm text-green-700">已建立變更提案，請到「變更」分頁逐項確認。</p>
+                  )}
+                  <ErrorText error={analyzeChanges.error} />
+                </>
+              ) : (
+              <>
               <h3 className="mb-2 text-xs font-medium text-gray-600">套用方式</h3>
               <div className="flex flex-wrap items-center gap-2">
                 <Select
@@ -232,6 +268,8 @@ export function HandoffPanel({
                 </Button>
                 <span className="text-xs text-gray-400">建議：{APPLY_MODE_LABEL[p.recommendedMode]}</span>
               </div>
+              </>
+              )}
               <p className="mt-2 text-xs text-gray-400">
                 覆蓋描述：以解析結果取代現有描述。合併：接在現有描述之後。當作附件：不動描述，只把原始文件存成附件供討論區使用。
               </p>

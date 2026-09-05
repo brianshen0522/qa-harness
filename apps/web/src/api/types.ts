@@ -397,6 +397,8 @@ export interface HandoffPrompt {
   harnessVersion: string;
   sections: HandoffPromptSection[];
   prompt: string;
+  incremental?: boolean;
+  hasPrevious?: boolean;
 }
 
 export interface SuggestedTestCase {

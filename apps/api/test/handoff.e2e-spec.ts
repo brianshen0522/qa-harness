@@ -64,6 +64,29 @@ describe("context handoff (e2e)", () => {
   });
   afterAll(() => app.close());
 
+  it("builds an incremental prompt that attaches the previous handoff and asks only for diffs (§4.2)", async () => {
+    // No previous doc yet → incremental prompt has no "previous" section.
+    const first = await api(app).get(`/api/targets/${targetId}/handoff/prompt?incremental=true`).set("Cookie", editor).expect(200);
+    expect(first.body.incremental).toBe(true);
+    expect(first.body.hasPrevious).toBe(false);
+
+    // Seed a previous handoff document, then the incremental prompt embeds it.
+    await prisma.handoffDocument.create({
+      data: {
+        scope: "target", targetId, rawContent: "## Routes\n/old-route — 舊頁面", parsed: {},
+        harnessVersion: "test", applyMode: "attachment", importedById: (await prisma.user.findFirstOrThrow({ where: { email: "owner@h.local" } })).id,
+      },
+    });
+    const p = await api(app).get(`/api/targets/${targetId}/handoff/prompt?incremental=true`).set("Cookie", editor).expect(200);
+    expect(p.body.hasPrevious).toBe(true);
+    expect(p.body.prompt).toContain("增量更新");
+    expect(p.body.prompt).toContain("上一次的交接文件");
+    expect(p.body.prompt).toContain("/old-route");
+
+    // Clean up the seeded doc so the rest of the suite starts from zero again.
+    await prisma.handoffDocument.deleteMany({ where: { targetId } });
+  });
+
   it("generates a scope-aware prompt any member can copy", async () => {
     const p = await api(app).get(`/api/projects/${projectId}/handoff/prompt`).set("Cookie", viewer).expect(200);
     expect(p.body.scope).toBe("project");

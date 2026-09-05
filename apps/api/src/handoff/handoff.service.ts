@@ -1,12 +1,13 @@
 import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
 import {
-  DescriptionSource, HandoffApplyMode, Prisma, Role, Scope, TargetKind,
+  ChangeSource, DescriptionSource, HandoffApplyMode, Prisma, Role, Scope, TargetKind,
 } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { PermissionsService } from "../permissions/permissions.service";
 import { ProjectsService } from "../projects/projects.service";
 import { TargetsService } from "../targets/targets.service";
 import { AuditService } from "../audit/audit.service";
+import { ChangesService } from "../changes/changes.service";
 import { HARNESS_VERSION } from "../config/version";
 import {
   buildHandoffPrompt, parseHandoff, renderDescription, sectionsFor,
@@ -31,6 +32,7 @@ export class HandoffService {
     private readonly projects: ProjectsService,
     private readonly targets: TargetsService,
     private readonly audit: AuditService,
+    private readonly changes: ChangesService,
   ) {}
 
   private async ctxForProject(projectId: string, userId: string, required: Role): Promise<Ctx> {
@@ -60,12 +62,24 @@ export class HandoffService {
   }
 
   /** Step 1 of §4.2: the prompt the user pastes into their coding agent. */
-  async prompt(scope: Scope, id: string, userId: string) {
+  async prompt(scope: Scope, id: string, userId: string, incremental = false) {
     const c = await this.ctx(scope, id, userId, Role.viewer);
+    // §4.2 增量模式: attach the previous handoff so the agent reports only diffs.
+    let previousHandoff: string | undefined;
+    if (incremental) {
+      const last = await this.prisma.handoffDocument.findFirst({
+        where: scope === Scope.project ? { projectId: id, scope: Scope.project } : { targetId: id },
+        orderBy: { importedAt: "desc" },
+        select: { rawContent: true },
+      });
+      previousHandoff = last?.rawContent;
+    }
     return {
       scope: c.scope,
       kind: c.kind ?? null,
       harnessVersion: HARNESS_VERSION,
+      incremental,
+      hasPrevious: !!previousHandoff,
       sections: sectionsFor(c.scope, c.kind).map((s) => ({ title: s.title, ask: s.ask })),
       prompt: buildHandoffPrompt({
         scope: c.scope,
@@ -73,8 +87,35 @@ export class HandoffService {
         projectName: c.projectName,
         targetName: c.targetName,
         existingDescription: c.description,
+        previousHandoff,
       }),
     };
+  }
+
+  /**
+   * §4.4 handoff entry: an incremental handoff describes what changed, so it
+   * feeds the change-proposal flow rather than overwriting the description. The
+   * pasted diff document becomes the note the analysis works from.
+   */
+  async analyzeChanges(scope: Scope, id: string, userId: string, content: string) {
+    const c = await this.ctx(scope, id, userId, Role.editor);
+    // Keep the raw document too, so the change is traceable to its handoff.
+    await this.prisma.handoffDocument.create({
+      data: {
+        scope: c.scope,
+        projectId: c.scope === Scope.project ? c.projectId : null,
+        targetId: c.scope === Scope.target ? c.targetId! : null,
+        rawContent: content,
+        parsed: {} as Prisma.InputJsonValue,
+        harnessVersion: HARNESS_VERSION,
+        applyMode: HandoffApplyMode.attachment,
+        importedById: userId,
+      },
+    });
+    return this.changes.analyze(scope, id, userId, {
+      source: ChangeSource.handoff,
+      note: `以下是 coding agent 回報的「與上次交接文件的差異」，請據此判斷對描述、功能與測試案例的影響：\n\n${content.slice(0, 40000)}`,
+    });
   }
 
   /** Step 3 of §4.2: validate and preview without writing anything. */

@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Post, UseGuards } from "@nestjs/common";
+import { Body, Controller, Get, Param, Post, Query, UseGuards } from "@nestjs/common";
 import { IsEnum, IsString, MaxLength, MinLength } from "class-validator";
 import { HandoffApplyMode, Scope } from "@prisma/client";
 import { UserAuthGuard } from "../auth/guards/user-auth.guard";
@@ -19,8 +19,8 @@ export class HandoffController {
   constructor(private readonly handoff: HandoffService) {}
 
   @Get("projects/:id/handoff/prompt")
-  projectPrompt(@CurrentUser() u: UserPrincipal, @Param("id") id: string) {
-    return this.handoff.prompt(Scope.project, id, u.id);
+  projectPrompt(@CurrentUser() u: UserPrincipal, @Param("id") id: string, @Query("incremental") incremental?: string) {
+    return this.handoff.prompt(Scope.project, id, u.id, incremental === "true");
   }
 
   @Post("projects/:id/handoff/preview")
@@ -33,14 +33,19 @@ export class HandoffController {
     return this.handoff.apply(Scope.project, id, u.id, dto.content, dto.mode);
   }
 
+  @Post("projects/:id/handoff/analyze-changes")
+  projectAnalyze(@CurrentUser() u: UserPrincipal, @Param("id") id: string, @Body() dto: HandoffContentDto) {
+    return this.handoff.analyzeChanges(Scope.project, id, u.id, dto.content);
+  }
+
   @Get("projects/:id/handoff/documents")
   projectDocuments(@CurrentUser() u: UserPrincipal, @Param("id") id: string) {
     return this.handoff.list(Scope.project, id, u.id);
   }
 
   @Get("targets/:id/handoff/prompt")
-  targetPrompt(@CurrentUser() u: UserPrincipal, @Param("id") id: string) {
-    return this.handoff.prompt(Scope.target, id, u.id);
+  targetPrompt(@CurrentUser() u: UserPrincipal, @Param("id") id: string, @Query("incremental") incremental?: string) {
+    return this.handoff.prompt(Scope.target, id, u.id, incremental === "true");
   }
 
   @Post("targets/:id/handoff/preview")
@@ -51,6 +56,11 @@ export class HandoffController {
   @Post("targets/:id/handoff/import")
   targetImport(@CurrentUser() u: UserPrincipal, @Param("id") id: string, @Body() dto: HandoffApplyDto) {
     return this.handoff.apply(Scope.target, id, u.id, dto.content, dto.mode);
+  }
+
+  @Post("targets/:id/handoff/analyze-changes")
+  targetAnalyze(@CurrentUser() u: UserPrincipal, @Param("id") id: string, @Body() dto: HandoffContentDto) {
+    return this.handoff.analyzeChanges(Scope.target, id, u.id, dto.content);
   }
 
   @Get("targets/:id/handoff/documents")

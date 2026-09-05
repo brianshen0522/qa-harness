@@ -4,7 +4,7 @@ import {
 import {
   ArrayNotEmpty, IsArray, IsEnum, IsOptional, IsString, IsUUID, MaxLength, MinLength,
 } from "class-validator";
-import { CaseType, FindingStatus, Priority, Verdict } from "@prisma/client";
+import { CaseType, FindingStatus, Priority, Severity, Verdict } from "@prisma/client";
 import type { Request, Response } from "express";
 import { UserAuthGuard } from "../auth/guards/user-auth.guard";
 import { CurrentUser } from "../common/decorators";
@@ -170,6 +170,16 @@ export class RunsController {
   @Get("runs/:runId/findings")
   findings(@CurrentUser() user: UserPrincipal, @Param("runId") runId: string) {
     return this.query.getFindings(runId, user.id);
+  }
+
+  @Get("targets/:id/findings")
+  targetFindings(
+    @CurrentUser() user: UserPrincipal,
+    @Param("id") id: string,
+    @Query("status") status?: FindingStatus,
+    @Query("severity") severity?: Severity,
+  ) {
+    return this.query.getTargetFindings(id, user.id, { status, severity });
   }
 
   /** Human review, kept separate from the model's verdict (§4.7). */

@@ -1,5 +1,5 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
-import { FindingStatus, Role, Verdict } from "@prisma/client";
+import { FindingStatus, Role, Severity, Verdict } from "@prisma/client";
 import { LlmGatewayService } from "../llm/llm-gateway.service";
 import type { LlmMessage } from "../llm/providers";
 import { PrismaService } from "../prisma/prisma.service";
@@ -131,6 +131,31 @@ export class RunQueryService {
       where: { runId, ...(caseId ? { testCaseId: caseId } : {}) },
       orderBy: { seq: "asc" },
     });
+  }
+
+  /** All findings for a target, across every run — the triage inbox (§4.5/§4.7). */
+  async getTargetFindings(targetId: string, userId: string, opts: { status?: FindingStatus; severity?: Severity } = {}) {
+    await this.assertViewer(targetId, userId);
+    const rows = await this.prisma.runFinding.findMany({
+      where: {
+        run: { targetId },
+        ...(opts.status ? { status: opts.status } : {}),
+        ...(opts.severity ? { severity: opts.severity } : {}),
+      },
+      orderBy: [{ status: "asc" }, { createdAt: "desc" }],
+      take: 500,
+      include: {
+        feature: { select: { id: true, name: true } },
+        run: { select: { id: true, startedAt: true } },
+      },
+    });
+    // Attach the source case title where the finding was raised, if any.
+    const caseIds = [...new Set(rows.map((r) => r.testCaseId).filter((x): x is string => !!x))];
+    const cases = caseIds.length
+      ? await this.prisma.testCase.findMany({ where: { id: { in: caseIds } }, select: { id: true, title: true } })
+      : [];
+    const titleById = new Map(cases.map((c) => [c.id, c.title]));
+    return rows.map((r) => ({ ...r, caseTitle: r.testCaseId ? titleById.get(r.testCaseId) ?? null : null }));
   }
 
   async getFindings(runId: string, userId: string) {

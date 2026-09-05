@@ -776,6 +776,12 @@ export interface RunFindingRow {
   feature: { id: string; name: string } | null;
 }
 
+/** A finding as shown in the target-level triage inbox. */
+export interface InboxFinding extends RunFindingRow {
+  run: { id: string; startedAt: string };
+  caseTitle: string | null;
+}
+
 /** A regression case drafted from a finding, before anyone has saved it. */
 export interface FindingCaseDraft {
   findingId: string;

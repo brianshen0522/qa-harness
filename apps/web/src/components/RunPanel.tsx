@@ -1713,7 +1713,7 @@ function ReviewControls({ result, onReviewed }: { result: TestResultRow; onRevie
  * shown first. A finding is an observation; making it a permanent test is a
  * decision, and the person making it should see what they are signing.
  */
-function FindingToCaseDialog({
+export function FindingToCaseDialog({
   findingId,
   onClose,
   onSaved,

@@ -13,9 +13,10 @@ import { RunPanel } from "../components/RunPanel";
 import { ChangePanel } from "../components/ChangePanel";
 import { ExplorePanel } from "../components/ExplorePanel";
 import { ApiSetupPanel } from "../components/ApiSetupPanel";
+import { FindingsInbox } from "../components/FindingsInbox";
 import { ROLES, ROLE_LABEL, hasRole } from "../lib/roles";
 
-type TabKey = "overview" | "discussion" | "handoff" | "explore" | "cases" | "changes" | "runs";
+type TabKey = "overview" | "discussion" | "handoff" | "explore" | "cases" | "changes" | "runs" | "findings";
 
 const TABS: { key: TabKey; label: string }[] = [
   { key: "overview", label: "總覽" },
@@ -25,6 +26,7 @@ const TABS: { key: TabKey; label: string }[] = [
   { key: "cases", label: "測試清單" },
   { key: "changes", label: "變更" },
   { key: "runs", label: "執行" },
+  { key: "findings", label: "Finding" },
 ];
 
 export default function TargetDetailPage() {
@@ -33,7 +35,7 @@ export default function TargetDetailPage() {
   const tabParam = searchParams.get("tab");
   const tab: TabKey =
     tabParam === "discussion" || tabParam === "handoff" || tabParam === "cases" ||
-    tabParam === "changes" || tabParam === "runs" || tabParam === "explore"
+    tabParam === "changes" || tabParam === "runs" || tabParam === "explore" || tabParam === "findings"
       ? tabParam
       : "overview";
   const setTab = (key: TabKey) => setSearchParams(key === "overview" ? {} : { tab: key }, { replace: true });
@@ -148,6 +150,7 @@ export default function TargetDetailPage() {
         <ChangePanel scope="target" entityId={id} myRole={t.myRole} description={t.description ?? ""} running={running} />
       )}
       {tab === "runs" && <RunPanel targetId={id} kind={t.kind} myRole={t.myRole} />}
+      {tab === "findings" && <FindingsInbox targetId={id} myRole={t.myRole} />}
 
       {tab === "overview" && (
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)]">

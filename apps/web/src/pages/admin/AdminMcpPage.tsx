@@ -24,7 +24,7 @@ export default function AdminMcpPage() {
   return (
     <div className="space-y-4">
       <Card title="全域 MCP 伺服器" actions={<Button size="sm" onClick={() => setEditing("new")}>新增 MCP</Button>}>
-        <p className="mb-3 text-sm text-gray-500">
+        <p className="mb-3 text-sm text-gray-500 dark:text-gray-400">
           MCP（Model Context Protocol）伺服器提供外部工具（抓網頁、查資料庫、讀 repo…）。
           設定後,執行代理與討論區可以呼叫它的工具。連線測試會即時列出可用工具。
         </p>
@@ -55,19 +55,19 @@ function ServerRow({ server, onChanged, onEdit }: { server: McpServer; onChanged
   const tools = result?.tools ?? server.tools ?? [];
 
   return (
-    <li className="rounded-md border border-gray-200 p-3">
+    <li className="rounded-md border border-gray-200 dark:border-gray-700 p-3">
       <div className="flex items-start gap-2">
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="text-sm font-semibold text-gray-800">{server.name}</span>
+            <span className="text-sm font-semibold text-gray-800 dark:text-gray-100">{server.name}</span>
             <Badge tone={server.enabled ? "green" : "gray"}>{server.enabled ? "啟用中" : "已停用"}</Badge>
             {server.hasAuth && <Badge tone="blue">有 auth</Badge>}
           </div>
-          <p className="mt-0.5 font-mono text-xs text-gray-500">{server.url}</p>
+          <p className="mt-0.5 font-mono text-xs text-gray-500 dark:text-gray-400">{server.url}</p>
           {server.lastCheckedAt && (
-            <p className="text-xs text-gray-400">
+            <p className="text-xs text-gray-400 dark:text-gray-500">
               上次測試 {formatDate(server.lastCheckedAt)}
-              {server.lastError ? <span className="text-red-600">：{server.lastError}</span> : "，正常"}
+              {server.lastError ? <span className="text-red-600 dark:text-red-400">：{server.lastError}</span> : "，正常"}
             </p>
           )}
           {tools.length > 0 && (
@@ -75,7 +75,7 @@ function ServerRow({ server, onChanged, onEdit }: { server: McpServer; onChanged
               {tools.map((t) => <Badge key={t.name} tone="purple">{t.name}</Badge>)}
             </div>
           )}
-          {result && !result.ok && <p className="mt-1 text-xs text-red-600">連線失敗：{result.error}</p>}
+          {result && !result.ok && <p className="mt-1 text-xs text-red-600 dark:text-red-400">連線失敗：{result.error}</p>}
         </div>
         <div className="flex flex-col gap-1">
           <Button variant="secondary" size="sm" onClick={() => test.mutate()} disabled={test.isPending}>
@@ -114,7 +114,7 @@ function Editor({ server, onClose, onSaved }: { server: McpServer | null; onClos
         <div className="flex items-center gap-2">
           <Button onClick={() => save.mutate()} disabled={save.isPending || !name.trim() || !url.trim()}>{save.isPending ? "儲存中…" : "儲存"}</Button>
           <Button variant="ghost" onClick={onClose}>取消</Button>
-          {save.error ? <span className="text-xs text-red-600">{errorMessage(save.error)}</span> : null}
+          {save.error ? <span className="text-xs text-red-600 dark:text-red-400">{errorMessage(save.error)}</span> : null}
         </div>
       </div>
     </Card>

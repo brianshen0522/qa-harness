@@ -18,8 +18,8 @@ export default function AdminAuditPage() {
         {usage.data && (
           <div className="space-y-3">
             <div className="flex flex-wrap items-baseline gap-2">
-              <span className="text-2xl font-semibold text-gray-800">${usage.data.totalCostUsd.toFixed(2)}</span>
-              <span className="text-xs text-gray-500">估算總成本（USD，依已知模型單價；本地/未知模型計為 0）</span>
+              <span className="text-2xl font-semibold text-gray-800 dark:text-gray-100">${usage.data.totalCostUsd.toFixed(2)}</span>
+              <span className="text-xs text-gray-500 dark:text-gray-400">估算總成本（USD，依已知模型單價；本地/未知模型計為 0）</span>
             </div>
             {usage.data.models.length > 0 && (
               <Table>
@@ -31,7 +31,7 @@ export default function AdminAuditPage() {
                       <td className="text-xs">{m.calls}</td>
                       <td className="text-xs">{m.inputTokens.toLocaleString()}</td>
                       <td className="text-xs">{m.outputTokens.toLocaleString()}</td>
-                      <td className="text-xs">{m.costUsd > 0 ? `$${m.costUsd.toFixed(3)}` : <span className="text-gray-400">免費/未知</span>}</td>
+                      <td className="text-xs">{m.costUsd > 0 ? `$${m.costUsd.toFixed(3)}` : <span className="text-gray-400 dark:text-gray-500">免費/未知</span>}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -39,12 +39,12 @@ export default function AdminAuditPage() {
             )}
             {usage.data.byProject.length > 0 && (
               <div>
-                <p className="mb-1 text-xs font-medium text-gray-500">各 Project 執行量</p>
+                <p className="mb-1 text-xs font-medium text-gray-500 dark:text-gray-400">各 Project 執行量</p>
                 <Table>
                   <thead><tr><th>Project</th><th>Run 數</th><th>步數</th><th>估算成本</th></tr></thead>
                   <tbody>
                     {usage.data.byProject.map((p) => (
-                      <tr key={p.projectId}><td>{p.name}</td><td className="text-xs">{p.runs}</td><td className="text-xs">{p.steps.toLocaleString()}</td><td className="text-xs">{p.costUsd > 0 ? `$${p.costUsd.toFixed(3)}` : <span className="text-gray-400">-</span>}</td></tr>
+                      <tr key={p.projectId}><td>{p.name}</td><td className="text-xs">{p.runs}</td><td className="text-xs">{p.steps.toLocaleString()}</td><td className="text-xs">{p.costUsd > 0 ? `$${p.costUsd.toFixed(3)}` : <span className="text-gray-400 dark:text-gray-500">-</span>}</td></tr>
                     ))}
                   </tbody>
                 </Table>
@@ -106,9 +106,9 @@ export default function AdminAuditPage() {
             <tbody>
               {usage.data.recent.map((r) => (
                 <tr key={r.id}>
-                  <td className="whitespace-nowrap text-gray-500">{formatDate(r.createdAt)}</td>
+                  <td className="whitespace-nowrap text-gray-500 dark:text-gray-400">{formatDate(r.createdAt)}</td>
                   <td>{r.purpose}</td>
-                  <td className="text-gray-500">{r.schemaName || "-"}</td>
+                  <td className="text-gray-500 dark:text-gray-400">{r.schemaName || "-"}</td>
                   <td>{r.model || "-"}</td>
                   <td>{r.attempt}</td>
                   <td>
@@ -118,7 +118,7 @@ export default function AdminAuditPage() {
                     {r.inputTokens ?? 0} / {r.outputTokens ?? 0}
                   </td>
                   <td>{r.durationMs != null ? `${r.durationMs} ms` : "-"}</td>
-                  <td className="max-w-xs truncate text-xs text-red-600" title={r.errorMessage ?? ""}>
+                  <td className="max-w-xs truncate text-xs text-red-600 dark:text-red-400" title={r.errorMessage ?? ""}>
                     {r.errorMessage || ""}
                   </td>
                 </tr>
@@ -165,23 +165,23 @@ function AuditRow({ entry }: { entry: AuditEntry }) {
   const payload = entry.payload == null ? "" : JSON.stringify(entry.payload, null, 2);
   return (
     <tr>
-      <td className="whitespace-nowrap text-gray-500">{formatDate(entry.createdAt)}</td>
+      <td className="whitespace-nowrap text-gray-500 dark:text-gray-400">{formatDate(entry.createdAt)}</td>
       <td>
         <Badge tone={entry.actorType === "admin" ? "amber" : "gray"}>{entry.actorType}</Badge>
-        <span className="ml-1 text-xs text-gray-400">{entry.actorId ?? ""}</span>
+        <span className="ml-1 text-xs text-gray-400 dark:text-gray-500">{entry.actorId ?? ""}</span>
       </td>
       <td className="font-medium">{entry.action}</td>
-      <td className="text-gray-600">{entry.target || "-"}</td>
+      <td className="text-gray-600 dark:text-gray-300">{entry.target || "-"}</td>
       <td>
         {payload ? (
           <>
-            <button type="button" className="text-xs text-blue-600 hover:underline" onClick={() => setOpen((o) => !o)}>
+            <button type="button" className="text-xs text-blue-600 dark:text-blue-400 hover:underline" onClick={() => setOpen((o) => !o)}>
               {open ? "收合" : "展開"}
             </button>
-            {open && <pre className="mt-1 max-w-lg overflow-x-auto rounded bg-gray-50 p-2 text-xs">{payload}</pre>}
+            {open && <pre className="mt-1 max-w-lg overflow-x-auto rounded bg-gray-50 dark:bg-gray-800/50 p-2 text-xs">{payload}</pre>}
           </>
         ) : (
-          <span className="text-gray-400">-</span>
+          <span className="text-gray-400 dark:text-gray-500">-</span>
         )}
       </td>
     </tr>

@@ -79,7 +79,7 @@ export default function TargetDetailPage() {
 
   return (
     <div className="space-y-4">
-      <nav className="text-xs text-gray-400">
+      <nav className="text-xs text-gray-400 dark:text-gray-500">
         <Link to="/" className="hover:underline">
           Projects
         </Link>{" "}
@@ -183,7 +183,7 @@ export default function TargetDetailPage() {
       )}
 
       <Dialog open={confirmDelete} title="刪除 Target" onClose={() => setConfirmDelete(false)}>
-        <p className="text-sm text-gray-700">確定要刪除「{t.name}」嗎？此動作無法復原。</p>
+        <p className="text-sm text-gray-700 dark:text-gray-200">確定要刪除「{t.name}」嗎？此動作無法復原。</p>
         <div className="mt-4 flex justify-end gap-2">
           <Button variant="secondary" onClick={() => setConfirmDelete(false)}>
             取消
@@ -238,7 +238,7 @@ function ConfigPanel({ target, canEdit, onSaved }: { target: TargetDetail; canEd
           )}
         </div>
       )}
-      {localError && <p className="mt-2 text-xs text-red-600">{localError}</p>}
+      {localError && <p className="mt-2 text-xs text-red-600 dark:text-red-400">{localError}</p>}
       <ErrorText error={save.error} />
     </form>
   );
@@ -263,14 +263,14 @@ function CredentialsPanel({ target, canEdit, onSaved }: { target: TargetDetail; 
 
   return (
     <div>
-      <p className="mb-2 text-xs text-gray-400">憑證值儲存後不會再顯示，只列出鍵名。</p>
+      <p className="mb-2 text-xs text-gray-400 dark:text-gray-500">憑證值儲存後不會再顯示，只列出鍵名。</p>
       {target.credentialKeys.length === 0 ? (
         <Empty>尚無憑證。</Empty>
       ) : (
-        <ul className="mb-3 divide-y divide-gray-100">
+        <ul className="mb-3 divide-y divide-gray-100 dark:divide-gray-800">
           {target.credentialKeys.map((k) => (
             <li key={k} className="flex items-center justify-between py-1.5 text-sm">
-              <code className="rounded bg-gray-100 px-1.5 py-0.5 text-xs">{k}</code>
+              <code className="rounded bg-gray-100 dark:bg-gray-800 px-1.5 py-0.5 text-xs">{k}</code>
               {canEdit && (
                 <Button variant="danger" size="sm" onClick={() => del.mutate(k)} disabled={del.isPending}>
                   刪除
@@ -287,7 +287,7 @@ function CredentialsPanel({ target, canEdit, onSaved }: { target: TargetDetail; 
             e.preventDefault();
             put.mutate();
           }}
-          className="space-y-2 border-t border-gray-100 pt-3"
+          className="space-y-2 border-t border-gray-100 dark:border-gray-800 pt-3"
         >
           <Field label="鍵名">
             <Input value={key} onChange={(e) => setKey(e.target.value)} placeholder="例如 API_TOKEN" />
@@ -322,14 +322,14 @@ function TargetMembers({ targetId, isOwner }: { targetId: string; isOwner: boole
 
   return (
     <Card title="成員與角色">
-      <p className="mb-2 text-xs text-gray-400">列出所有 Project 成員；Target 覆寫只能提升角色，不能低於 Project 角色，Project 擁有者不可覆寫。</p>
+      <p className="mb-2 text-xs text-gray-400 dark:text-gray-500">列出所有 Project 成員；Target 覆寫只能提升角色，不能低於 Project 角色，Project 擁有者不可覆寫。</p>
       {members.isPending && <Spinner />}
       <ErrorText error={members.error} />
       <ErrorText error={setOverride.error} />
       <ErrorText error={clearOverride.error} />
       {members.data && members.data.length === 0 && <Empty>沒有成員。</Empty>}
       {members.data && (
-        <ul className="divide-y divide-gray-100">
+        <ul className="divide-y divide-gray-100 dark:divide-gray-800">
           {members.data.map((m) => {
             const canOverride = isOwner && m.projectRole !== "owner";
             return (
@@ -337,14 +337,14 @@ function TargetMembers({ targetId, isOwner }: { targetId: string; isOwner: boole
                 <div className="flex items-center justify-between gap-2">
                   <div className="min-w-0">
                     <p className="truncate font-medium">{m.user.name || m.user.email}</p>
-                    <p className="truncate text-xs text-gray-400">{m.user.email}</p>
+                    <p className="truncate text-xs text-gray-400 dark:text-gray-500">{m.user.email}</p>
                   </div>
                   <div className="text-right">
-                    <span className="mr-1 text-xs text-gray-400">有效</span>
+                    <span className="mr-1 text-xs text-gray-400 dark:text-gray-500">有效</span>
                     <RoleBadge role={m.effectiveRole} />
                   </div>
                 </div>
-                <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-gray-500">
+                <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
                   <span>Project：{ROLE_LABEL[m.projectRole]}</span>
                   <span>·</span>
                   <span>Target 覆寫：</span>

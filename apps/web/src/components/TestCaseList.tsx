@@ -221,7 +221,7 @@ export function TestCaseList({ targetId }: { targetId: string }) {
             <Badge tone="green">正常 {counts.active}</Badge>
             <Badge tone="amber">待處理 {counts.outdated}</Badge>
             <Badge tone="gray">已淘汰 {counts.deprecated}</Badge>
-            <span className="text-xs text-gray-400">描述版本 v{data.target.descriptionVersion}</span>
+            <span className="text-xs text-gray-400 dark:text-gray-500">描述版本 v{data.target.descriptionVersion}</span>
           </div>
 
           {data.target.locked && (
@@ -284,8 +284,8 @@ export function TestCaseList({ targetId }: { targetId: string }) {
           </div>
 
           {selected.size > 0 && (
-            <div className="flex flex-wrap items-center gap-2 rounded-md border border-blue-200 bg-blue-50 px-3 py-2">
-              <span className="text-sm text-blue-900">已選取 {selected.size} 條</span>
+            <div className="flex flex-wrap items-center gap-2 rounded-md border border-blue-200 dark:border-blue-900 bg-blue-50 dark:bg-blue-950/40 px-3 py-2">
+              <span className="text-sm text-blue-900 dark:text-blue-200">已選取 {selected.size} 條</span>
               {CASE_STATUSES.map((s) => (
                 <Button
                   key={s}
@@ -319,8 +319,8 @@ export function TestCaseList({ targetId }: { targetId: string }) {
               const ids = g.cases.map((c) => c.id);
               const allSelected = ids.length > 0 && ids.every((id) => selected.has(id));
               return (
-                <section key={g.key} className="overflow-hidden rounded-lg border border-gray-200">
-                  <header className="flex flex-wrap items-center gap-2 border-b border-gray-100 bg-gray-50 px-3 py-2">
+                <section key={g.key} className="overflow-hidden rounded-lg border border-gray-200 dark:border-gray-700">
+                  <header className="flex flex-wrap items-center gap-2 border-b border-gray-100 dark:border-gray-800 bg-gray-50 dark:bg-gray-800/50 px-3 py-2">
                     <input
                       type="checkbox"
                       className="h-4 w-4"
@@ -331,7 +331,7 @@ export function TestCaseList({ targetId }: { targetId: string }) {
                     />
                     <button
                       type="button"
-                      className="text-sm font-semibold text-gray-800 hover:underline"
+                      className="text-sm font-semibold text-gray-800 dark:text-gray-100 hover:underline"
                       onClick={() => setCollapsed(toggle(collapsed, g.key))}
                     >
                       {isCollapsed ? "▸" : "▾"} {g.feature ? g.feature.name : "未分類"}
@@ -339,7 +339,7 @@ export function TestCaseList({ targetId }: { targetId: string }) {
                     <Badge tone="gray">{g.cases.length} 條</Badge>
                     {g.feature?.stale && <Badge tone="amber">描述已更新</Badge>}
                     {g.feature?.status === "removed" && <Badge tone="gray">已移除</Badge>}
-                    <span className="min-w-0 flex-1 truncate text-xs text-gray-400">
+                    <span className="min-w-0 flex-1 truncate text-xs text-gray-400 dark:text-gray-500">
                       {g.feature ? g.feature.description : "不屬於任何功能的案例"}
                     </span>
                     {g.feature && data.target.kind === "api" && (
@@ -429,8 +429,8 @@ export function TestCaseList({ targetId }: { targetId: string }) {
       {versionsFor && <VersionsDialog testCase={versionsFor} onClose={() => setVersionsFor(null)} />}
 
       <Dialog open={!!confirmDelete} title="刪除案例" onClose={() => setConfirmDelete(null)}>
-        <p className="text-sm text-gray-700">確定要刪除「{confirmDelete?.title}」嗎？版本歷史會一併刪除，無法復原。</p>
-        <p className="mt-2 text-xs text-gray-400">若只是想停用，改用「標記為已淘汰」會保留紀錄。</p>
+        <p className="text-sm text-gray-700 dark:text-gray-200">確定要刪除「{confirmDelete?.title}」嗎？版本歷史會一併刪除，無法復原。</p>
+        <p className="mt-2 text-xs text-gray-400 dark:text-gray-500">若只是想停用，改用「標記為已淘汰」會保留紀錄。</p>
         <div className="mt-4 flex justify-end gap-2">
           <Button variant="secondary" onClick={() => setConfirmDelete(null)}>
             取消
@@ -447,8 +447,8 @@ export function TestCaseList({ targetId }: { targetId: string }) {
       </Dialog>
 
       <Dialog open={!!confirmFeatureDelete} title="刪除功能" onClose={() => setConfirmFeatureDelete(null)}>
-        <p className="text-sm text-gray-700">確定要刪除功能「{confirmFeatureDelete?.name}」嗎？</p>
-        <p className="mt-2 text-xs text-gray-400">底下的案例不會被刪除，只是會移到「未分類」。</p>
+        <p className="text-sm text-gray-700 dark:text-gray-200">確定要刪除功能「{confirmFeatureDelete?.name}」嗎？</p>
+        <p className="mt-2 text-xs text-gray-400 dark:text-gray-500">底下的案例不會被刪除，只是會移到「未分類」。</p>
         <div className="mt-4 flex justify-end gap-2">
           <Button variant="secondary" onClick={() => setConfirmFeatureDelete(null)}>
             取消
@@ -470,10 +470,10 @@ export function TestCaseList({ targetId }: { targetId: string }) {
 /* ------------------------------------------------------------------ 案例列 */
 
 const PRIORITY_CLASS: Record<Priority, string> = {
-  P0: "bg-red-100 text-red-700",
+  P0: "bg-red-100 dark:bg-red-950 text-red-700 dark:text-red-300",
   P1: "bg-orange-100 text-orange-800",
-  P2: "bg-gray-100 text-gray-700",
-  P3: "bg-gray-50 text-gray-500",
+  P2: "bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-200",
+  P3: "bg-gray-50 dark:bg-gray-800/50 text-gray-500 dark:text-gray-400",
 };
 
 function PriorityBadge({ priority }: { priority: Priority }) {
@@ -507,7 +507,7 @@ function CaseRow({
 }) {
   const c = testCase;
   return (
-    <li className="border-t border-gray-100 first:border-t-0">
+    <li className="border-t border-gray-100 dark:border-gray-800 first:border-t-0">
       <div className="flex items-start gap-2 px-3 py-2">
         <input
           type="checkbox"
@@ -519,30 +519,30 @@ function CaseRow({
         />
         <button type="button" onClick={onToggle} className="min-w-0 flex-1 text-left">
           <span className="flex flex-wrap items-center gap-1.5">
-            <span className="text-xs text-gray-400">{open ? "▾" : "▸"}</span>
+            <span className="text-xs text-gray-400 dark:text-gray-500">{open ? "▾" : "▸"}</span>
             <PriorityBadge priority={c.priority} />
             <Badge tone={CASE_TYPE_TONE[c.type]}>{CASE_TYPE_LABEL[c.type]}</Badge>
             <Badge tone={CASE_STATUS_TONE[c.status]}>{CASE_STATUS_LABEL[c.status]}</Badge>
-            <span className="text-sm font-medium text-gray-800">{c.title}</span>
-            <span className="text-xs text-gray-400">{CASE_SOURCE_LABEL[c.source]}</span>
+            <span className="text-sm font-medium text-gray-800 dark:text-gray-100">{c.title}</span>
+            <span className="text-xs text-gray-400 dark:text-gray-500">{CASE_SOURCE_LABEL[c.source]}</span>
           </span>
         </button>
       </div>
 
       {open && (
-        <div className="space-y-3 border-t border-gray-100 bg-gray-50/60 px-3 py-3 pl-9">
+        <div className="space-y-3 border-t border-gray-100 dark:border-gray-800 bg-gray-50/60 dark:bg-gray-800/40 px-3 py-3 pl-9">
           <DetailBlock label="前置條件">
             {c.precondition ? (
-              <p className="whitespace-pre-wrap text-sm text-gray-700">{c.precondition}</p>
+              <p className="whitespace-pre-wrap text-sm text-gray-700 dark:text-gray-200">{c.precondition}</p>
             ) : (
-              <p className="text-sm text-gray-400">無</p>
+              <p className="text-sm text-gray-400 dark:text-gray-500">無</p>
             )}
           </DetailBlock>
           <DetailBlock label="步驟">
             {c.steps.length === 0 ? (
-              <p className="text-sm text-gray-400">無</p>
+              <p className="text-sm text-gray-400 dark:text-gray-500">無</p>
             ) : (
-              <ol className="list-decimal space-y-1 pl-5 text-sm text-gray-700">
+              <ol className="list-decimal space-y-1 pl-5 text-sm text-gray-700 dark:text-gray-200">
                 {c.steps.map((s, i) => (
                   <li key={i} className="whitespace-pre-wrap">
                     {s}
@@ -552,7 +552,7 @@ function CaseRow({
             )}
           </DetailBlock>
           <DetailBlock label="預期結果">
-            <p className="whitespace-pre-wrap text-sm text-gray-700">{c.expected}</p>
+            <p className="whitespace-pre-wrap text-sm text-gray-700 dark:text-gray-200">{c.expected}</p>
           </DetailBlock>
 
           <div className="flex flex-wrap items-center gap-2 pt-1">
@@ -565,7 +565,7 @@ function CaseRow({
             <Button size="sm" variant="danger" disabled={!canEdit} onClick={onDelete}>
               刪除
             </Button>
-            <span className="text-xs text-gray-400">
+            <span className="text-xs text-gray-400 dark:text-gray-500">
               依描述 v{c.basedOnDescriptionVersion} 產生 · 更新於 {formatDate(c.updatedAt)}
             </span>
           </div>
@@ -578,7 +578,7 @@ function CaseRow({
 function DetailBlock({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div>
-      <p className="mb-1 text-xs font-medium text-gray-500">{label}</p>
+      <p className="mb-1 text-xs font-medium text-gray-500 dark:text-gray-400">{label}</p>
       {children}
     </div>
   );
@@ -731,7 +731,7 @@ function GenerationPanel({
       actions={running ? <Badge tone="amber">{paused ? "等待 LLM" : "生成中"}</Badge> : undefined}
     >
       <div className="space-y-3">
-        <p className="text-xs text-gray-400">
+        <p className="text-xs text-gray-400 dark:text-gray-500">
           依描述、Target 設定、附件、交接文件與現況探索，先產生功能清單，再逐一展開成測試案例，最後去重排序。
         </p>
 
@@ -759,13 +759,13 @@ function GenerationPanel({
               {cancel.isPending ? "中止中…" : "中止"}
             </Button>
           )}
-          <span className="text-xs text-gray-500">
+          <span className="text-xs text-gray-500 dark:text-gray-400">
             {mode === "replace"
               ? "重新生成：先前生成的案例會被取代，手動撰寫的會保留。"
               : "附加：現有清單保留，新的功能與案例加在後面。"}
           </span>
         </div>
-        {!canEdit && <p className="text-xs text-gray-400">需要編輯者以上的角色，且 Target 不在執行中，才能生成。</p>}
+        {!canEdit && <p className="text-xs text-gray-400 dark:text-gray-500">需要編輯者以上的角色，且 Target 不在執行中，才能生成。</p>}
 
         {error && <Notice tone="red">{error}</Notice>}
         {streamError && <Notice tone="red">生成失敗：{streamError.message}</Notice>}
@@ -773,8 +773,8 @@ function GenerationPanel({
 
         {events.length > 0 && <GenerationProgress events={events} running={running} paused={!!paused} />}
 
-        <div className="border-t border-gray-100 pt-3">
-          <p className="mb-2 text-xs font-medium text-gray-500">生成紀錄</p>
+        <div className="border-t border-gray-100 dark:border-gray-800 pt-3">
+          <p className="mb-2 text-xs font-medium text-gray-500 dark:text-gray-400">生成紀錄</p>
           {runs.isPending && <Spinner />}
           <ErrorText error={runs.error} />
           {runs.data && runs.data.length === 0 && <Empty>還沒有跑過生成。</Empty>}
@@ -795,23 +795,23 @@ function GenerationPanel({
               <tbody>
                 {runs.data.map((r) => (
                   <tr key={r.id}>
-                    <td className="whitespace-nowrap text-xs text-gray-500">{formatDate(r.startedAt)}</td>
+                    <td className="whitespace-nowrap text-xs text-gray-500 dark:text-gray-400">{formatDate(r.startedAt)}</td>
                     <td className="text-xs">{GENERATION_MODE_LABEL[r.mode]}</td>
                     <td>
                       <Badge tone={GENERATION_STATUS_TONE[r.status]}>{GENERATION_STATUS_LABEL[r.status]}</Badge>
                       {r.status === "paused" && (
-                        <p className="mt-1 text-xs text-amber-700">
+                        <p className="mt-1 text-xs text-amber-700 dark:text-amber-300">
                           {pauseReasonLabel(r.pausedReason)}
-                          {r.pausedAt && <span className="text-gray-400"> · {formatDate(r.pausedAt)}</span>}
+                          {r.pausedAt && <span className="text-gray-400 dark:text-gray-500"> · {formatDate(r.pausedAt)}</span>}
                         </p>
                       )}
-                      {r.error && <p className="mt-1 text-xs text-red-600">{r.error}</p>}
+                      {r.error && <p className="mt-1 text-xs text-red-600 dark:text-red-400">{r.error}</p>}
                     </td>
                     <td className="text-xs">{r.featureCount}</td>
                     <td className="text-xs">{r.caseCount}</td>
                     <td className="text-xs">{r.duplicatesDropped}</td>
-                    <td className="text-xs text-gray-500">{r.model ?? "-"}</td>
-                    <td className="whitespace-nowrap text-xs text-gray-500">
+                    <td className="text-xs text-gray-500 dark:text-gray-400">{r.model ?? "-"}</td>
+                    <td className="whitespace-nowrap text-xs text-gray-500 dark:text-gray-400">
                       {r.endedAt
                         ? formatDuration(new Date(r.endedAt).getTime() - new Date(r.startedAt).getTime())
                         : r.status === "paused"
@@ -867,7 +867,7 @@ function GenerationProgress({
     );
 
   return (
-    <div className="space-y-2 rounded-md bg-gray-50 p-3">
+    <div className="space-y-2 rounded-md bg-gray-50 dark:bg-gray-800/50 p-3">
       {started && (
         <StepLine tone="muted">
           開始生成 · {GENERATION_MODE_LABEL[started.mode]} · 依描述 v{started.descriptionVersion}
@@ -928,7 +928,7 @@ function GenerationProgress({
 
       {pauses.map(({ event, index }) =>
         event.type === "paused" ? (
-          <div key={index} className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-amber-800">
+          <div key={index} className="rounded-md border border-amber-200 dark:border-amber-900 bg-amber-50 dark:bg-amber-950/40 px-3 py-2 text-amber-800 dark:text-amber-300">
             <p className="text-sm font-semibold">等待 LLM</p>
             <p className="mt-1 whitespace-pre-wrap text-sm">{event.message}</p>
             <p className="mt-1 text-xs">
@@ -939,7 +939,7 @@ function GenerationProgress({
         ) : (
           <p
             key={index}
-            className="rounded-md border border-green-200 bg-green-50 px-3 py-1.5 text-sm text-green-800"
+            className="rounded-md border border-green-200 dark:border-green-900 bg-green-50 dark:bg-green-950/40 px-3 py-1.5 text-sm text-green-800 dark:text-green-300"
           >
             {event.message}
           </p>
@@ -962,7 +962,7 @@ function GenerationProgress({
         </StepLine>
       )}
       {running && !finished && !failed && (
-        <p className="text-xs text-gray-400">
+        <p className="text-xs text-gray-400 dark:text-gray-500">
           整個流程需要數分鐘。生成在伺服器上進行，離開或重新整理這個分頁都不會中斷，回到這裡會自動接回進度。
         </p>
       )}
@@ -972,9 +972,9 @@ function GenerationProgress({
 
 function StepLine({ tone, children }: { tone: "ok" | "warn" | "muted"; children: ReactNode }) {
   const mark = tone === "ok" ? "✓" : tone === "warn" ? "!" : "·";
-  const cls = tone === "ok" ? "text-green-700" : tone === "warn" ? "text-amber-700" : "text-gray-400";
+  const cls = tone === "ok" ? "text-green-700 dark:text-green-300" : tone === "warn" ? "text-amber-700 dark:text-amber-300" : "text-gray-400 dark:text-gray-500";
   return (
-    <p className="flex items-start gap-2 text-sm text-gray-700">
+    <p className="flex items-start gap-2 text-sm text-gray-700 dark:text-gray-200">
       <span className={`w-4 shrink-0 text-center ${cls}`}>{mark}</span>
       <span className="min-w-0 flex-1">{children}</span>
     </p>
@@ -983,7 +983,7 @@ function StepLine({ tone, children }: { tone: "ok" | "warn" | "muted"; children:
 
 function PendingLine({ label }: { label: string }) {
   return (
-    <div className="rounded-md border border-blue-200 bg-blue-50 px-3 py-1">
+    <div className="rounded-md border border-blue-200 dark:border-blue-900 bg-blue-50 dark:bg-blue-950/40 px-3 py-1">
       <Spinner label={label} />
     </div>
   );
@@ -1093,11 +1093,11 @@ function CaseDialog({
           </Field>
 
           <div>
-            <p className="mb-1 text-xs font-medium text-gray-600">步驟</p>
+            <p className="mb-1 text-xs font-medium text-gray-600 dark:text-gray-300">步驟</p>
             <ul className="space-y-2">
               {steps.map((s, i) => (
                 <li key={i} className="flex items-center gap-1">
-                  <span className="w-5 shrink-0 text-right text-xs text-gray-400">{i + 1}.</span>
+                  <span className="w-5 shrink-0 text-right text-xs text-gray-400 dark:text-gray-500">{i + 1}.</span>
                   <Input value={s} placeholder="例如：輸入帳號與密碼後按登入" onChange={(e) => setStep(i, e.target.value)} />
                   <Button size="sm" variant="ghost" aria-label="上移" disabled={i === 0} onClick={() => moveStep(i, -1)}>
                     ↑
@@ -1127,7 +1127,7 @@ function CaseDialog({
           </Field>
         </div>
 
-        <div className="mt-4 flex justify-end gap-2 border-t border-gray-100 pt-3">
+        <div className="mt-4 flex justify-end gap-2 border-t border-gray-100 dark:border-gray-800 pt-3">
           <Button variant="secondary" onClick={onClose}>
             取消
           </Button>
@@ -1135,7 +1135,7 @@ function CaseDialog({
             {pending ? "儲存中…" : "儲存"}
           </Button>
         </div>
-        {localError && <p className="mt-2 text-xs text-red-600">{localError}</p>}
+        {localError && <p className="mt-2 text-xs text-red-600 dark:text-red-400">{localError}</p>}
         <ErrorText error={error} />
       </form>
     </Dialog>
@@ -1187,7 +1187,7 @@ function FeatureDialog({
             {pending ? "儲存中…" : "儲存"}
           </Button>
         </div>
-        {localError && <p className="mt-2 text-xs text-red-600">{localError}</p>}
+        {localError && <p className="mt-2 text-xs text-red-600 dark:text-red-400">{localError}</p>}
         <ErrorText error={error} />
       </form>
     </Dialog>
@@ -1211,17 +1211,17 @@ function VersionsDialog({ testCase, onClose }: { testCase: TestCase; onClose: ()
         {versions.data && versions.data.length > 0 && (
           <ul className="space-y-3">
             {versions.data.map((v, i) => (
-              <li key={v.id} className="rounded-md border border-gray-200 p-3">
+              <li key={v.id} className="rounded-md border border-gray-200 dark:border-gray-700 p-3">
                 <div className="flex flex-wrap items-center gap-2">
                   <Badge tone={i === 0 ? "blue" : "gray"}>v{v.version}</Badge>
-                  {i === 0 && <span className="text-xs text-blue-700">目前版本</span>}
-                  <span className="text-xs text-gray-400">{formatDate(v.createdAt)}</span>
+                  {i === 0 && <span className="text-xs text-blue-700 dark:text-blue-300">目前版本</span>}
+                  <span className="text-xs text-gray-400 dark:text-gray-500">{formatDate(v.createdAt)}</span>
                   <PriorityBadge priority={v.content.priority} />
                   <Badge tone={CASE_TYPE_TONE[v.content.type]}>{CASE_TYPE_LABEL[v.content.type]}</Badge>
                 </div>
-                <p className="mt-2 text-sm font-medium text-gray-800">{v.content.title}</p>
-                <p className="mt-1 text-xs font-medium text-gray-500">預期結果</p>
-                <p className="whitespace-pre-wrap text-sm text-gray-700">{v.content.expected}</p>
+                <p className="mt-2 text-sm font-medium text-gray-800 dark:text-gray-100">{v.content.title}</p>
+                <p className="mt-1 text-xs font-medium text-gray-500 dark:text-gray-400">預期結果</p>
+                <p className="whitespace-pre-wrap text-sm text-gray-700 dark:text-gray-200">{v.content.expected}</p>
               </li>
             ))}
           </ul>

@@ -9,9 +9,9 @@ type Variant = "primary" | "secondary" | "danger" | "ghost";
 
 const VARIANT: Record<Variant, string> = {
   primary: "bg-blue-600 text-white hover:bg-blue-700 disabled:bg-blue-300",
-  secondary: "bg-white text-gray-800 border border-gray-300 hover:bg-gray-100 disabled:text-gray-400",
-  danger: "bg-white text-red-600 border border-red-300 hover:bg-red-50 disabled:text-red-300",
-  ghost: "bg-transparent text-gray-600 hover:bg-gray-100 disabled:text-gray-400",
+  secondary: "bg-white dark:bg-gray-900 text-gray-800 dark:text-gray-100 border border-gray-300 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-800 disabled:text-gray-400 dark:disabled:text-gray-600",
+  danger: "bg-white dark:bg-gray-900 text-red-600 dark:text-red-400 border border-red-300 dark:border-red-900 hover:bg-red-50 dark:hover:bg-red-950/40 disabled:text-red-300",
+  ghost: "bg-transparent text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 disabled:text-gray-400 dark:disabled:text-gray-600",
 };
 
 export function Button({
@@ -35,7 +35,7 @@ export function Button({
 }
 
 const FIELD =
-  "w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:bg-gray-100 disabled:text-gray-500";
+  "w-full rounded-md border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 px-3 py-2 text-sm shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:bg-gray-100 dark:disabled:bg-gray-800 disabled:text-gray-500 dark:text-gray-100 dark:placeholder:text-gray-500";
 
 export function Input({ className, ...props }: InputHTMLAttributes<HTMLInputElement>) {
   return <input {...props} className={cx(FIELD, className)} />;
@@ -56,19 +56,19 @@ export function Select({ className, children, ...props }: SelectHTMLAttributes<H
 export function Field({ label, children, hint }: { label: string; children: ReactNode; hint?: string }) {
   return (
     <label className="block">
-      <span className="mb-1 block text-xs font-medium text-gray-600">{label}</span>
+      <span className="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">{label}</span>
       {children}
-      {hint && <span className="mt-1 block text-xs text-gray-400">{hint}</span>}
+      {hint && <span className="mt-1 block text-xs text-gray-400 dark:text-gray-500">{hint}</span>}
     </label>
   );
 }
 
 export function Card({ title, actions, children, className }: { title?: ReactNode; actions?: ReactNode; children: ReactNode; className?: string }) {
   return (
-    <section className={cx("rounded-lg border border-gray-200 bg-white shadow-sm", className)}>
+    <section className={cx("rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 shadow-sm", className)}>
       {(title || actions) && (
-        <header className="flex items-center justify-between border-b border-gray-100 px-4 py-3">
-          <h2 className="text-sm font-semibold text-gray-800">{title}</h2>
+        <header className="flex items-center justify-between border-b border-gray-100 dark:border-gray-800 px-4 py-3">
+          <h2 className="text-sm font-semibold text-gray-800 dark:text-gray-100">{title}</h2>
           <div className="flex items-center gap-2">{actions}</div>
         </header>
       )}
@@ -79,12 +79,12 @@ export function Card({ title, actions, children, className }: { title?: ReactNod
 
 type Tone = "gray" | "blue" | "green" | "amber" | "red" | "purple";
 const TONE: Record<Tone, string> = {
-  gray: "bg-gray-100 text-gray-700",
-  blue: "bg-blue-100 text-blue-700",
-  green: "bg-green-100 text-green-700",
-  amber: "bg-amber-100 text-amber-800",
-  red: "bg-red-100 text-red-700",
-  purple: "bg-purple-100 text-purple-700",
+  gray: "bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-200",
+  blue: "bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-300",
+  green: "bg-green-100 dark:bg-green-950 text-green-700 dark:text-green-300",
+  amber: "bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300",
+  red: "bg-red-100 dark:bg-red-950 text-red-700 dark:text-red-300",
+  purple: "bg-purple-100 dark:bg-purple-950 text-purple-700 dark:text-purple-300",
 };
 
 export function Badge({ tone = "gray", children }: { tone?: Tone; children: ReactNode }) {
@@ -109,25 +109,25 @@ export function StatusBadge({ status }: { status: "idle" | "running" }) {
 export function ErrorText({ error }: { error: unknown }) {
   if (!error) return null;
   const msg = error instanceof Error ? error.message : String(error);
-  return <p className="mt-2 text-xs text-red-600">{msg}</p>;
+  return <p className="mt-2 text-xs text-red-600 dark:text-red-400">{msg}</p>;
 }
 
 export function Notice({ tone = "amber", children }: { tone?: "amber" | "red" | "blue"; children: ReactNode }) {
   const cls =
     tone === "red"
-      ? "border-red-200 bg-red-50 text-red-800"
+      ? "border-red-200 dark:border-red-900 bg-red-50 text-red-800 dark:text-red-300"
       : tone === "blue"
-        ? "border-blue-200 bg-blue-50 text-blue-800"
-        : "border-amber-200 bg-amber-50 text-amber-800";
+        ? "border-blue-200 dark:border-blue-900 bg-blue-50 dark:bg-blue-950/40 text-blue-800 dark:text-blue-300"
+        : "border-amber-200 dark:border-amber-900 bg-amber-50 dark:bg-amber-950/40 text-amber-800 dark:text-amber-300";
   return <div className={cx("rounded-md border px-3 py-2 text-sm", cls)}>{children}</div>;
 }
 
 export function Spinner({ label = "載入中…" }: { label?: string }) {
-  return <p className="py-6 text-center text-sm text-gray-400">{label}</p>;
+  return <p className="py-6 text-center text-sm text-gray-400 dark:text-gray-500">{label}</p>;
 }
 
 export function Empty({ children }: { children: ReactNode }) {
-  return <p className="py-4 text-center text-sm text-gray-400">{children}</p>;
+  return <p className="py-4 text-center text-sm text-gray-400 dark:text-gray-500">{children}</p>;
 }
 
 const DIALOG_SIZE = {
@@ -166,12 +166,12 @@ export function Dialog({
       <div
         role="dialog"
         aria-modal="true"
-        className={`flex max-h-[92vh] w-full ${DIALOG_SIZE[size]} flex-col rounded-lg bg-white shadow-xl`}
+        className={`flex max-h-[92vh] w-full ${DIALOG_SIZE[size]} flex-col rounded-lg bg-white dark:bg-gray-900 shadow-xl`}
         onMouseDown={(e) => e.stopPropagation()}
       >
-        <header className="flex shrink-0 items-center justify-between border-b border-gray-100 px-5 py-3">
+        <header className="flex shrink-0 items-center justify-between border-b border-gray-100 dark:border-gray-800 px-5 py-3">
           <h3 className="text-base font-semibold">{title}</h3>
-          <button type="button" onClick={onClose} className="text-gray-400 hover:text-gray-600" aria-label="關閉">
+          <button type="button" onClick={onClose} className="text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300" aria-label="關閉">
             ×
           </button>
         </header>
@@ -201,7 +201,7 @@ export function Tabs<T extends string>({
   onChange: (key: T) => void;
 }) {
   return (
-    <div className="flex gap-1 border-b border-gray-200" role="tablist">
+    <div className="flex gap-1 border-b border-gray-200 dark:border-gray-700" role="tablist">
       {tabs.map((t) => (
         <button
           key={t.key}
@@ -211,7 +211,7 @@ export function Tabs<T extends string>({
           onClick={() => onChange(t.key)}
           className={cx(
             "-mb-px border-b-2 px-3 py-2 text-sm font-medium transition",
-            active === t.key ? "border-blue-600 text-blue-700" : "border-transparent text-gray-500 hover:text-gray-800",
+            active === t.key ? "border-blue-600 text-blue-700 dark:text-blue-300" : "border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-100",
           )}
         >
           {t.label}

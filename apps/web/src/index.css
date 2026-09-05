@@ -1,5 +1,38 @@
 @import "tailwindcss";
 
+/* Dark mode is class-based (a `.dark` on <html>) so a manual toggle can override
+   the browser default while still defaulting to it. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  color-scheme: light;
+}
+:root.dark {
+  color-scheme: dark;
+}
+
 body {
-  @apply bg-gray-50 text-gray-900 antialiased;
+  @apply bg-gray-50 text-gray-900 antialiased dark:bg-gray-950 dark:text-gray-100;
+}
+
+/* Only transition colors during an actual theme switch — a short-lived class on
+   <html> — so normal hovers and interactions stay snappy. */
+.theme-anim,
+.theme-anim *,
+.theme-anim *::before,
+.theme-anim *::after {
+  transition:
+    background-color 0.3s ease,
+    border-color 0.3s ease,
+    color 0.25s ease,
+    fill 0.25s ease,
+    stroke 0.25s ease !important;
+}
+
+@keyframes theme-pop {
+  0% { transform: rotate(-90deg) scale(0.6); opacity: 0.4; }
+  100% { transform: rotate(0) scale(1); opacity: 1; }
+}
+.theme-pop {
+  animation: theme-pop 0.35s ease;
 }

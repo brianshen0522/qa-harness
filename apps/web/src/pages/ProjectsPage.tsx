@@ -35,12 +35,12 @@ export default function ProjectsPage() {
             </thead>
             <tbody>
               {projects.data.map((p) => (
-                <tr key={p.id} className="hover:bg-gray-50">
+                <tr key={p.id} className="hover:bg-gray-50 dark:hover:bg-gray-800">
                   <td>
-                    <Link to={`/projects/${p.id}`} className="font-medium text-blue-700 hover:underline">
+                    <Link to={`/projects/${p.id}`} className="font-medium text-blue-700 dark:text-blue-300 hover:underline">
                       {p.name}
                     </Link>
-                    {p.description && <p className="mt-0.5 line-clamp-1 max-w-md text-xs text-gray-400">{p.description}</p>}
+                    {p.description && <p className="mt-0.5 line-clamp-1 max-w-md text-xs text-gray-400 dark:text-gray-500">{p.description}</p>}
                   </td>
                   <td>{p.team.name}</td>
                   <td>
@@ -48,7 +48,7 @@ export default function ProjectsPage() {
                   </td>
                   <td>{p._count.targets}</td>
                   <td>{p._count.members}</td>
-                  <td className="text-gray-500">{formatDate(p.updatedAt)}</td>
+                  <td className="text-gray-500 dark:text-gray-400">{formatDate(p.updatedAt)}</td>
                 </tr>
               ))}
             </tbody>
@@ -108,8 +108,8 @@ function CreateProjectDialog({ open, onClose }: { open: boolean; onClose: () => 
         {teams.isPending && <Spinner />}
         <ErrorText error={teams.error} />
         {noTeams ? (
-          <div className="space-y-2 rounded-md border border-dashed border-gray-300 bg-gray-50 p-3">
-            <p className="text-xs text-gray-600">你還沒有任何 Team，請先建立一個。</p>
+          <div className="space-y-2 rounded-md border border-dashed border-gray-300 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 p-3">
+            <p className="text-xs text-gray-600 dark:text-gray-300">你還沒有任何 Team，請先建立一個。</p>
             <div className="flex gap-2">
               <Input placeholder="Team 名稱" value={newTeamName} onChange={(e) => setNewTeamName(e.target.value)} />
               <Button variant="secondary" onClick={() => createTeam.mutate()} disabled={!newTeamName.trim() || createTeam.isPending}>

@@ -148,23 +148,23 @@ function StatusBar({
       {status && (
         <div className="space-y-2">
           {status.docker.ok ? (
-            <p className="text-sm text-gray-700">
+            <p className="text-sm text-gray-700 dark:text-gray-200">
               <Badge tone="green">Docker 正常</Badge>{" "}
-              <span className="ml-1 text-gray-500">版本 {status.docker.version ?? "未知"}</span>
+              <span className="ml-1 text-gray-500 dark:text-gray-400">版本 {status.docker.version ?? "未知"}</span>
             </p>
           ) : (
             <Notice tone="red">無法連線到 Docker：{status.docker.error ?? "未知錯誤"}</Notice>
           )}
 
           {status.image.present ? (
-            <p className="text-sm text-gray-700">
+            <p className="text-sm text-gray-700 dark:text-gray-200">
               <Badge tone="green">Image 已存在</Badge>{" "}
-              <code className="ml-1 rounded bg-gray-100 px-1.5 py-0.5 text-xs">{status.image.name}</code>
+              <code className="ml-1 rounded bg-gray-100 dark:bg-gray-800 px-1.5 py-0.5 text-xs">{status.image.name}</code>
             </p>
           ) : (
             <Notice tone="amber">
               <p>
-                找不到 sandbox image <code className="rounded bg-white/60 px-1">{status.image.name}</code>，請先建置：
+                找不到 sandbox image <code className="rounded bg-white/60 dark:bg-gray-900/60 px-1">{status.image.name}</code>，請先建置：
               </p>
               <pre className="mt-2 overflow-x-auto rounded bg-gray-900 px-3 py-2 text-xs text-gray-100">
                 docker build -t {status.image.name} docker/sandbox
@@ -172,12 +172,12 @@ function StatusBar({
             </Notice>
           )}
 
-          <p className="text-sm text-gray-700">
+          <p className="text-sm text-gray-700 dark:text-gray-200">
             執行中：
             <span className="mx-1 font-semibold">
               {status.running} / {status.maxConcurrent}
             </span>
-            <span className="text-xs text-gray-400">
+            <span className="text-xs text-gray-400 dark:text-gray-500">
               （解析度 {status.settings.resolution}、每步逾時 {status.settings.stepTimeoutSec} 秒）
             </span>
           </p>
@@ -239,10 +239,10 @@ function Launcher({
             {start.isPending ? "啟動中…" : "啟動 sandbox"}
           </Button>
           {start.isPending && (
-            <span className="text-xs text-gray-500">正在等待桌面就緒，通常需要 2–20 秒，請不要離開此頁。</span>
+            <span className="text-xs text-gray-500 dark:text-gray-400">正在等待桌面就緒，通常需要 2–20 秒，請不要離開此頁。</span>
           )}
-          {!start.isPending && full && <span className="text-xs text-amber-600">已達並行上限，需先停止一個。</span>}
-          {!start.isPending && blocked && <span className="text-xs text-gray-400">Docker 或 image 尚未就緒。</span>}
+          {!start.isPending && full && <span className="text-xs text-amber-600 dark:text-amber-400">已達並行上限，需先停止一個。</span>}
+          {!start.isPending && blocked && <span className="text-xs text-gray-400 dark:text-gray-500">Docker 或 image 尚未就緒。</span>}
         </div>
         <ErrorText error={start.error} />
       </form>
@@ -291,7 +291,7 @@ function InstanceCard({
         if (e.key === "Enter" || e.key === " ") onSelect();
       }}
       className={`cursor-pointer rounded-lg border p-3 text-left transition ${
-        selected ? "border-blue-400 bg-blue-50/50 ring-1 ring-blue-200" : "border-gray-200 hover:border-gray-300"
+        selected ? "border-blue-400 bg-blue-50/50 ring-1 ring-blue-200 dark:ring-blue-900" : "border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600"
       }`}
     >
       <div className="flex flex-wrap items-center gap-2">
@@ -300,7 +300,7 @@ function InstanceCard({
         <Badge tone={healthTone(instance.health)}>{HEALTH_LABEL[instance.health] ?? instance.health}</Badge>
         {selected && <Badge tone="blue">使用中</Badge>}
       </div>
-      <dl className="mt-2 space-y-0.5 text-xs text-gray-500">
+      <dl className="mt-2 space-y-0.5 text-xs text-gray-500 dark:text-gray-400">
         <div>解析度：{instance.resolution ?? "未知"}</div>
         <div>建立於：{formatDate(instance.createdAt)}</div>
         <div>到期：{instance.expiresAt ? formatDate(instance.expiresAt) : "不自動回收"}</div>
@@ -365,7 +365,7 @@ function LiveView({
               href={viewUrl}
               target="_blank"
               rel="noreferrer"
-              className="text-xs font-medium text-blue-700 hover:underline"
+              className="text-xs font-medium text-blue-700 dark:text-blue-300 hover:underline"
             >
               另開分頁
             </a>
@@ -373,7 +373,7 @@ function LiveView({
         ) : undefined
       }
     >
-      <p className="mb-2 text-xs text-gray-400">
+      <p className="mb-2 text-xs text-gray-400 dark:text-gray-500">
         這是容器內建 noVNC 的即時畫面，由瀏覽器直接連到 127.0.0.1:{instance?.novncPort ?? "…"}（只綁在
         loopback，不經過 API）。因此只有在跑 API 的那台機器上開這個頁面才看得到畫面。
       </p>
@@ -382,7 +382,7 @@ function LiveView({
           key={`${viewUrl}#${nonce}`}
           src={viewUrl}
           title="sandbox 即時畫面"
-          className="w-full rounded-md border border-gray-300 bg-black"
+          className="w-full rounded-md border border-gray-300 dark:border-gray-700 bg-black"
           style={{ aspectRatio: aspectRatio(instance?.resolution ?? fallbackResolution) }}
         />
       ) : (
@@ -564,7 +564,7 @@ function AgentPanel({ instance, defaultMaxSteps }: { instance: SandboxInstance; 
       }
     >
       <div className="space-y-3">
-        {reconnecting && <p className="text-xs text-amber-600">連線中斷，重新連線中…</p>}
+        {reconnecting && <p className="text-xs text-amber-600 dark:text-amber-400">連線中斷，重新連線中…</p>}
         <ErrorText error={snapshot.error} />
         <ErrorText error={stop.error} />
         <ErrorText error={clear.error} />
@@ -573,7 +573,7 @@ function AgentPanel({ instance, defaultMaxSteps }: { instance: SandboxInstance; 
           <div
             ref={listRef}
             onScroll={onScroll}
-            className="max-h-[60vh] space-y-2 overflow-y-auto rounded-md bg-gray-50 p-3"
+            className="max-h-[60vh] space-y-2 overflow-y-auto rounded-md bg-gray-50 dark:bg-gray-800/50 p-3"
           >
             {snapshot.isPending && <Spinner />}
             {!snapshot.isPending && visible.length === 0 && (
@@ -639,8 +639,8 @@ function AgentPanel({ instance, defaultMaxSteps }: { instance: SandboxInstance; 
                 {stop.isPending ? "中止中…" : "中止本輪"}
               </Button>
             )}
-            <span className="text-xs text-gray-400">Cmd / Ctrl + Enter 送出</span>
-            {!instance.running && <span className="text-xs text-amber-600">這個容器沒有在執行中。</span>}
+            <span className="text-xs text-gray-400 dark:text-gray-500">Cmd / Ctrl + Enter 送出</span>
+            {!instance.running && <span className="text-xs text-amber-600 dark:text-amber-400">這個容器沒有在執行中。</span>}
           </div>
           <ErrorText error={send.error} />
         </div>
@@ -673,12 +673,12 @@ function TranscriptRow({ event, round }: { event: SessionEvent; round: number })
   if (event.type === "user_message") {
     return (
       <div className="flex justify-end">
-        <div className="max-w-[85%] rounded-md border border-blue-200 bg-blue-50 px-3 py-2">
-          <p className="whitespace-pre-wrap text-sm text-gray-800">{event.content}</p>
+        <div className="max-w-[85%] rounded-md border border-blue-200 dark:border-blue-900 bg-blue-50 dark:bg-blue-950/40 px-3 py-2">
+          <p className="whitespace-pre-wrap text-sm text-gray-800 dark:text-gray-100">{event.content}</p>
           {event.interjected && (
             <div className="mt-1.5">
               <Badge tone="amber">插話</Badge>
-              <p className="mt-1 text-xs text-amber-700">這則訊息會在本輪的下一步前被讀取。</p>
+              <p className="mt-1 text-xs text-amber-700 dark:text-amber-300">這則訊息會在本輪的下一步前被讀取。</p>
             </div>
           )}
         </div>
@@ -688,19 +688,19 @@ function TranscriptRow({ event, round }: { event: SessionEvent; round: number })
 
   if (event.type === "run_started") {
     return (
-      <div className="flex items-center gap-2 py-1 text-xs text-gray-400">
-        <span className="h-px flex-1 bg-gray-200" />
+      <div className="flex items-center gap-2 py-1 text-xs text-gray-400 dark:text-gray-500">
+        <span className="h-px flex-1 bg-gray-200 dark:bg-gray-700" />
         <span className="whitespace-nowrap">
           第 {round} 輪 · {event.sandbox} · 畫面 {event.screen} · 最多 {event.maxSteps} 步
         </span>
-        <span className="h-px flex-1 bg-gray-200" />
+        <span className="h-px flex-1 bg-gray-200 dark:bg-gray-700" />
       </div>
     );
   }
 
   if (event.type === "thinking") {
     return (
-      <div className="rounded-md border border-blue-200 bg-blue-50 px-3 py-1">
+      <div className="rounded-md border border-blue-200 dark:border-blue-900 bg-blue-50 dark:bg-blue-950/40 px-3 py-1">
         <Spinner label={`第 ${event.step} 步思考中…`} />
       </div>
     );
@@ -711,10 +711,10 @@ function TranscriptRow({ event, round }: { event: SessionEvent; round: number })
   if (event.type === "finished") {
     const cls =
       event.reason === "done"
-        ? "border-green-200 bg-green-50 text-green-800"
+        ? "border-green-200 dark:border-green-900 bg-green-50 dark:bg-green-950/40 text-green-800 dark:text-green-300"
         : event.reason === "max_steps"
-          ? "border-amber-200 bg-amber-50 text-amber-800"
-          : "border-gray-300 bg-gray-100 text-gray-700";
+          ? "border-amber-200 dark:border-amber-900 bg-amber-50 dark:bg-amber-950/40 text-amber-800 dark:text-amber-300"
+          : "border-gray-300 dark:border-gray-700 bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-200";
     const label =
       event.reason === "done" ? "已完成" : event.reason === "max_steps" ? "達到步數上限" : "已中止";
     return (
@@ -729,7 +729,7 @@ function TranscriptRow({ event, round }: { event: SessionEvent; round: number })
 
   if (event.type === "paused") {
     return (
-      <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-amber-800">
+      <div className="rounded-md border border-amber-200 dark:border-amber-900 bg-amber-50 dark:bg-amber-950/40 px-3 py-2 text-amber-800 dark:text-amber-300">
         <p className="text-sm font-semibold">等待 LLM</p>
         <p className="mt-1 whitespace-pre-wrap text-sm">{event.message}</p>
         <p className="mt-1 text-xs">
@@ -741,7 +741,7 @@ function TranscriptRow({ event, round }: { event: SessionEvent; round: number })
 
   if (event.type === "resumed") {
     return (
-      <p className="rounded-md border border-green-200 bg-green-50 px-3 py-1.5 text-sm text-green-800">{event.message}</p>
+      <p className="rounded-md border border-green-200 dark:border-green-900 bg-green-50 dark:bg-green-950/40 px-3 py-1.5 text-sm text-green-800 dark:text-green-300">{event.message}</p>
     );
   }
 
@@ -752,39 +752,39 @@ function TranscriptRow({ event, round }: { event: SessionEvent; round: number })
 
 function StepCard({ step }: { step: SessionStepEvent }) {
   return (
-    <div className="rounded-md border border-gray-200 bg-white p-3">
+    <div className="rounded-md border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-3">
       <div className="flex flex-wrap items-center gap-2">
-        <span className="text-sm font-semibold text-gray-800">第 {step.step} 步</span>
+        <span className="text-sm font-semibold text-gray-800 dark:text-gray-100">第 {step.step} 步</span>
         <Badge tone={PHASE_TONE[step.phase] ?? "gray"}>{PHASE_LABEL[step.phase] ?? step.phase}</Badge>
-        <code className="rounded bg-gray-100 px-1.5 py-0.5 text-xs font-medium text-gray-700">
+        <code className="rounded bg-gray-100 dark:bg-gray-800 px-1.5 py-0.5 text-xs font-medium text-gray-700 dark:text-gray-200">
           {step.action.type}
         </code>
         <span
           className={`ml-auto rounded px-2 py-0.5 text-xs font-medium ${
-            step.result.ok ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"
+            step.result.ok ? "bg-green-100 dark:bg-green-950 text-green-700 dark:text-green-300" : "bg-red-100 dark:bg-red-950 text-red-700 dark:text-red-300"
           }`}
         >
           {step.result.ok ? "成功" : "失敗"} · {step.result.durationMs}ms
         </span>
       </div>
 
-      <p className="mt-2 break-all font-mono text-xs text-gray-500">{formatParams(step.action.params)}</p>
+      <p className="mt-2 break-all font-mono text-xs text-gray-500 dark:text-gray-400">{formatParams(step.action.params)}</p>
 
       {step.intent && (
-        <p className="mt-2 text-sm text-gray-800">
-          <span className="mr-1 text-xs font-medium text-gray-500">意圖</span>
+        <p className="mt-2 text-sm text-gray-800 dark:text-gray-100">
+          <span className="mr-1 text-xs font-medium text-gray-500 dark:text-gray-400">意圖</span>
           {step.intent}
         </p>
       )}
       {step.observation && (
-        <p className="mt-1 text-sm text-gray-800">
-          <span className="mr-1 text-xs font-medium text-gray-500">觀察</span>
+        <p className="mt-1 text-sm text-gray-800 dark:text-gray-100">
+          <span className="mr-1 text-xs font-medium text-gray-500 dark:text-gray-400">觀察</span>
           {step.observation}
         </p>
       )}
-      {step.result.error && <p className="mt-1 text-xs text-red-600">錯誤：{step.result.error}</p>}
+      {step.result.error && <p className="mt-1 text-xs text-red-600 dark:text-red-400">錯誤：{step.result.error}</p>}
 
-      <p className="mt-2 text-xs text-gray-400">
+      <p className="mt-2 text-xs text-gray-400 dark:text-gray-500">
         {step.model} · LLM {step.llmMs}ms
       </p>
     </div>
@@ -840,7 +840,7 @@ function ManualPanel({ instance }: { instance: SandboxInstance }) {
           <LogViewer instance={instance} />
         </div>
       ) : (
-        <p className="text-xs text-gray-400">不透過 LLM，直接對容器送單一動作，或查看容器 log。</p>
+        <p className="text-xs text-gray-400 dark:text-gray-500">不透過 LLM，直接對容器送單一動作，或查看容器 log。</p>
       )}
     </Card>
   );
@@ -908,7 +908,7 @@ function ActionRunner({ instance }: { instance: SandboxInstance }) {
           {perform.isPending ? "送出中…" : "送出"}
         </Button>
         {result && (
-          <span className="text-xs text-gray-500">
+          <span className="text-xs text-gray-500 dark:text-gray-400">
             {result.ok ? "成功" : "失敗"} · {result.durationMs}ms
           </span>
         )}
@@ -922,7 +922,7 @@ function ActionRunner({ instance }: { instance: SandboxInstance }) {
             <img
               src={result.image}
               alt="sandbox 截圖"
-              className="w-full rounded-md border border-gray-300"
+              className="w-full rounded-md border border-gray-300 dark:border-gray-700"
             />
           )}
           <pre className="max-h-64 overflow-auto rounded-md bg-gray-900 p-3 text-xs text-gray-100">
@@ -941,9 +941,9 @@ function LogViewer({ instance }: { instance: SandboxInstance }) {
   });
 
   return (
-    <div className="space-y-2 border-t border-gray-100 pt-3">
+    <div className="space-y-2 border-t border-gray-100 dark:border-gray-800 pt-3">
       <div className="flex items-center justify-between">
-        <h3 className="text-sm font-semibold text-gray-800">容器 log（最後 200 行）</h3>
+        <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-100">容器 log（最後 200 行）</h3>
         <Button size="sm" variant="secondary" onClick={() => logs.refetch()} disabled={logs.isFetching}>
           {logs.isFetching ? "載入中…" : "重新載入"}
         </Button>
@@ -1044,8 +1044,8 @@ function SettingsTab() {
               onChange={(e) => setRecordVideo(e.target.checked)}
             />
             <span>
-              <span className="block text-sm text-gray-800">錄影</span>
-              <span className="block text-xs text-gray-500">
+              <span className="block text-sm text-gray-800 dark:text-gray-100">錄影</span>
+              <span className="block text-xs text-gray-500 dark:text-gray-400">
                 每條 case 各錄一段畫面，附在結果頁。關掉可以省下不少磁碟；截圖不受影響。
               </span>
             </span>
@@ -1065,7 +1065,7 @@ function SettingsTab() {
                 還原
               </Button>
             )}
-            {save.isSuccess && !dirty && <span className="text-xs text-green-600">已儲存</span>}
+            {save.isSuccess && !dirty && <span className="text-xs text-green-600 dark:text-green-400">已儲存</span>}
           </div>
           <ErrorText error={save.error} />
         </form>

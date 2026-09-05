@@ -19,7 +19,7 @@ export function ProjectMcp({ projectId, myRole }: { projectId: string; myRole: R
 
   return (
     <Card title="專案 MCP 伺服器" actions={canEdit && <Button size="sm" onClick={() => setAdding(true)}>新增</Button>}>
-      <p className="mb-2 text-xs text-gray-500">只給這個專案用的 MCP 工具,和全域的一起提供給執行代理。</p>
+      <p className="mb-2 text-xs text-gray-500 dark:text-gray-400">只給這個專案用的 MCP 工具,和全域的一起提供給執行代理。</p>
       {servers.isPending && <Spinner />}
       <ErrorText error={servers.error} />
       {servers.data && (servers.data.length === 0 ? <Empty>還沒有專案 MCP。</Empty> : (
@@ -43,17 +43,17 @@ function Row({ projectId, server, canEdit, onChanged }: { projectId: string; ser
   const remove = useMutation({ mutationFn: () => api(`/mcp/${server.id}`, { method: "DELETE" }), onSuccess: onChanged });
 
   return (
-    <li className="rounded-md border border-gray-200 p-2">
+    <li className="rounded-md border border-gray-200 dark:border-gray-700 p-2">
       <div className="flex items-start gap-2">
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
-            <span className="text-sm font-medium text-gray-800">{server.name}</span>
+            <span className="text-sm font-medium text-gray-800 dark:text-gray-100">{server.name}</span>
             <Badge tone={server.enabled ? "green" : "gray"}>{server.enabled ? "啟用中" : "已停用"}</Badge>
             {server.hasAuth && <Badge tone="blue">有 auth</Badge>}
           </div>
-          <p className="font-mono text-xs text-gray-500">{server.url}</p>
+          <p className="font-mono text-xs text-gray-500 dark:text-gray-400">{server.url}</p>
           {tools.length > 0 && <div className="mt-1 flex flex-wrap gap-1">{tools.map((t) => <Badge key={t.name} tone="purple">{t.name}</Badge>)}</div>}
-          {err && <p className="mt-1 text-xs text-red-600">{err}</p>}
+          {err && <p className="mt-1 text-xs text-red-600 dark:text-red-400">{err}</p>}
         </div>
         {canEdit && (
           <div className="flex flex-col gap-1">
@@ -76,14 +76,14 @@ function Editor({ projectId, onClose, onSaved }: { projectId: string; onClose: (
     onSuccess: onSaved,
   });
   return (
-    <div className="mt-3 space-y-2 rounded-md border border-gray-200 bg-gray-50 p-3">
+    <div className="mt-3 space-y-2 rounded-md border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 p-3">
       <Field label="名稱"><Input value={name} onChange={(e) => setName(e.target.value)} /></Field>
       <Field label="URL"><Input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://mcp.example.com/mcp" /></Field>
       <Field label="Auth(選填)"><Input value={auth} onChange={(e) => setAuth(e.target.value)} /></Field>
       <div className="flex items-center gap-2">
         <Button size="sm" onClick={() => save.mutate()} disabled={save.isPending || !name.trim() || !url.trim()}>{save.isPending ? "儲存中…" : "儲存"}</Button>
         <Button variant="ghost" size="sm" onClick={onClose}>取消</Button>
-        {save.error ? <span className="text-xs text-red-600">{errorMessage(save.error)}</span> : null}
+        {save.error ? <span className="text-xs text-red-600 dark:text-red-400">{errorMessage(save.error)}</span> : null}
       </div>
     </div>
   );

@@ -147,7 +147,7 @@ function IdentitiesCard({ targetId, canEdit }: { targetId: string; canEdit: bool
 
   return (
     <Card title="身份" actions={canEdit && <Button size="sm" onClick={() => setAdding(true)}>新增身份</Button>}>
-      <p className="mb-3 text-xs text-gray-500">
+      <p className="mb-3 text-xs text-gray-500 dark:text-gray-400">
         每個身份代表「一種使用者」（管理員、一般會員、未登入訪客…）。探索會逐一登入、各走一遍，
         「誰能看到什麼」才能靠比對得出來，而不是用猜的。
       </p>
@@ -159,11 +159,11 @@ function IdentitiesCard({ targetId, canEdit }: { targetId: string; canEdit: bool
         ) : (
           <ul className="space-y-2">
             {list.data.identities.map((i) => (
-              <li key={i.id} className="flex items-center gap-2 rounded-md border border-gray-200 p-2">
+              <li key={i.id} className="flex items-center gap-2 rounded-md border border-gray-200 dark:border-gray-700 p-2">
                 <Badge tone={/admin|owner/i.test(i.role) ? "purple" : i.isAnonymous ? "gray" : "blue"}>{i.role}</Badge>
-                <span className="text-sm font-medium text-gray-800">{i.name}</span>
-                {i.isAnonymous ? <span className="text-xs text-gray-400">未登入</span>
-                  : <span className="text-xs text-gray-400">憑證：{i.credentialKeys.join("、") || "（未設定）"}</span>}
+                <span className="text-sm font-medium text-gray-800 dark:text-gray-100">{i.name}</span>
+                {i.isAnonymous ? <span className="text-xs text-gray-400 dark:text-gray-500">未登入</span>
+                  : <span className="text-xs text-gray-400 dark:text-gray-500">憑證：{i.credentialKeys.join("、") || "（未設定）"}</span>}
                 {canEdit && (
                   <Button variant="ghost" size="sm" className="ml-auto" onClick={() => remove.mutate(i.id)} disabled={remove.isPending}>
                     刪除
@@ -281,7 +281,7 @@ function StartCard({ canEdit, running, onRun, error }: {
         <Button disabled={!canEdit || running} onClick={() => onRun({ maxNodes, maxDepth, doRwd, deepBudget, doSynthesis })}>
           {running ? "探索中…" : "開始探索"}
         </Button>
-        <span className="text-xs text-gray-500">探索會開一個 sandbox 實際操作站台。過程唯讀：不會送出表單或刪任何東西。</span>
+        <span className="text-xs text-gray-500 dark:text-gray-400">探索會開一個 sandbox 實際操作站台。過程唯讀：不會送出表單或刪任何東西。</span>
       </div>
       <ErrorText error={error} />
     </Card>
@@ -332,8 +332,8 @@ function Results({ detail, targetId }: { detail: ExploreDetail; targetId: string
           <Stat label="有表單頁" value={s?.coverage?.withForms ?? 0} />
           <Stat label="模型呼叫" value={detail.run.llmCalls} />
         </div>
-        {detail.run.startedAt && <p className="mt-2 text-xs text-gray-400">{formatDate(detail.run.startedAt)}</p>}
-        {detail.run.error && <p className="mt-1 text-xs text-red-600">{detail.run.error}</p>}
+        {detail.run.startedAt && <p className="mt-2 text-xs text-gray-400 dark:text-gray-500">{formatDate(detail.run.startedAt)}</p>}
+        {detail.run.error && <p className="mt-1 text-xs text-red-600 dark:text-red-400">{detail.run.error}</p>}
       </Card>
 
       <PermissionMatrix detail={detail} />
@@ -342,20 +342,20 @@ function Results({ detail, targetId }: { detail: ExploreDetail; targetId: string
         <Card title={`探索發現（${findings.length} 問題 · ${deep.length} 情境筆記）`}>
           <ul className="space-y-2">
             {findings.map((o) => (
-              <li key={o.id} className="rounded-md border border-red-200 bg-red-50/40 p-2">
+              <li key={o.id} className="rounded-md border border-red-200 dark:border-red-900 bg-red-50/40 p-2">
                 <div className="flex items-center gap-2">
                   <Badge tone={o.severity === "critical" || o.severity === "major" ? "red" : "amber"}>{o.severity}</Badge>
-                  <span className="text-sm font-medium text-gray-800">{o.note}</span>
+                  <span className="text-sm font-medium text-gray-800 dark:text-gray-100">{o.note}</span>
                 </div>
-                {typeof o.data.description === "string" && <p className="mt-1 text-xs text-gray-600">{o.data.description}</p>}
+                {typeof o.data.description === "string" && <p className="mt-1 text-xs text-gray-600 dark:text-gray-300">{o.data.description}</p>}
               </li>
             ))}
           </ul>
           {deep.length > 0 && (
             <details className="mt-2">
-              <summary className="cursor-pointer text-xs text-gray-500">情境筆記（{deep.length}）</summary>
+              <summary className="cursor-pointer text-xs text-gray-500 dark:text-gray-400">情境筆記（{deep.length}）</summary>
               <ul className="mt-1 space-y-1">
-                {deep.map((o) => <li key={o.id} className="text-xs text-gray-600">· {o.note}</li>)}
+                {deep.map((o) => <li key={o.id} className="text-xs text-gray-600 dark:text-gray-300">· {o.note}</li>)}
               </ul>
             </details>
           )}
@@ -366,7 +366,7 @@ function Results({ detail, targetId }: { detail: ExploreDetail; targetId: string
         <Card title={`RWD 問題（${rwd.length}）`}>
           <ul className="space-y-1">
             {rwd.map((o) => (
-              <li key={o.id} className="text-sm text-gray-700">
+              <li key={o.id} className="text-sm text-gray-700 dark:text-gray-200">
                 <Badge tone={o.severity === "major" ? "red" : "amber"}>{o.breakpoint}</Badge> {o.note}
               </li>
             ))}
@@ -381,9 +381,9 @@ function Results({ detail, targetId }: { detail: ExploreDetail; targetId: string
 
 function Stat({ label, value, tone = "gray" }: { label: string; value: number; tone?: "gray" | "red" }) {
   return (
-    <div className="rounded-md border border-gray-200 bg-white px-3 py-2">
-      <div className={`text-lg font-semibold ${tone === "red" && value > 0 ? "text-red-600" : "text-gray-800"}`}>{value}</div>
-      <div className="text-xs text-gray-500">{label}</div>
+    <div className="rounded-md border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 px-3 py-2">
+      <div className={`text-lg font-semibold ${tone === "red" && value > 0 ? "text-red-600 dark:text-red-400" : "text-gray-800 dark:text-gray-100"}`}>{value}</div>
+      <div className="text-xs text-gray-500 dark:text-gray-400">{label}</div>
     </div>
   );
 }
@@ -391,8 +391,8 @@ function Stat({ label, value, tone = "gray" }: { label: string; value: number; t
 function PermissionMatrix({ detail }: { detail: ExploreDetail }) {
   const { matrix } = detail;
   const cell = (s: AccessState) =>
-    s === "granted" ? <span className="text-green-700">可進</span>
-    : s === "denied" ? <span className="text-gray-400">被擋</span>
+    s === "granted" ? <span className="text-green-700 dark:text-green-300">可進</span>
+    : s === "denied" ? <span className="text-gray-400 dark:text-gray-500">被擋</span>
     : <span className="text-gray-300">—</span>;
   return (
     <Card title="權限矩陣" actions={matrix.suspicious.length > 0 && <Badge tone="red">{matrix.suspicious.length} 個可疑</Badge>}>
@@ -404,7 +404,7 @@ function PermissionMatrix({ detail }: { detail: ExploreDetail }) {
       <div className="mt-2 overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
-            <tr className="border-b border-gray-200 text-left text-xs text-gray-500">
+            <tr className="border-b border-gray-200 dark:border-gray-700 text-left text-xs text-gray-500 dark:text-gray-400">
               <th className="py-1 pr-3">路由</th>
               {matrix.identities.map((id) => <th key={id} className="px-2 py-1">{id}</th>)}
             </tr>
@@ -413,8 +413,8 @@ function PermissionMatrix({ detail }: { detail: ExploreDetail }) {
             {matrix.rows.map((row) => {
               const flagged = matrix.suspicious.some((s) => s.routeKey === row.routeKey);
               return (
-                <tr key={row.routeKey} className={`border-b border-gray-100 ${flagged ? "bg-red-50/50" : ""}`}>
-                  <td className="py-1 pr-3 font-mono text-xs text-gray-700">{row.routeKey}</td>
+                <tr key={row.routeKey} className={`border-b border-gray-100 dark:border-gray-800 ${flagged ? "bg-red-50/50" : ""}`}>
+                  <td className="py-1 pr-3 font-mono text-xs text-gray-700 dark:text-gray-200">{row.routeKey}</td>
                   {matrix.identities.map((id) => <td key={id} className="px-2 py-1 text-xs">{cell(row.access[id])}</td>)}
                 </tr>
               );
@@ -462,15 +462,15 @@ function SiteMap({ detail }: { detail: ExploreDetail }) {
       type="button"
       onClick={() => n.screenshotKey && setShot(evidenceUrl(detail.run.id, n.screenshotKey))}
       className={`rounded-md border px-2 py-1 text-left text-xs ${
-        isState ? "border-purple-300 bg-purple-50" : n.kind === "form" ? "border-blue-300 bg-blue-50" : "border-gray-200 bg-white"
-      } ${n.screenshotKey ? "hover:bg-gray-100" : "cursor-default"}`}
+        isState ? "border-purple-300 bg-purple-50" : n.kind === "form" ? "border-blue-300 bg-blue-50 dark:bg-blue-950/40" : "border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900"
+      } ${n.screenshotKey ? "hover:bg-gray-100 dark:hover:bg-gray-800" : "cursor-default"}`}
       title={n.title}
     >
-      <div className="font-mono text-gray-800">
-        {isState && <span className="mr-1 rounded bg-purple-200 px-1 text-[10px] text-purple-800">{STATE_LABEL[n.kind] ?? n.kind}</span>}
+      <div className="font-mono text-gray-800 dark:text-gray-100">
+        {isState && <span className="mr-1 rounded bg-purple-200 px-1 text-[10px] text-purple-800 dark:text-purple-300">{STATE_LABEL[n.kind] ?? n.kind}</span>}
         {isState ? n.routeKey.split(" ▸ ").slice(1).join(" ▸ ") || n.title : n.routeKey}
       </div>
-      <div className="text-gray-400">
+      <div className="text-gray-400 dark:text-gray-500">
         {n.reachableBy.join("/") || "無人可進"}
         {!isState && n.kind === "form" ? " · 表單" : ""}
       </div>
@@ -482,7 +482,7 @@ function SiteMap({ detail }: { detail: ExploreDetail }) {
       <div className="space-y-3">
         {byDepth.map(([depth, nodes]) => (
           <div key={depth}>
-            <p className="mb-1 text-xs text-gray-400">深度 {depth}</p>
+            <p className="mb-1 text-xs text-gray-400 dark:text-gray-500">深度 {depth}</p>
             <div className="flex flex-col gap-2">
               {nodes.map((n) => {
                 const kids = childrenOf.get(n.id) ?? [];
@@ -504,7 +504,7 @@ function SiteMap({ detail }: { detail: ExploreDetail }) {
       </div>
       {shot && (
         <Dialog open title="頁面截圖" onClose={() => setShot(null)}>
-          <img src={shot} alt="頁面截圖" className="w-full rounded border border-gray-200" />
+          <img src={shot} alt="頁面截圖" className="w-full rounded border border-gray-200 dark:border-gray-700" />
         </Dialog>
       )}
     </Card>

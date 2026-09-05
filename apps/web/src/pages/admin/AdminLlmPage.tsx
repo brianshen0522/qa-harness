@@ -57,7 +57,7 @@ export default function AdminLlmPage() {
         <ErrorText error={configs.error} />
         <ErrorText error={remove.error} />
         {configs.data && configs.data.length === 0 && <Empty>尚無 LLM 設定。</Empty>}
-        <ul className="divide-y divide-gray-100">
+        <ul className="divide-y divide-gray-100 dark:divide-gray-800">
           {configs.data?.map((c) => (
             <li key={c.id} className="py-3">
               <div className="flex flex-wrap items-start justify-between gap-3">
@@ -69,7 +69,7 @@ export default function AdminLlmPage() {
                     {c.supportsVision && <Badge tone="blue">Vision</Badge>}
                     {c.hasApiKey ? <Badge>Key：{c.apiKeyMasked || "已設定"}</Badge> : <Badge tone="amber">未設定 Key</Badge>}
                   </div>
-                  <p className="text-xs text-gray-500">
+                  <p className="text-xs text-gray-500 dark:text-gray-400">
                     模型：<code>{c.model}</code>
                     {c.endpoint && (
                       <>
@@ -79,7 +79,7 @@ export default function AdminLlmPage() {
                     )}
                   </p>
                   <div className="flex flex-wrap gap-1 text-xs">
-                    {c.purposes.length === 0 && <span className="text-gray-400">未指定用途</span>}
+                    {c.purposes.length === 0 && <span className="text-gray-400 dark:text-gray-500">未指定用途</span>}
                     {c.purposes.map((p) => (
                       <Badge key={p}>
                         {PURPOSE_LABEL[p]}
@@ -111,7 +111,7 @@ export default function AdminLlmPage() {
       {editing !== null && <ConfigDialog config={editing === "new" ? null : editing} onClose={() => setEditing(null)} onSaved={invalidateAll} />}
 
       <Dialog open={deletingId !== null} title="刪除 LLM 設定" onClose={() => setDeletingId(null)}>
-        <p className="text-sm text-gray-700">確定要刪除「{configs.data?.find((c) => c.id === deletingId)?.name}」嗎？它會從所有 fallback chain 中移除。</p>
+        <p className="text-sm text-gray-700 dark:text-gray-200">確定要刪除「{configs.data?.find((c) => c.id === deletingId)?.name}」嗎？它會從所有 fallback chain 中移除。</p>
         <div className="mt-4 flex justify-end gap-2">
           <Button variant="secondary" onClick={() => setDeletingId(null)}>
             取消
@@ -163,7 +163,7 @@ function HealthSection() {
       actions={
         <>
           {probeAll.data && (
-            <span className="text-xs text-gray-500">
+            <span className="text-xs text-gray-500 dark:text-gray-400">
               {probeAll.data.recovered > 0 ? `已恢復 ${probeAll.data.recovered} 組` : "沒有恢復任何一組"}
             </span>
           )}
@@ -188,7 +188,7 @@ function HealthSection() {
                 </Badge>
               );
             })}
-            <span className="text-xs text-gray-400">可用 / 已設定（僅計入啟用的設定）</span>
+            <span className="text-xs text-gray-400 dark:text-gray-500">可用 / 已設定（僅計入啟用的設定）</span>
           </div>
 
           {starved.length > 0 && (
@@ -205,7 +205,7 @@ function HealthSection() {
             </Notice>
           )}
 
-          <p className="text-xs text-gray-400">
+          <p className="text-xs text-gray-400 dark:text-gray-500">
             失效的設定會自動重測，間隔{formatInterval(data.probeIntervalMs)}
             （連續失敗會逐次拉長），只要有一次成功就立刻放回輪替；這個機制不會停止，也不需要手動介入。
           </p>
@@ -250,7 +250,7 @@ function HealthRow({ config }: { config: LlmConfigHealth }) {
     <tr>
       <td>
         <p className="font-medium">{config.name}</p>
-        <p className="text-xs text-gray-400">
+        <p className="text-xs text-gray-400 dark:text-gray-500">
           {config.provider} · {config.model}
         </p>
         <div className="mt-1 flex flex-wrap gap-1">
@@ -263,33 +263,33 @@ function HealthRow({ config }: { config: LlmConfigHealth }) {
       <td>
         <Badge tone={LLM_HEALTH_TONE[config.health]}>{LLM_HEALTH_LABEL[config.health]}</Badge>
         {config.health !== "down" && config.lastRecoveredAt && (
-          <p className="mt-1 whitespace-nowrap text-xs text-gray-400">{formatDate(config.lastRecoveredAt)} 恢復</p>
+          <p className="mt-1 whitespace-nowrap text-xs text-gray-400 dark:text-gray-500">{formatDate(config.lastRecoveredAt)} 恢復</p>
         )}
       </td>
       <td className="text-xs">{config.consecutiveFailures}</td>
-      <td className="max-w-xs text-xs text-gray-600">
+      <td className="max-w-xs text-xs text-gray-600 dark:text-gray-300">
         {config.lastFailureAt ? (
           <>
             {config.lastFailureKind && <Badge tone="red">{config.lastFailureKind}</Badge>}
             <p className="mt-1 break-words">{config.lastFailureMessage ?? "（無訊息）"}</p>
-            <p className="mt-0.5 text-gray-400">{formatDate(config.lastFailureAt)}</p>
+            <p className="mt-0.5 text-gray-400 dark:text-gray-500">{formatDate(config.lastFailureAt)}</p>
           </>
         ) : (
-          <span className="text-gray-400">-</span>
+          <span className="text-gray-400 dark:text-gray-500">-</span>
         )}
       </td>
-      <td className="whitespace-nowrap text-xs text-gray-500">{formatDate(config.downSince)}</td>
-      <td className="whitespace-nowrap text-xs text-gray-500">
+      <td className="whitespace-nowrap text-xs text-gray-500 dark:text-gray-400">{formatDate(config.downSince)}</td>
+      <td className="whitespace-nowrap text-xs text-gray-500 dark:text-gray-400">
         {formatDate(config.lastProbeAt)}
-        {config.probeAttempts > 0 && <span className="ml-1 text-gray-400">（第 {config.probeAttempts} 次）</span>}
+        {config.probeAttempts > 0 && <span className="ml-1 text-gray-400 dark:text-gray-500">（第 {config.probeAttempts} 次）</span>}
       </td>
-      <td className="whitespace-nowrap text-xs text-gray-500">{formatDate(config.nextProbeAt)}</td>
+      <td className="whitespace-nowrap text-xs text-gray-500 dark:text-gray-400">{formatDate(config.nextProbeAt)}</td>
       <td>
         <Button size="sm" variant="secondary" disabled={probe.isPending} onClick={() => probe.mutate()}>
           {probe.isPending ? "測試中…" : "立即測試"}
         </Button>
         {probe.data && (
-          <p className={`mt-1 text-xs ${probe.data.ok ? "text-green-700" : "text-red-600"}`}>
+          <p className={`mt-1 text-xs ${probe.data.ok ? "text-green-700 dark:text-green-300" : "text-red-600 dark:text-red-400"}`}>
             {probe.data.ok ? `成功 · ${probe.data.latencyMs} ms` : `失敗 · ${probe.data.error ?? "未知錯誤"}`}
           </p>
         )}
@@ -307,7 +307,7 @@ function TestPanel({ config }: { config: LlmConfig }) {
   const r = test.data;
 
   return (
-    <div className="mt-3 rounded-md border border-gray-200 bg-gray-50 p-3">
+    <div className="mt-3 rounded-md border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 p-3">
       <form
         onSubmit={(e) => {
           e.preventDefault();
@@ -327,7 +327,7 @@ function TestPanel({ config }: { config: LlmConfig }) {
         <div className="mt-3 text-sm">
           {r.ok ? (
             <>
-              <div className="mb-1 flex flex-wrap items-center gap-2 text-xs text-gray-500">
+              <div className="mb-1 flex flex-wrap items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
                 <Badge tone="green">成功</Badge>
                 <span>延遲 {r.latencyMs} ms</span>
                 <span>模型 {r.model}</span>
@@ -335,17 +335,17 @@ function TestPanel({ config }: { config: LlmConfig }) {
                   tokens {r.usage.inputTokens} / {r.usage.outputTokens}
                 </span>
               </div>
-              <pre className="whitespace-pre-wrap rounded bg-white p-2 font-sans text-sm text-gray-800">{r.text}</pre>
+              <pre className="whitespace-pre-wrap rounded bg-white dark:bg-gray-900 p-2 font-sans text-sm text-gray-800 dark:text-gray-100">{r.text}</pre>
             </>
           ) : (
             <>
-              <div className="mb-1 flex flex-wrap items-center gap-2 text-xs text-gray-500">
+              <div className="mb-1 flex flex-wrap items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
                 <Badge tone="red">失敗</Badge>
                 <span>{r.errorKind}</span>
                 {r.status != null && <span>HTTP {r.status}</span>}
                 <span>延遲 {r.latencyMs} ms</span>
               </div>
-              <pre className="whitespace-pre-wrap rounded bg-white p-2 font-mono text-xs text-red-700">{r.error}</pre>
+              <pre className="whitespace-pre-wrap rounded bg-white dark:bg-gray-900 p-2 font-mono text-xs text-red-700 dark:text-red-300">{r.error}</pre>
             </>
           )}
         </div>
@@ -423,7 +423,7 @@ function ConfigDialog({ config, onClose, onSaved }: { config: LlmConfig | null; 
           <Input type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} autoComplete="new-password" placeholder={config?.hasApiKey ? "••••••••（不變更）" : ""} />
         </Field>
         <fieldset>
-          <legend className="mb-1 text-xs font-medium text-gray-600">用途</legend>
+          <legend className="mb-1 text-xs font-medium text-gray-600 dark:text-gray-300">用途</legend>
           <div className="flex flex-wrap gap-4">
             {PURPOSES.map((p) => (
               <label key={p} className="flex items-center gap-1.5 text-sm">
@@ -463,7 +463,7 @@ function ChainsSection({ configs }: { configs: LlmConfig[] }) {
 
   return (
     <Card title="Fallback chains">
-      <p className="mb-3 text-xs text-gray-400">每個用途一條順序清單，依序嘗試；遇到逾時、rate limit、5xx 或格式錯誤時往下一個切換。可用上下鍵或拖曳排序。</p>
+      <p className="mb-3 text-xs text-gray-400 dark:text-gray-500">每個用途一條順序清單，依序嘗試；遇到逾時、rate limit、5xx 或格式錯誤時往下一個切換。可用上下鍵或拖曳排序。</p>
       {chains.isPending && <Spinner />}
       <ErrorText error={chains.error} />
       {chains.data && (
@@ -531,13 +531,13 @@ function ChainEditor({ purpose, entries, configs }: { purpose: LlmPurpose; entri
   };
 
   return (
-    <div className="rounded-md border border-gray-200">
-      <header className="flex items-center justify-between border-b border-gray-100 bg-gray-50 px-3 py-2">
+    <div className="rounded-md border border-gray-200 dark:border-gray-700">
+      <header className="flex items-center justify-between border-b border-gray-100 dark:border-gray-800 bg-gray-50 dark:bg-gray-800/50 px-3 py-2">
         <span className="text-sm font-medium">{PURPOSE_LABEL[purpose]}</span>
         {full.length === 0 ? <Badge tone="red">無</Badge> : <Badge>{full.length} 組</Badge>}
       </header>
-      <ol className="divide-y divide-gray-100">
-        {full.length === 0 && <li className="px-3 py-3 text-xs text-gray-400">尚無指定此用途的設定。</li>}
+      <ol className="divide-y divide-gray-100 dark:divide-gray-800">
+        {full.length === 0 && <li className="px-3 py-3 text-xs text-gray-400 dark:text-gray-500">尚無指定此用途的設定。</li>}
         {full.map((id, i) => {
           const c = byId.get(id);
           const isNew = !serverOrder.includes(id);
@@ -552,29 +552,29 @@ function ChainEditor({ purpose, entries, configs }: { purpose: LlmPurpose; entri
                 setDragIndex(null);
                 setOverIndex(null);
               }}
-              className={`flex cursor-grab items-center gap-2 px-3 py-2 text-sm ${overIndex === i && dragIndex !== i ? "bg-blue-50" : ""} ${
+              className={`flex cursor-grab items-center gap-2 px-3 py-2 text-sm ${overIndex === i && dragIndex !== i ? "bg-blue-50 dark:bg-blue-950/40" : ""} ${
                 dragIndex === i ? "opacity-50" : ""
               }`}
             >
-              <span className="w-5 text-xs text-gray-400">{i + 1}.</span>
+              <span className="w-5 text-xs text-gray-400 dark:text-gray-500">{i + 1}.</span>
               <div className="min-w-0 flex-1">
                 <p className="truncate font-medium">
                   {c?.name ?? id}
-                  {isNew && <span className="ml-1 text-xs text-amber-600">（未排入）</span>}
+                  {isNew && <span className="ml-1 text-xs text-amber-600 dark:text-amber-400">（未排入）</span>}
                 </p>
-                <p className="truncate text-xs text-gray-400">
+                <p className="truncate text-xs text-gray-400 dark:text-gray-500">
                   {c?.provider} · {c?.model}
-                  {c && !c.enabled && <span className="ml-1 text-red-500">已停用</span>}
-                  {purpose === "execute" && c && !c.supportsVision && <span className="ml-1 text-red-500">無 Vision</span>}
+                  {c && !c.enabled && <span className="ml-1 text-red-500 dark:text-red-400">已停用</span>}
+                  {purpose === "execute" && c && !c.supportsVision && <span className="ml-1 text-red-500 dark:text-red-400">無 Vision</span>}
                 </p>
               </div>
               <div className="flex flex-col">
-                <button type="button" className="px-1 text-xs text-gray-500 hover:text-gray-900 disabled:opacity-30" disabled={i === 0} onClick={() => move(i, i - 1)} aria-label="上移">
+                <button type="button" className="px-1 text-xs text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 disabled:opacity-30" disabled={i === 0} onClick={() => move(i, i - 1)} aria-label="上移">
                   ▲
                 </button>
                 <button
                   type="button"
-                  className="px-1 text-xs text-gray-500 hover:text-gray-900 disabled:opacity-30"
+                  className="px-1 text-xs text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 disabled:opacity-30"
                   disabled={i === full.length - 1}
                   onClick={() => move(i, i + 1)}
                   aria-label="下移"
@@ -587,7 +587,7 @@ function ChainEditor({ purpose, entries, configs }: { purpose: LlmPurpose; entri
         })}
       </ol>
       {full.length > 0 && (
-        <footer className="flex items-center gap-2 border-t border-gray-100 px-3 py-2">
+        <footer className="flex items-center gap-2 border-t border-gray-100 dark:border-gray-800 px-3 py-2">
           <Button size="sm" disabled={!dirty || save.isPending} onClick={() => save.mutate(full)}>
             {save.isPending ? "儲存中…" : "儲存順序"}
           </Button>

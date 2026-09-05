@@ -39,7 +39,7 @@ export default function AdminSkillsPage() {
         title="全域 Skills"
         actions={<Button size="sm" onClick={() => setEditing("new")}>新增 Skill</Button>}
       >
-        <p className="mb-3 text-sm text-gray-500">
+        <p className="mb-3 text-sm text-gray-500 dark:text-gray-400">
           Skill 是一段「不論哪個 target 都要遵守」的規則（例如日期格式、必檢查的元件、公司術語）。
           它會被自動加進生成測試案例與執行代理的系統提示裡，不用在每個描述裡重寫一遍。
           停用的 Skill 不會被套用。
@@ -52,15 +52,15 @@ export default function AdminSkillsPage() {
           ) : (
             <ul className="space-y-2">
               {skills.data.map((s) => (
-                <li key={s.id} className="rounded-md border border-gray-200 p-3">
+                <li key={s.id} className="rounded-md border border-gray-200 dark:border-gray-700 p-3">
                   <div className="flex items-start gap-2">
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2">
-                        <span className="text-sm font-semibold text-gray-800">{s.name}</span>
+                        <span className="text-sm font-semibold text-gray-800 dark:text-gray-100">{s.name}</span>
                         <Badge tone={s.enabled ? "green" : "gray"}>{s.enabled ? "啟用中" : "已停用"}</Badge>
                       </div>
-                      <pre className="mt-1 max-h-32 overflow-y-auto whitespace-pre-wrap font-sans text-xs text-gray-600">{s.content}</pre>
-                      <p className="mt-1 text-xs text-gray-400">更新於 {formatDate(s.updatedAt)}</p>
+                      <pre className="mt-1 max-h-32 overflow-y-auto whitespace-pre-wrap font-sans text-xs text-gray-600 dark:text-gray-300">{s.content}</pre>
+                      <p className="mt-1 text-xs text-gray-400 dark:text-gray-500">更新於 {formatDate(s.updatedAt)}</p>
                     </div>
                     <div className="flex flex-col gap-1">
                       <Button variant="ghost" size="sm" onClick={() => toggle.mutate(s)} disabled={toggle.isPending}>
@@ -105,7 +105,7 @@ function SkillEditor({ skill, onClose, onSaved }: { skill: Skill | null; onClose
             {save.isPending ? "儲存中…" : "儲存"}
           </Button>
           <Button variant="ghost" onClick={onClose}>取消</Button>
-          {save.error ? <span className="text-xs text-red-600">{errorMessage(save.error)}</span> : null}
+          {save.error ? <span className="text-xs text-red-600 dark:text-red-400">{errorMessage(save.error)}</span> : null}
         </div>
       </div>
     </Card>

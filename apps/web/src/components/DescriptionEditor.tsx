@@ -28,9 +28,9 @@ export function DescriptionEditor({
 
   return (
     <div>
-      <div className="mb-2 flex items-center justify-between text-xs text-gray-500">
+      <div className="mb-2 flex items-center justify-between text-xs text-gray-500 dark:text-gray-400">
         <span>目前版本：v{version}</span>
-        {dirty && editable && <span className="text-amber-600">尚未儲存</span>}
+        {dirty && editable && <span className="text-amber-600 dark:text-amber-400">尚未儲存</span>}
       </div>
       {editable ? (
         <>
@@ -48,7 +48,7 @@ export function DescriptionEditor({
           <ErrorText error={error} />
         </>
       ) : (
-        <pre className="whitespace-pre-wrap rounded-md bg-gray-50 p-3 font-sans text-sm text-gray-700">{value || "（尚無描述）"}</pre>
+        <pre className="whitespace-pre-wrap rounded-md bg-gray-50 dark:bg-gray-800/50 p-3 font-sans text-sm text-gray-700 dark:text-gray-200">{value || "（尚無描述）"}</pre>
       )}
     </div>
   );

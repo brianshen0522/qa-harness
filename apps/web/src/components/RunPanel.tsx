@@ -143,19 +143,19 @@ function LivePanel({
 }) {
   const [open, setOpen] = useState(defaultOpen);
   return (
-    <section className="rounded-lg border border-gray-200 bg-white shadow-sm">
+    <section className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 shadow-sm">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
         className="flex w-full items-center justify-between px-3 py-2 text-left"
       >
-        <span className="flex items-center gap-2 text-sm font-semibold text-gray-800">
+        <span className="flex items-center gap-2 text-sm font-semibold text-gray-800 dark:text-gray-100">
           {title}
-          {count !== undefined && <span className="text-xs font-normal text-gray-400">{count}</span>}
+          {count !== undefined && <span className="text-xs font-normal text-gray-400 dark:text-gray-500">{count}</span>}
         </span>
-        <span className="text-xs text-gray-400">{open ? "▾" : "▸"}</span>
+        <span className="text-xs text-gray-400 dark:text-gray-500">{open ? "▾" : "▸"}</span>
       </button>
-      {open && <div className={`border-t border-gray-100 p-3 ${scroll ? "max-h-[42vh] overflow-y-auto" : ""}`}>{children}</div>}
+      {open && <div className={`border-t border-gray-100 dark:border-gray-800 p-3 ${scroll ? "max-h-[42vh] overflow-y-auto" : ""}`}>{children}</div>}
     </section>
   );
 }
@@ -542,7 +542,7 @@ function StartPanel({
   return (
     <Card title="開始執行">
       <div className="space-y-3">
-        <p className="text-xs text-gray-400">
+        <p className="text-xs text-gray-400 dark:text-gray-500">
           執行會起一個 sandbox（api Target 例外），逐條跑測試案例並即時判定。同一個 Target 一次只能有一個執行。
         </p>
 
@@ -551,7 +551,7 @@ function StartPanel({
 
         <div className="flex flex-wrap items-end gap-3">
           <div className="w-52">
-            <span className="mb-1 block text-xs font-medium text-gray-600">範圍</span>
+            <span className="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">範圍</span>
             <Select value={mode} disabled={!canEdit || locked} onChange={(e) => setMode(e.target.value as "all" | "pick")}>
               <option value="all">全部「正常」狀態的案例</option>
               <option value="pick">自選案例</option>
@@ -561,22 +561,22 @@ function StartPanel({
             {starting ? "啟動中…" : `開始執行（${count} 條）`}
           </Button>
           {mode === "all" && (
-            <span className="text-xs text-gray-500">
+            <span className="text-xs text-gray-500 dark:text-gray-400">
               狀態為「正常」的案例共 {active.length} 條，全部會依順序執行。
             </span>
           )}
-          {mode === "pick" && count === 0 && <span className="text-xs text-gray-500">請至少勾選一條案例。</span>}
+          {mode === "pick" && count === 0 && <span className="text-xs text-gray-500 dark:text-gray-400">請至少勾選一條案例。</span>}
         </div>
 
         {list.isPending && <Spinner />}
         <ErrorText error={list.error} />
 
         {mode === "pick" && list.data && (
-          <div className="max-h-80 overflow-y-auto rounded-md border border-gray-200">
+          <div className="max-h-80 overflow-y-auto rounded-md border border-gray-200 dark:border-gray-700">
             {all.length === 0 ? (
               <Empty>還沒有測試案例，先到「測試清單」生成或新增。</Empty>
             ) : (
-              <ul className="divide-y divide-gray-100">
+              <ul className="divide-y divide-gray-100 dark:divide-gray-800">
                 {all.map((c) => (
                   <li key={c.id} className="flex items-start gap-2 px-3 py-2 text-sm">
                     <input
@@ -588,10 +588,10 @@ function StartPanel({
                     />
                     <div className="min-w-0 flex-1">
                       <p className="truncate">{c.title}</p>
-                      <p className="mt-0.5 flex flex-wrap items-center gap-1 text-xs text-gray-400">
+                      <p className="mt-0.5 flex flex-wrap items-center gap-1 text-xs text-gray-400 dark:text-gray-500">
                         <Badge tone="gray">{c.priority}</Badge>
                         <Badge tone={CASE_TYPE_TONE[c.type]}>{CASE_TYPE_LABEL[c.type]}</Badge>
-                        {c.status !== "active" && <span className="text-amber-700">狀態：{c.status}</span>}
+                        {c.status !== "active" && <span className="text-amber-700 dark:text-amber-300">狀態：{c.status}</span>}
                       </p>
                     </div>
                   </li>
@@ -737,7 +737,7 @@ function LiveRun({
         className="h-full w-full flex-1 rounded-md border border-gray-800 bg-black"
       />
     ) : (
-      <div className="flex flex-1 items-center justify-center rounded-md border border-dashed border-gray-300 bg-gray-50 text-sm text-gray-500">
+      <div className="flex flex-1 items-center justify-center rounded-md border border-dashed border-gray-300 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 text-sm text-gray-500 dark:text-gray-400">
         {state.sandbox?.note ?? "sandbox 還在啟動，畫面稍後出現。"}
       </div>
     );
@@ -748,13 +748,13 @@ function LiveRun({
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex flex-wrap items-center gap-2">
           <Badge tone={state.paused ? "amber" : "blue"}>{state.paused ? "等待 LLM" : "執行中"}</Badge>
-          <span className="text-sm font-semibold text-gray-800">第 {runningIndex} / {total} 條</span>
-          <div className="h-2 w-40 overflow-hidden rounded bg-gray-100">
+          <span className="text-sm font-semibold text-gray-800 dark:text-gray-100">第 {runningIndex} / {total} 條</span>
+          <div className="h-2 w-40 overflow-hidden rounded bg-gray-100 dark:bg-gray-800">
             <div className="h-2 rounded bg-blue-500 transition-all" style={{ width: `${pct}%` }} />
           </div>
-          <span className="text-xs text-gray-400">已完成 {done}</span>
-          {sandboxName && <span className="hidden text-xs text-gray-400 sm:inline">sandbox：{sandboxName}</span>}
-          {!live && <span className="text-xs text-amber-700">串流已中斷，重新整理可再接上。</span>}
+          <span className="text-xs text-gray-400 dark:text-gray-500">已完成 {done}</span>
+          {sandboxName && <span className="hidden text-xs text-gray-400 dark:text-gray-500 sm:inline">sandbox：{sandboxName}</span>}
+          {!live && <span className="text-xs text-amber-700 dark:text-amber-300">串流已中斷，重新整理可再接上。</span>}
         </div>
         <div className="flex items-center gap-2">
           <Button variant="ghost" size="sm" onClick={() => setCollapsed((v) => !v)}>
@@ -771,14 +771,14 @@ function LiveRun({
       <ErrorText error={detail.error} />
 
       {state.paused && (
-        <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-amber-800">
+        <div className="rounded-md border border-amber-200 dark:border-amber-900 bg-amber-50 dark:bg-amber-950/40 px-3 py-2 text-amber-800 dark:text-amber-300">
           <p className="text-sm font-semibold">等待 LLM</p>
           <p className="mt-1 whitespace-pre-wrap text-sm">{state.paused.message}</p>
           <p className="mt-1 text-xs">{pauseReasonLabel(state.paused.reason)}。進度都保留著，有模型恢復後會自己接續。</p>
         </div>
       )}
       {state.resumed && (
-        <p className="rounded-md border border-green-200 bg-green-50 px-3 py-1.5 text-sm text-green-800">{state.resumed}</p>
+        <p className="rounded-md border border-green-200 dark:border-green-900 bg-green-50 dark:bg-green-950/40 px-3 py-1.5 text-sm text-green-800 dark:text-green-300">{state.resumed}</p>
       )}
 
       {/* Cockpit: big live view + resizable, collapsible detail sidebar. */}
@@ -787,23 +787,23 @@ function LiveRun({
           {liveView}
           {/* The latest action, always visible under the live view. Live event
               first, then the last persisted step so a remount is not blank. */}
-          <div className="shrink-0 rounded-md border border-gray-200 bg-white px-3 py-2">
+          <div className="shrink-0 rounded-md border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 px-3 py-2">
             {(() => {
               const s = step
                 ? { seq: step.seq, type: step.action.type, ok: step.result.ok, ms: step.result.durationMs, intent: step.intent }
                 : lastPersisted
                   ? { seq: lastPersisted.seq, type: lastPersisted.action?.type ?? "", ok: lastPersisted.result?.ok ?? true, ms: lastPersisted.result?.durationMs ?? lastPersisted.durationMs, intent: lastPersisted.intent }
                   : null;
-              if (!s) return <span className="text-xs text-gray-400">還沒有步驟。</span>;
+              if (!s) return <span className="text-xs text-gray-400 dark:text-gray-500">還沒有步驟。</span>;
               return (
                 <div className="flex flex-wrap items-center gap-2">
-                  <span className="text-xs font-semibold text-gray-800">第 {s.seq} 步</span>
-                  <code className="rounded bg-gray-100 px-1.5 py-0.5 text-xs font-medium text-gray-700">{s.type}</code>
-                  <span className={`text-xs ${s.ok ? "text-green-700" : "text-red-600"}`}>
+                  <span className="text-xs font-semibold text-gray-800 dark:text-gray-100">第 {s.seq} 步</span>
+                  <code className="rounded bg-gray-100 dark:bg-gray-800 px-1.5 py-0.5 text-xs font-medium text-gray-700 dark:text-gray-200">{s.type}</code>
+                  <span className={`text-xs ${s.ok ? "text-green-700 dark:text-green-300" : "text-red-600 dark:text-red-400"}`}>
                     {s.ok ? "成功" : "失敗"} · {s.ms}ms
                   </span>
-                  {s.intent && <span className="min-w-0 flex-1 truncate text-sm text-gray-700">意圖：{s.intent}</span>}
-                  {current && <span className="hidden truncate text-xs text-gray-400 md:inline">{state.titles.get(current) ?? detailByCase.get(current)?.testCase.title ?? ""}</span>}
+                  {s.intent && <span className="min-w-0 flex-1 truncate text-sm text-gray-700 dark:text-gray-200">意圖：{s.intent}</span>}
+                  {current && <span className="hidden truncate text-xs text-gray-400 dark:text-gray-500 md:inline">{state.titles.get(current) ?? detailByCase.get(current)?.testCase.title ?? ""}</span>}
                 </div>
               );
             })()}
@@ -816,7 +816,7 @@ function LiveRun({
             className="group mx-1 flex w-1.5 shrink-0 cursor-col-resize items-center justify-center rounded"
             title="拖曳調整寬度"
           >
-            <div className="h-10 w-1 rounded bg-gray-200 group-hover:bg-blue-400" />
+            <div className="h-10 w-1 rounded bg-gray-200 dark:bg-gray-700 group-hover:bg-blue-400" />
           </div>
         )}
 
@@ -824,7 +824,7 @@ function LiveRun({
           <button
             type="button"
             onClick={() => setCollapsed(false)}
-            className="flex w-6 shrink-0 items-center justify-center rounded-md border border-gray-200 bg-white text-xs text-gray-500 hover:bg-gray-50"
+            className="flex w-6 shrink-0 items-center justify-center rounded-md border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-xs text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800"
             title="展開詳情面板"
           >
             ‹
@@ -837,7 +837,7 @@ function LiveRun({
                   const isCurrent = step?.phase === p;
                   return (
                     <span key={p} className="flex items-center gap-1">
-                      <span className={`rounded px-2 py-0.5 text-xs font-medium ${isCurrent ? "bg-blue-600 text-white" : "bg-gray-100 text-gray-500"}`}>
+                      <span className={`rounded px-2 py-0.5 text-xs font-medium ${isCurrent ? "bg-blue-600 text-white" : "bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400"}`}>
                         {PHASE_LABEL[p]}
                       </span>
                       {i < PHASES.length - 1 && <span className="text-xs text-gray-300">→</span>}
@@ -851,20 +851,20 @@ function LiveRun({
               {queue.length === 0 ? (
                 <Empty>案例清單載入中…</Empty>
               ) : (
-                <ul className="divide-y divide-gray-100">
+                <ul className="divide-y divide-gray-100 dark:divide-gray-800">
                   {queue.map((q) => {
                     const cv = caseView(q.caseId);
                     const open = openCase === q.caseId;
                     return (
-                      <li key={q.caseId} className={`py-2 ${q.caseId === current ? "-mx-3 border-l-2 border-blue-500 bg-blue-50/40 px-3" : ""}`}>
+                      <li key={q.caseId} className={`py-2 ${q.caseId === current ? "-mx-3 border-l-2 border-blue-500 bg-blue-50/40 dark:bg-blue-950/30 px-3" : ""}`}>
                         <div className="flex items-start gap-2">
                           <button type="button" className="min-w-0 flex-1 text-left" onClick={() => setOpenCase(q.caseId)}>
-                            <p className="truncate text-sm text-gray-800">{q.title}</p>
+                            <p className="truncate text-sm text-gray-800 dark:text-gray-100">{q.title}</p>
                             <p className="mt-0.5 flex flex-wrap items-center gap-1">
                               <Badge tone={QUEUE_STATUS_TONE[cv.status]}>{QUEUE_STATUS_LABEL[cv.status]}</Badge>
                               {cv.verdict && <Badge tone={VERDICT_TONE[cv.verdict]}>{VERDICT_LABEL[cv.verdict]}</Badge>}
                               {cv.possiblyChanged && <Badge tone="amber">可能已變更</Badge>}
-                              {cv.stepCount > 0 && <span className="text-xs text-gray-400">{cv.stepCount} 步</span>}
+                              {cv.stepCount > 0 && <span className="text-xs text-gray-400 dark:text-gray-500">{cv.stepCount} 步</span>}
                             </p>
                           </button>
                           {cv.status === "queued" && canEdit && (
@@ -884,13 +884,13 @@ function LiveRun({
               ) : (
                 <ul className="space-y-2">
                   {state.findings.map((f) => (
-                    <li key={f.id} className="rounded-md border border-gray-200 p-2">
+                    <li key={f.id} className="rounded-md border border-gray-200 dark:border-gray-700 p-2">
                       <div className="flex flex-wrap items-center gap-2">
                         <Badge tone={SEVERITY_TONE[f.severity]}>{SEVERITY_LABEL[f.severity]}</Badge>
-                        <span className="text-sm font-medium text-gray-800">{f.title}</span>
+                        <span className="text-sm font-medium text-gray-800 dark:text-gray-100">{f.title}</span>
                       </div>
-                      {f.description && <p className="mt-1 whitespace-pre-wrap text-sm text-gray-600">{f.description}</p>}
-                      <p className="mt-1 text-xs text-gray-400">
+                      {f.description && <p className="mt-1 whitespace-pre-wrap text-sm text-gray-600 dark:text-gray-300">{f.description}</p>}
+                      <p className="mt-1 text-xs text-gray-400 dark:text-gray-500">
                         發現於：{f.caseId ? (state.titles.get(f.caseId) ?? f.caseId) : "非特定案例"}
                       </p>
                     </li>
@@ -971,22 +971,22 @@ function ApiLivePane({
   };
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-md border border-gray-200 bg-white">
-      <div className="shrink-0 border-b border-gray-100 px-3 py-2">
-        <p className="text-xs font-medium text-gray-500">目前這一步</p>
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-md border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900">
+      <div className="shrink-0 border-b border-gray-100 dark:border-gray-800 px-3 py-2">
+        <p className="text-xs font-medium text-gray-500 dark:text-gray-400">目前這一步</p>
         {step ? (
           <p className="mt-0.5 flex flex-wrap items-center gap-2 text-sm">
-            <code className="rounded bg-gray-100 px-1.5 py-0.5 text-xs font-semibold text-gray-700">{step.action.type}</code>
-            <span className="min-w-0 flex-1 truncate text-gray-700">{step.intent || step.observation}</span>
-            <span className={`text-xs ${step.result.ok ? "text-green-700" : "text-red-600"}`}>{step.result.ok ? "成功" : "失敗"} · {step.result.durationMs}ms</span>
+            <code className="rounded bg-gray-100 dark:bg-gray-800 px-1.5 py-0.5 text-xs font-semibold text-gray-700 dark:text-gray-200">{step.action.type}</code>
+            <span className="min-w-0 flex-1 truncate text-gray-700 dark:text-gray-200">{step.intent || step.observation}</span>
+            <span className={`text-xs ${step.result.ok ? "text-green-700 dark:text-green-300" : "text-red-600 dark:text-red-400"}`}>{step.result.ok ? "成功" : "失敗"} · {step.result.durationMs}ms</span>
           </p>
         ) : (
-          <p className="mt-0.5 text-xs text-gray-400">還沒有動作。</p>
+          <p className="mt-0.5 text-xs text-gray-400 dark:text-gray-500">還沒有動作。</p>
         )}
       </div>
       {setupRows.length > 0 && (
-        <div className="shrink-0 border-b border-gray-100 bg-emerald-50/40 px-3 py-2">
-          <p className="mb-1 text-xs font-medium text-emerald-800">前置流程（每趟執行前跑一次，共用給所有 case）</p>
+        <div className="shrink-0 border-b border-gray-100 dark:border-gray-800 bg-emerald-50/40 px-3 py-2">
+          <p className="mb-1 text-xs font-medium text-emerald-800 dark:text-emerald-300">前置流程（每趟執行前跑一次，共用給所有 case）</p>
           <ol className="space-y-1">
             {setupRows.map((r) => {
               const p = (r.action?.params ?? {}) as Record<string, unknown>;
@@ -995,8 +995,8 @@ function ApiLivePane({
               return (
                 <li key={r.id} className="flex items-center gap-2 text-xs">
                   <code className={`w-14 shrink-0 rounded px-1 py-0.5 text-center font-semibold ${methodTone(String(p.method ?? "GET").toUpperCase())}`}>{String(p.method ?? "GET").toUpperCase()}</code>
-                  <code className="min-w-0 flex-1 truncate text-gray-700">{String(p.url ?? p.path ?? "")}</code>
-                  <span className="truncate text-emerald-700">{r.observation}</span>
+                  <code className="min-w-0 flex-1 truncate text-gray-700 dark:text-gray-200">{String(p.url ?? p.path ?? "")}</code>
+                  <span className="truncate text-emerald-700 dark:text-emerald-300">{r.observation}</span>
                   {d.status !== undefined && <Badge tone={d.status >= 400 ? "amber" : "green"}>{d.status}</Badge>}
                   {!ok && <Badge tone="red">失敗</Badge>}
                 </li>
@@ -1005,13 +1005,13 @@ function ApiLivePane({
           </ol>
         </div>
       )}
-      <div className="flex items-center justify-between px-3 py-1.5 text-xs text-gray-500">
+      <div className="flex items-center justify-between px-3 py-1.5 text-xs text-gray-500 dark:text-gray-400">
         <span>請求紀錄（{httpRows.length}）</span>
-        <span className="text-gray-400">點任一列看完整請求與回應</span>
+        <span className="text-gray-400 dark:text-gray-500">點任一列看完整請求與回應</span>
       </div>
-      <ol className="min-h-0 flex-1 divide-y divide-gray-100 overflow-y-auto">
+      <ol className="min-h-0 flex-1 divide-y divide-gray-100 dark:divide-gray-800 overflow-y-auto">
         {httpRows.length === 0 ? (
-          <li className="p-6 text-center text-sm text-gray-400">還沒有送出任何 HTTP 請求。</li>
+          <li className="p-6 text-center text-sm text-gray-400 dark:text-gray-500">還沒有送出任何 HTTP 請求。</li>
         ) : (
           httpRows.map((r) => {
             const l = line(r);
@@ -1021,16 +1021,16 @@ function ApiLivePane({
                 <button
                   type="button"
                   onClick={() => r.testCaseId && onOpenStep(r.testCaseId, r.seq)}
-                  className={`flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-gray-50 ${isLatest ? "bg-blue-50/60" : ""}`}
+                  className={`flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-gray-50 dark:hover:bg-gray-800 ${isLatest ? "bg-blue-50/60" : ""}`}
                 >
-                  <span className="w-8 shrink-0 text-xs text-gray-400">#{r.seq}</span>
+                  <span className="w-8 shrink-0 text-xs text-gray-400 dark:text-gray-500">#{r.seq}</span>
                   <code className={`w-14 shrink-0 rounded px-1 py-0.5 text-center text-xs font-semibold ${methodTone(l.method)}`}>{l.method}</code>
-                  <code className="min-w-0 flex-1 truncate text-xs text-gray-700">{l.path}</code>
+                  <code className="min-w-0 flex-1 truncate text-xs text-gray-700 dark:text-gray-200">{l.path}</code>
                   {r.testCaseId && current && r.testCaseId === current && <Badge tone="blue">執行中</Badge>}
                   {l.status !== undefined && (
                     <Badge tone={l.status >= 500 ? "red" : l.status >= 400 ? "amber" : "green"}>{l.status}</Badge>
                   )}
-                  <span className="w-14 shrink-0 text-right text-xs text-gray-400">{l.ms}ms</span>
+                  <span className="w-14 shrink-0 text-right text-xs text-gray-400 dark:text-gray-500">{l.ms}ms</span>
                 </button>
               </li>
             );
@@ -1042,37 +1042,37 @@ function ApiLivePane({
 }
 
 function methodTone(method: string): string {
-  if (method === "GET") return "bg-green-100 text-green-800";
-  if (method === "POST") return "bg-blue-100 text-blue-800";
-  if (method === "DELETE") return "bg-red-100 text-red-800";
-  if (method === "PUT" || method === "PATCH") return "bg-amber-100 text-amber-800";
-  return "bg-gray-100 text-gray-700";
+  if (method === "GET") return "bg-green-100 dark:bg-green-950 text-green-800 dark:text-green-300";
+  if (method === "POST") return "bg-blue-100 dark:bg-blue-950 text-blue-800 dark:text-blue-300";
+  if (method === "DELETE") return "bg-red-100 dark:bg-red-950 text-red-800 dark:text-red-300";
+  if (method === "PUT" || method === "PATCH") return "bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300";
+  return "bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-200";
 }
 
 function LiveStepCard({ step, runId }: { step: StepEvent; runId: string | null }) {
   return (
-    <div className="rounded-md border border-gray-200 bg-white p-2">
+    <div className="rounded-md border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-2">
       <div className="flex flex-wrap items-center gap-2">
-        <span className="text-xs font-semibold text-gray-800">第 {step.seq} 步</span>
+        <span className="text-xs font-semibold text-gray-800 dark:text-gray-100">第 {step.seq} 步</span>
         <Badge tone={PHASE_TONE[step.phase] ?? "gray"}>{PHASE_LABEL[step.phase] ?? step.phase}</Badge>
-        <code className="rounded bg-gray-100 px-1.5 py-0.5 text-xs font-medium text-gray-700">{step.action.type}</code>
-        <span className={`ml-auto text-xs ${step.result.ok ? "text-green-700" : "text-red-600"}`}>
+        <code className="rounded bg-gray-100 dark:bg-gray-800 px-1.5 py-0.5 text-xs font-medium text-gray-700 dark:text-gray-200">{step.action.type}</code>
+        <span className={`ml-auto text-xs ${step.result.ok ? "text-green-700 dark:text-green-300" : "text-red-600 dark:text-red-400"}`}>
           {step.result.ok ? "成功" : "失敗"} · {step.result.durationMs}ms
         </span>
       </div>
-      <p className="mt-1 break-all font-mono text-xs text-gray-500">{formatActionParams(step.action.params)}</p>
-      {step.intent && <p className="mt-1 text-sm text-gray-800">意圖：{step.intent}</p>}
-      {step.observation && <p className="mt-0.5 text-sm text-gray-600">觀察：{step.observation}</p>}
-      {step.result.error && <p className="mt-0.5 text-xs text-red-600">錯誤：{step.result.error}</p>}
+      <p className="mt-1 break-all font-mono text-xs text-gray-500 dark:text-gray-400">{formatActionParams(step.action.params)}</p>
+      {step.intent && <p className="mt-1 text-sm text-gray-800 dark:text-gray-100">意圖：{step.intent}</p>}
+      {step.observation && <p className="mt-0.5 text-sm text-gray-600 dark:text-gray-300">觀察：{step.observation}</p>}
+      {step.result.error && <p className="mt-0.5 text-xs text-red-600 dark:text-red-400">錯誤：{step.result.error}</p>}
       {runId && step.screenshotKey && (
         <img
           src={evidenceUrl(runId, step.screenshotKey)}
           alt={`第 ${step.seq} 步截圖`}
-          className="mt-2 w-full rounded border border-gray-200"
+          className="mt-2 w-full rounded border border-gray-200 dark:border-gray-700"
           loading="lazy"
         />
       )}
-      <p className="mt-1 text-xs text-gray-400">{step.model}</p>
+      <p className="mt-1 text-xs text-gray-400 dark:text-gray-500">{step.model}</p>
     </div>
   );
 }
@@ -1103,13 +1103,13 @@ function AddCaseDialog({
 
   return (
     <Dialog open={open} title="加入案例到這次執行" onClose={onClose}>
-      <p className="mb-2 text-xs text-gray-400">加進來的案例會排在佇列最後面，等前面的跑完才輪到它。</p>
+      <p className="mb-2 text-xs text-gray-400 dark:text-gray-500">加進來的案例會排在佇列最後面，等前面的跑完才輪到它。</p>
       {list.isPending && <Spinner />}
       <ErrorText error={list.error} />
       <ErrorText error={error} />
       {list.data && candidates.length === 0 && <Empty>所有案例都已經在這次執行裡了。</Empty>}
       {candidates.length > 0 && (
-        <ul className="max-h-80 divide-y divide-gray-100 overflow-y-auto">
+        <ul className="max-h-80 divide-y divide-gray-100 dark:divide-gray-800 overflow-y-auto">
           {candidates.map((c) => (
             <li key={c.id} className="flex items-center justify-between gap-2 py-2 text-sm">
               <div className="min-w-0">
@@ -1226,7 +1226,7 @@ function ResultsView({
     >
       <div className="space-y-4">
         <div className="w-full max-w-xl">
-          <span className="mb-1 block text-xs font-medium text-gray-600">執行紀錄</span>
+          <span className="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">執行紀錄</span>
           <Select value={runId ?? ""} onChange={(e) => onSelect(e.target.value)}>
             {runs.map((r) => (
               <option key={r.id} value={r.id}>
@@ -1245,7 +1245,7 @@ function ResultsView({
             <RunSummary run={d} models={models} />
 
             <div>
-              <p className="mb-2 text-xs font-medium text-gray-500">依 feature 的通過率</p>
+              <p className="mb-2 text-xs font-medium text-gray-500 dark:text-gray-400">依 feature 的通過率</p>
               {d.features.length === 0 ? (
                 <Empty>還沒有可以統計的結果。</Empty>
               ) : (
@@ -1267,7 +1267,7 @@ function ResultsView({
                           <td className="text-xs">{f.pass}</td>
                           <td className="text-xs">{f.total}</td>
                           <td className="text-xs">
-                            <span className={rate === 100 ? "text-green-700" : rate >= 50 ? "text-amber-700" : "text-red-600"}>
+                            <span className={rate === 100 ? "text-green-700 dark:text-green-300" : rate >= 50 ? "text-amber-700 dark:text-amber-300" : "text-red-600 dark:text-red-400"}>
                               {rate}%
                             </span>
                           </td>
@@ -1280,7 +1280,7 @@ function ResultsView({
             </div>
 
             <div>
-              <p className="mb-2 text-xs font-medium text-gray-500">案例結果（{d.cases.length}）</p>
+              <p className="mb-2 text-xs font-medium text-gray-500 dark:text-gray-400">案例結果（{d.cases.length}）</p>
               {d.cases.length === 0 ? (
                 <Empty>這次執行沒有案例。</Empty>
               ) : (
@@ -1324,25 +1324,25 @@ function RunSummary({ run, models }: { run: RunDetail; models: string[] }) {
   const r = run.run;
   const duration = r.endedAt ? new Date(r.endedAt).getTime() - new Date(r.startedAt).getTime() : null;
   return (
-    <div className="rounded-md border border-gray-200 bg-gray-50 p-3">
+    <div className="rounded-md border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 p-3">
       <div className="flex flex-wrap items-center gap-2">
         <Badge tone={RUN_STATUS_TONE[r.status]}>{RUN_STATUS_LABEL[r.status]}</Badge>
-        <span className="text-xs text-gray-500">開始 {formatDate(r.startedAt)}</span>
-        <span className="text-xs text-gray-500">耗時 {duration === null ? "進行中" : formatDuration(duration)}</span>
-        <span className="text-xs text-gray-500">共 {r.stepCount} 步</span>
-        {r.sandboxName && <span className="text-xs text-gray-500">sandbox {r.sandboxName}</span>}
+        <span className="text-xs text-gray-500 dark:text-gray-400">開始 {formatDate(r.startedAt)}</span>
+        <span className="text-xs text-gray-500 dark:text-gray-400">耗時 {duration === null ? "進行中" : formatDuration(duration)}</span>
+        <span className="text-xs text-gray-500 dark:text-gray-400">共 {r.stepCount} 步</span>
+        {r.sandboxName && <span className="text-xs text-gray-500 dark:text-gray-400">sandbox {r.sandboxName}</span>}
       </div>
       <div className="mt-2 flex flex-wrap gap-2">
         {VERDICTS.map((v) => (
-          <span key={v} className="rounded-md border border-gray-200 bg-white px-3 py-1.5 text-sm">
-            <span className="mr-1 text-xs text-gray-500">{VERDICT_LABEL[v]}</span>
-            <span className="font-semibold text-gray-800">{run.verdicts[v] ?? 0}</span>
+          <span key={v} className="rounded-md border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 px-3 py-1.5 text-sm">
+            <span className="mr-1 text-xs text-gray-500 dark:text-gray-400">{VERDICT_LABEL[v]}</span>
+            <span className="font-semibold text-gray-800 dark:text-gray-100">{run.verdicts[v] ?? 0}</span>
           </span>
         ))}
       </div>
       <LlmUsageBlock usage={r.llmUsage} fallbackModels={models} />
-      {r.pausedReason && <p className="mt-1 text-xs text-amber-700">曾經等待 LLM：{pauseReasonLabel(r.pausedReason)}</p>}
-      {r.error && <p className="mt-1 text-xs text-red-600">{r.error}</p>}
+      {r.pausedReason && <p className="mt-1 text-xs text-amber-700 dark:text-amber-300">曾經等待 LLM：{pauseReasonLabel(r.pausedReason)}</p>}
+      {r.error && <p className="mt-1 text-xs text-red-600 dark:text-red-400">{r.error}</p>}
     </div>
   );
 }
@@ -1355,7 +1355,7 @@ function LlmUsageBlock({ usage, fallbackModels }: { usage: RunLlmUsage | null; f
   const [open, setOpen] = useState(false);
   if (!usage?.configs.length) {
     return (
-      <p className="mt-2 text-xs text-gray-500">
+      <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
         使用的模型：{fallbackModels.length ? fallbackModels.join("、") : "-"}
       </p>
     );
@@ -1364,13 +1364,13 @@ function LlmUsageBlock({ usage, fallbackModels }: { usage: RunLlmUsage | null; f
   const outages = usage.outages.length;
   return (
     <div className="mt-2">
-      <div className="flex flex-wrap items-center gap-2 text-xs text-gray-500">
+      <div className="flex flex-wrap items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
         <span>
           使用的模型：
           {usage.configs.map((c) => `${c.configName}（${c.models.join("/") || "?"}，${c.calls} 次呼叫${c.failures ? `、${c.failures} 次失敗` : ""}）`).join("、")}
         </span>
         {(switches > 0 || outages > 0) && (
-          <button type="button" className="font-medium text-amber-700 hover:underline" onClick={() => setOpen((v) => !v)}>
+          <button type="button" className="font-medium text-amber-700 dark:text-amber-300 hover:underline" onClick={() => setOpen((v) => !v)}>
             {switches > 0 && `切換 fallback ${switches} 次`}
             {switches > 0 && outages > 0 && "，"}
             {outages > 0 && `全部不可用 ${outages} 次`}
@@ -1379,15 +1379,15 @@ function LlmUsageBlock({ usage, fallbackModels }: { usage: RunLlmUsage | null; f
         )}
       </div>
       {open && (
-        <ul className="mt-1 space-y-1 border-l-2 border-amber-200 pl-2">
+        <ul className="mt-1 space-y-1 border-l-2 border-amber-200 dark:border-amber-900 pl-2">
           {usage.switches.map((sw, i) => (
-            <li key={`s${i}`} className="text-xs text-gray-600">
+            <li key={`s${i}`} className="text-xs text-gray-600 dark:text-gray-300">
               {formatDate(sw.at)}　{sw.fromConfigName} → {sw.toConfigName}
-              <span className="ml-1 text-gray-400">（{sw.reason}）</span>
+              <span className="ml-1 text-gray-400 dark:text-gray-500">（{sw.reason}）</span>
             </li>
           ))}
           {usage.outages.map((o, i) => (
-            <li key={`o${i}`} className="text-xs text-amber-700">
+            <li key={`o${i}`} className="text-xs text-amber-700 dark:text-amber-300">
               {formatDate(o.at)}　全部設定都不可用，執行暫停等待：{o.reason}
             </li>
           ))}
@@ -1417,23 +1417,23 @@ function ResultCase({
   const disagree = !!result?.humanVerdict && result.humanVerdict !== result.verdict;
 
   return (
-    <li className={`rounded-md border p-3 ${disagree ? "border-amber-300 bg-amber-50/40" : "border-gray-200"}`}>
+    <li className={`rounded-md border p-3 ${disagree ? "border-amber-300 dark:border-amber-800 bg-amber-50/40 dark:bg-amber-950/30" : "border-gray-200 dark:border-gray-700"}`}>
       <button type="button" className="w-full text-left" onClick={() => setOpen((v) => !v)}>
         <div className="flex flex-wrap items-center gap-2">
-          <span className="text-sm font-medium text-gray-800">{item.testCase.title}</span>
+          <span className="text-sm font-medium text-gray-800 dark:text-gray-100">{item.testCase.title}</span>
           <Badge tone="gray">{item.testCase.priority}</Badge>
           <Badge tone={CASE_TYPE_TONE[item.testCase.type]}>{CASE_TYPE_LABEL[item.testCase.type]}</Badge>
-          {item.testCase.feature && <span className="text-xs text-gray-400">{item.testCase.feature.name}</span>}
-          <span className="ml-auto text-xs text-gray-400">{open ? "收合" : "展開"}</span>
+          {item.testCase.feature && <span className="text-xs text-gray-400 dark:text-gray-500">{item.testCase.feature.name}</span>}
+          <span className="ml-auto text-xs text-gray-400 dark:text-gray-500">{open ? "收合" : "展開"}</span>
         </div>
       </button>
 
       <div className="mt-2 flex flex-wrap items-center gap-3">
-        <span className="flex items-center gap-1 text-xs text-gray-500">
+        <span className="flex items-center gap-1 text-xs text-gray-500 dark:text-gray-400">
           模型判定
           {result ? <Badge tone={VERDICT_TONE[result.verdict]}>{VERDICT_LABEL[result.verdict]}</Badge> : <Badge tone="gray">未執行</Badge>}
         </span>
-        <span className="flex items-center gap-1 text-xs text-gray-500">
+        <span className="flex items-center gap-1 text-xs text-gray-500 dark:text-gray-400">
           人工覆核
           {result?.humanVerdict ? (
             <Badge tone={VERDICT_TONE[result.humanVerdict]}>{VERDICT_LABEL[result.humanVerdict]}</Badge>
@@ -1444,40 +1444,40 @@ function ResultCase({
         {result?.possiblyChanged && <Badge tone="amber">可能已變更</Badge>}
         {item.queueStatus === "skipped" && <Badge tone="gray">{QUEUE_STATUS_LABEL.skipped}</Badge>}
         {result && (
-          <span className="text-xs text-gray-400">
+          <span className="text-xs text-gray-400 dark:text-gray-500">
             {result.stepCount} 步 · {formatDuration(result.durationMs)}
           </span>
         )}
       </div>
 
       {disagree && (
-        <p className="mt-2 rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-xs text-amber-800">
+        <p className="mt-2 rounded-md border border-amber-200 dark:border-amber-900 bg-amber-50 dark:bg-amber-950/40 px-2 py-1 text-xs text-amber-800 dark:text-amber-300">
           人工覆核與模型判定不同：模型判「{VERDICT_LABEL[result!.verdict]}」，人工改判「
           {VERDICT_LABEL[result!.humanVerdict!]}」。兩邊都保留，不會互相覆蓋。
         </p>
       )}
       {result?.possiblyChanged && (
-        <p className="mt-2 rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-xs text-amber-800">
+        <p className="mt-2 rounded-md border border-amber-200 dark:border-amber-900 bg-amber-50 dark:bg-amber-950/40 px-2 py-1 text-xs text-amber-800 dark:text-amber-300">
           這條的失敗看起來像是功能改了，而不是壞了。可以在下面建立變更提案，一次處理這次執行裡所有這類案例。
         </p>
       )}
       {item.editedAfterUse && (
-        <p className="mt-2 text-xs text-amber-700">
+        <p className="mt-2 text-xs text-amber-700 dark:text-amber-300">
           案例已於執行後修改（執行時用 v{item.caseVersion ?? "?"}，目前是 v{item.testCase.currentVersion}）。
         </p>
       )}
 
       {result?.llmReasoning && (
-        <p className="mt-2 whitespace-pre-wrap rounded-md bg-gray-50 p-2 text-sm text-gray-700">
-          <span className="mr-1 text-xs font-medium text-gray-500">理由</span>
+        <p className="mt-2 whitespace-pre-wrap rounded-md bg-gray-50 dark:bg-gray-800/50 p-2 text-sm text-gray-700 dark:text-gray-200">
+          <span className="mr-1 text-xs font-medium text-gray-500 dark:text-gray-400">理由</span>
           {result.llmReasoning}
         </p>
       )}
 
       {result && result.reproSteps.length > 0 && (
         <div className="mt-2">
-          <p className="mb-1 text-xs font-medium text-gray-500">重現步驟</p>
-          <ol className="list-decimal space-y-0.5 pl-5 text-sm text-gray-700">
+          <p className="mb-1 text-xs font-medium text-gray-500 dark:text-gray-400">重現步驟</p>
+          <ol className="list-decimal space-y-0.5 pl-5 text-sm text-gray-700 dark:text-gray-200">
             {result.reproSteps.map((s, i) => (
               <li key={i}>{s}</li>
             ))}
@@ -1492,25 +1492,25 @@ function ResultCase({
       )}
       {result && canEdit && <ReviewControls result={result} onReviewed={onReviewed} />}
       {result && !canEdit && result.humanNote && (
-        <p className="mt-2 text-xs text-gray-500">覆核備註：{result.humanNote}</p>
+        <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">覆核備註：{result.humanNote}</p>
       )}
 
       {open && (
-        <div className="mt-3 space-y-3 border-t border-gray-100 pt-3">
+        <div className="mt-3 space-y-3 border-t border-gray-100 dark:border-gray-800 pt-3">
           <div>
-            <p className="mb-1 text-xs font-medium text-gray-500">案例內容</p>
-            <p className="text-xs text-gray-500">前置條件：{item.testCase.precondition || "-"}</p>
-            <ol className="mt-1 list-decimal space-y-0.5 pl-5 text-sm text-gray-700">
+            <p className="mb-1 text-xs font-medium text-gray-500 dark:text-gray-400">案例內容</p>
+            <p className="text-xs text-gray-500 dark:text-gray-400">前置條件：{item.testCase.precondition || "-"}</p>
+            <ol className="mt-1 list-decimal space-y-0.5 pl-5 text-sm text-gray-700 dark:text-gray-200">
               {item.testCase.steps.map((s, i) => (
                 <li key={i}>{s}</li>
               ))}
             </ol>
-            <p className="mt-1 text-sm text-gray-700">預期：{item.testCase.expected}</p>
+            <p className="mt-1 text-sm text-gray-700 dark:text-gray-200">預期：{item.testCase.expected}</p>
           </div>
 
           <div>
             <div className="mb-1 flex items-center justify-between">
-              <p className="text-xs font-medium text-gray-500">步驟時間軸（{steps.length}）</p>
+              <p className="text-xs font-medium text-gray-500 dark:text-gray-400">步驟時間軸（{steps.length}）</p>
               {steps.length > 0 && (
                 <Button size="sm" variant="secondary" onClick={() => setViewerOpen(true)}>逐步檢視（大圖）</Button>
               )}
@@ -1524,7 +1524,7 @@ function ResultCase({
                 ))}
                 {steps.length > 3 && (
                   <li className="text-center">
-                    <button type="button" className="text-xs text-blue-700 hover:underline" onClick={() => setViewerOpen(true)}>
+                    <button type="button" className="text-xs text-blue-700 dark:text-blue-300 hover:underline" onClick={() => setViewerOpen(true)}>
                       展開其餘 {steps.length - 3} 步（大圖檢視）→
                     </button>
                   </li>
@@ -1535,11 +1535,11 @@ function ResultCase({
 
           {result?.evidence.video && (
             <div>
-              <p className="mb-1 text-xs font-medium text-gray-500">錄影</p>
+              <p className="mb-1 text-xs font-medium text-gray-500 dark:text-gray-400">錄影</p>
               <video
                 controls
                 preload="metadata"
-                className="w-full rounded border border-gray-200 bg-black"
+                className="w-full rounded border border-gray-200 dark:border-gray-700 bg-black"
                 src={evidenceUrl(runId, result.evidence.video)}
               />
             </div>
@@ -1547,7 +1547,7 @@ function ResultCase({
 
           {result && <HttpLogsBlock logs={result.evidence.httpLogs ?? []} />}
           {result && (result.evidence.evidenceRefs?.length ?? 0) > 0 && (
-            <p className="text-xs text-gray-500">證據參照：{result.evidence.evidenceRefs!.join("、")}</p>
+            <p className="text-xs text-gray-500 dark:text-gray-400">證據參照：{result.evidence.evidenceRefs!.join("、")}</p>
           )}
         </div>
       )}
@@ -1607,19 +1607,19 @@ function AskLlmDialog({
   };
 
   return (
-    <Dialog open size="lg" title={<span>問 LLM<span className="ml-2 text-xs font-normal text-gray-400">{title}</span></span>} onClose={onClose}>
+    <Dialog open size="lg" title={<span>問 LLM<span className="ml-2 text-xs font-normal text-gray-400 dark:text-gray-500">{title}</span></span>} onClose={onClose}>
       <div className="flex max-h-[70vh] flex-col">
-        <p className="mb-2 text-xs text-gray-500">
+        <p className="mb-2 text-xs text-gray-500 dark:text-gray-400">
           針對這個結果問問題，LLM 會根據這次執行的證據（案例、判定理由、步驟、finding）回答，
           並盡量指出可以去檢查程式碼的方向。看不懂結論時很好用。
         </p>
-        <div className="min-h-0 flex-1 space-y-3 overflow-y-auto rounded-md border border-gray-200 bg-gray-50 p-3">
+        <div className="min-h-0 flex-1 space-y-3 overflow-y-auto rounded-md border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 p-3">
           {thread.length === 0 && !ask.isPending && (
             <Empty>還沒有對話。試試「為什麼這條被判失敗？」「我該去改哪裡？」</Empty>
           )}
           {thread.map((m, i) => (
             <div key={i} className={m.role === "user" ? "text-right" : ""}>
-              <div className={`inline-block max-w-[85%] whitespace-pre-wrap rounded-lg px-3 py-2 text-sm ${m.role === "user" ? "bg-blue-600 text-white" : "bg-white text-gray-800 ring-1 ring-gray-200"}`}>
+              <div className={`inline-block max-w-[85%] whitespace-pre-wrap rounded-lg px-3 py-2 text-sm ${m.role === "user" ? "bg-blue-600 text-white" : "bg-white dark:bg-gray-900 text-gray-800 dark:text-gray-100 ring-1 ring-gray-200 dark:ring-gray-700"}`}>
                 {m.content}
               </div>
             </div>
@@ -1657,9 +1657,9 @@ function ReviewControls({ result, onReviewed }: { result: TestResultRow; onRevie
   });
 
   return (
-    <div className="mt-2 rounded-md border border-gray-200 bg-white p-2">
+    <div className="mt-2 rounded-md border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-2">
       <div className="flex flex-wrap items-center gap-2">
-        <span className="text-xs font-medium text-gray-500">人工覆核</span>
+        <span className="text-xs font-medium text-gray-500 dark:text-gray-400">人工覆核</span>
         <Button
           size="sm"
           variant="secondary"
@@ -1671,15 +1671,15 @@ function ReviewControls({ result, onReviewed }: { result: TestResultRow; onRevie
         <Button size="sm" variant="ghost" onClick={() => setOverturning((v) => !v)}>
           {overturning ? "取消推翻" : "推翻判定"}
         </Button>
-        {result.reviewedAt && <span className="text-xs text-gray-400">上次覆核 {formatDate(result.reviewedAt)}</span>}
+        {result.reviewedAt && <span className="text-xs text-gray-400 dark:text-gray-500">上次覆核 {formatDate(result.reviewedAt)}</span>}
       </div>
 
-      {result.humanNote && !overturning && <p className="mt-1 text-xs text-gray-500">備註：{result.humanNote}</p>}
+      {result.humanNote && !overturning && <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">備註：{result.humanNote}</p>}
 
       {overturning && (
         <div className="mt-2 space-y-2">
           <div className="w-40">
-            <span className="mb-1 block text-xs font-medium text-gray-600">改判為</span>
+            <span className="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">改判為</span>
             <Select value={verdict} onChange={(e) => setVerdict(e.target.value as Verdict)}>
               {VERDICTS.map((v) => (
                 <option key={v} value={v}>
@@ -1789,7 +1789,7 @@ function FindingToCaseDialog({
               />
             </Field>
           </div>
-          <p className="text-xs text-gray-400">由 {draft.model} 草擬，存檔前可以直接改。</p>
+          <p className="text-xs text-gray-400 dark:text-gray-500">由 {draft.model} 草擬，存檔前可以直接改。</p>
           <div className="flex items-center gap-2">
             <Button disabled={save.isPending} onClick={() => save.mutate(draft)}>
               {save.isPending ? "建立中…" : "建立測試案例"}
@@ -1808,28 +1808,28 @@ function FindingToCaseDialog({
 function StepRow({ runId, step }: { runId: string; step: RunStepRow }) {
   const ok = step.result?.ok ?? true;
   return (
-    <li className="rounded-md border border-gray-200 p-2">
+    <li className="rounded-md border border-gray-200 dark:border-gray-700 p-2">
       <div className="flex flex-wrap items-center gap-2">
-        <span className="text-xs font-semibold text-gray-800">第 {step.seq} 步</span>
+        <span className="text-xs font-semibold text-gray-800 dark:text-gray-100">第 {step.seq} 步</span>
         <Badge tone={PHASE_TONE[step.phase] ?? "gray"}>{PHASE_LABEL[step.phase] ?? step.phase}</Badge>
-        <code className="rounded bg-gray-100 px-1.5 py-0.5 text-xs font-medium text-gray-700">{step.action?.type}</code>
-        <span className={`ml-auto text-xs ${ok ? "text-green-700" : "text-red-600"}`}>
+        <code className="rounded bg-gray-100 dark:bg-gray-800 px-1.5 py-0.5 text-xs font-medium text-gray-700 dark:text-gray-200">{step.action?.type}</code>
+        <span className={`ml-auto text-xs ${ok ? "text-green-700 dark:text-green-300" : "text-red-600 dark:text-red-400"}`}>
           {ok ? "成功" : "失敗"} · {step.result?.durationMs ?? step.durationMs}ms
         </span>
       </div>
-      <p className="mt-1 break-all font-mono text-xs text-gray-500">{formatActionParams(step.action?.params)}</p>
-      {step.intent && <p className="mt-1 text-sm text-gray-800">意圖：{step.intent}</p>}
-      {step.observation && <p className="mt-0.5 text-sm text-gray-600">觀察：{step.observation}</p>}
-      {step.result?.error && <p className="mt-0.5 text-xs text-red-600">錯誤：{step.result.error}</p>}
+      <p className="mt-1 break-all font-mono text-xs text-gray-500 dark:text-gray-400">{formatActionParams(step.action?.params)}</p>
+      {step.intent && <p className="mt-1 text-sm text-gray-800 dark:text-gray-100">意圖：{step.intent}</p>}
+      {step.observation && <p className="mt-0.5 text-sm text-gray-600 dark:text-gray-300">觀察：{step.observation}</p>}
+      {step.result?.error && <p className="mt-0.5 text-xs text-red-600 dark:text-red-400">錯誤：{step.result.error}</p>}
       {step.screenshotKey && (
         <img
           src={evidenceUrl(runId, step.screenshotKey)}
           alt={`第 ${step.seq} 步截圖`}
-          className="mt-2 w-full rounded border border-gray-200"
+          className="mt-2 w-full rounded border border-gray-200 dark:border-gray-700"
           loading="lazy"
         />
       )}
-      <p className="mt-1 text-xs text-gray-400">
+      <p className="mt-1 text-xs text-gray-400 dark:text-gray-500">
         {step.modelUsed ?? "-"} · {formatDate(step.createdAt)}
       </p>
     </li>
@@ -1841,24 +1841,24 @@ function HttpLogsBlock({ logs }: { logs: HttpLog[] }) {
   if (logs.length === 0) return null;
   return (
     <div>
-      <button type="button" className="text-xs font-medium text-blue-700 hover:underline" onClick={() => setOpen((v) => !v)}>
+      <button type="button" className="text-xs font-medium text-blue-700 dark:text-blue-300 hover:underline" onClick={() => setOpen((v) => !v)}>
         {open ? "收合" : "展開"} HTTP log（{logs.length}）
       </button>
       {open && (
         <ul className="mt-2 space-y-2">
           {logs.map((log, i) => (
-            <li key={i} className="rounded-md border border-gray-200 p-2">
+            <li key={i} className="rounded-md border border-gray-200 dark:border-gray-700 p-2">
               <div className="flex flex-wrap items-center gap-2">
-                <code className="rounded bg-gray-100 px-1.5 py-0.5 text-xs font-semibold text-gray-700">{log.method}</code>
-                <code className="min-w-0 break-all text-xs text-gray-700">{log.url}</code>
+                <code className="rounded bg-gray-100 dark:bg-gray-800 px-1.5 py-0.5 text-xs font-semibold text-gray-700 dark:text-gray-200">{log.method}</code>
+                <code className="min-w-0 break-all text-xs text-gray-700 dark:text-gray-200">{log.url}</code>
                 {log.status !== null && (
                   <Badge tone={log.status >= 500 ? "red" : log.status >= 400 ? "amber" : "green"}>
                     {log.status} {log.statusText}
                   </Badge>
                 )}
-                <span className="text-xs text-gray-400">{log.durationMs}ms</span>
+                <span className="text-xs text-gray-400 dark:text-gray-500">{log.durationMs}ms</span>
               </div>
-              {log.error && <p className="mt-1 text-xs text-red-600">錯誤：{log.error}</p>}
+              {log.error && <p className="mt-1 text-xs text-red-600 dark:text-red-400">錯誤：{log.error}</p>}
               {log.requestBody && (
                 <Snippet label="請求內容">{log.requestBody}</Snippet>
               )}
@@ -1874,7 +1874,7 @@ function HttpLogsBlock({ logs }: { logs: HttpLog[] }) {
 function Snippet({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div className="mt-1">
-      <p className="text-xs font-medium text-gray-500">{label}</p>
+      <p className="text-xs font-medium text-gray-500 dark:text-gray-400">{label}</p>
       <pre className="mt-0.5 max-h-64 overflow-auto rounded bg-gray-900 p-2 text-xs text-gray-100">{children}</pre>
     </div>
   );
@@ -1903,13 +1903,13 @@ function ChangeDetection({
   if (!count) return null;
 
   return (
-    <div className="rounded-md border border-amber-200 bg-amber-50 p-3">
-      <p className="text-sm text-amber-900">
+    <div className="rounded-md border border-amber-200 dark:border-amber-900 bg-amber-50 dark:bg-amber-950/40 p-3">
+      <p className="text-sm text-amber-900 dark:text-amber-200">
         有 {count} 條案例的失敗像是功能被改掉或移除，而不是行為錯誤。
       </p>
       <div className="mt-2 flex items-center gap-2">
         {created ? (
-          <Link to={`/targets/${targetId}?tab=changes`} className="text-sm font-medium text-blue-700 hover:underline">
+          <Link to={`/targets/${targetId}?tab=changes`} className="text-sm font-medium text-blue-700 dark:text-blue-300 hover:underline">
             提案已建立，去「變更」分頁逐項確認 →
           </Link>
         ) : (
@@ -1950,7 +1950,7 @@ function FindingsPanel({
 
   return (
     <div>
-      <p className="mb-2 text-xs font-medium text-gray-500">Finding（{findings.length}）</p>
+      <p className="mb-2 text-xs font-medium text-gray-500 dark:text-gray-400">Finding（{findings.length}）</p>
       <ErrorText error={setStatus.error} />
       {drafting && (
         <FindingToCaseDialog
@@ -1967,15 +1967,15 @@ function FindingsPanel({
       ) : (
         <ul className="space-y-2">
           {findings.map((f) => (
-            <li key={f.id} className="rounded-md border border-gray-200 p-2">
+            <li key={f.id} className="rounded-md border border-gray-200 dark:border-gray-700 p-2">
               <div className="flex flex-wrap items-center gap-2">
                 <Badge tone={SEVERITY_TONE[f.severity]}>{SEVERITY_LABEL[f.severity]}</Badge>
-                <span className="text-sm font-medium text-gray-800">{f.title}</span>
+                <span className="text-sm font-medium text-gray-800 dark:text-gray-100">{f.title}</span>
                 <Badge tone={FINDING_STATUS_TONE[f.status]}>{FINDING_STATUS_LABEL[f.status]}</Badge>
-                <span className="ml-auto text-xs text-gray-400">{formatDate(f.createdAt)}</span>
+                <span className="ml-auto text-xs text-gray-400 dark:text-gray-500">{formatDate(f.createdAt)}</span>
               </div>
-              {f.description && <p className="mt-1 whitespace-pre-wrap text-sm text-gray-600">{f.description}</p>}
-              <p className="mt-1 text-xs text-gray-400">
+              {f.description && <p className="mt-1 whitespace-pre-wrap text-sm text-gray-600 dark:text-gray-300">{f.description}</p>}
+              <p className="mt-1 text-xs text-gray-400 dark:text-gray-500">
                 {f.feature ? `Feature：${f.feature.name} · ` : ""}
                 發現於：{f.testCaseId ? (titles.get(f.testCaseId) ?? f.testCaseId) : "非特定案例"}
               </p>
@@ -1996,7 +1996,7 @@ function FindingsPanel({
                     </Select>
                   </div>
                   {f.convertedProposalId ? (
-                    <Link to={`/targets/${targetId}?tab=changes`} className="text-xs text-blue-700 hover:underline">
+                    <Link to={`/targets/${targetId}?tab=changes`} className="text-xs text-blue-700 dark:text-blue-300 hover:underline">
                       看變更提案 →
                     </Link>
                   ) : (
@@ -2010,7 +2010,7 @@ function FindingsPanel({
                     </Button>
                   )}
                   {f.convertedCaseId ? (
-                    <Link to={`/targets/${targetId}?tab=cases`} className="text-xs text-blue-700 hover:underline">
+                    <Link to={`/targets/${targetId}?tab=cases`} className="text-xs text-blue-700 dark:text-blue-300 hover:underline">
                       看測試案例 →
                     </Link>
                   ) : (

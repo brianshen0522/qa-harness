@@ -111,19 +111,19 @@ export function ApiSetupPanel({ scope, canEdit }: { scope: Scope; canEdit: boole
 
   return (
     <div className="space-y-3">
-      <p className="text-xs text-gray-500">
+      <p className="text-xs text-gray-500 dark:text-gray-400">
         {scope.kind === "target" ? (
-          <>前置流程會在<b>每一趟執行開始時跑一次</b>(不經 LLM),把 login token 這類「執行期才知道」的值擷取成具名變數。之後<b>每一條 case</b> 都能用 <code className="rounded bg-gray-100 px-1 py-0.5">{"{{名稱}}"}</code> 取用,不必每條都重登入 ——「共用步驟」和「測試」就此分開。</>
+          <>前置流程會在<b>每一趟執行開始時跑一次</b>(不經 LLM),把 login token 這類「執行期才知道」的值擷取成具名變數。之後<b>每一條 case</b> 都能用 <code className="rounded bg-gray-100 dark:bg-gray-800 px-1 py-0.5">{"{{名稱}}"}</code> 取用,不必每條都重登入 ——「共用步驟」和「測試」就此分開。</>
         ) : (
-          <>這個功能的前置流程會在<b>該功能第一條 case 執行前跑一次</b>(不經 LLM),擷取的變數<b>只給這個功能的 case</b> 用 <code className="rounded bg-gray-100 px-1 py-0.5">{"{{名稱}}"}</code> 取用。適合「先建一筆資料、再測它的各種操作」這類功能專屬前置;登入這種全站共用的請放 Target 層級。</>
+          <>這個功能的前置流程會在<b>該功能第一條 case 執行前跑一次</b>(不經 LLM),擷取的變數<b>只給這個功能的 case</b> 用 <code className="rounded bg-gray-100 dark:bg-gray-800 px-1 py-0.5">{"{{名稱}}"}</code> 取用。適合「先建一筆資料、再測它的各種操作」這類功能專屬前置;登入這種全站共用的請放 Target 層級。</>
         )}
       </p>
 
       {capturedNames.length > 0 && (
-        <div className="flex flex-wrap items-center gap-1.5 text-xs text-gray-500">
+        <div className="flex flex-wrap items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400">
           可供 case 使用的變數:
           {capturedNames.map((n) => (
-            <code key={n} className="rounded bg-emerald-50 px-1.5 py-0.5 text-emerald-700">{`{{${n}}}`}</code>
+            <code key={n} className="rounded bg-emerald-50 dark:bg-emerald-950/40 px-1.5 py-0.5 text-emerald-700 dark:text-emerald-300">{`{{${n}}}`}</code>
           ))}
         </div>
       )}
@@ -132,9 +132,9 @@ export function ApiSetupPanel({ scope, canEdit }: { scope: Scope; canEdit: boole
 
       <ol className="space-y-3">
         {steps.map((step, i) => (
-          <li key={i} className="rounded-lg border border-gray-200 bg-gray-50/60 p-3">
+          <li key={i} className="rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50/60 dark:bg-gray-800/40 p-3">
             <div className="mb-2 flex items-center gap-2">
-              <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-gray-200 text-xs font-semibold text-gray-600">{i + 1}</span>
+              <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-gray-200 dark:bg-gray-700 text-xs font-semibold text-gray-600 dark:text-gray-300">{i + 1}</span>
               <Input value={step.label} disabled={!canEdit} placeholder="這一步在做什麼,例如「登入取得 token」" onChange={(e) => patch(i, { label: e.target.value })} />
               {canEdit && (
                 <div className="flex shrink-0 gap-1">
@@ -163,20 +163,20 @@ export function ApiSetupPanel({ scope, canEdit }: { scope: Scope; canEdit: boole
 
             <div className="mt-2">
               <div className="mb-1 flex items-center justify-between">
-                <span className="text-xs font-medium text-gray-600">擷取變數</span>
+                <span className="text-xs font-medium text-gray-600 dark:text-gray-300">擷取變數</span>
                 {canEdit && (
                   <Button variant="ghost" size="sm" onClick={() => patch(i, { captures: [...step.captures, { name: "", from: "" }] })}>+ 擷取</Button>
                 )}
               </div>
               {step.captures.length === 0 ? (
-                <p className="text-xs text-gray-400">這一步不擷取任何值。</p>
+                <p className="text-xs text-gray-400 dark:text-gray-500">這一步不擷取任何值。</p>
               ) : (
                 <ul className="space-y-1.5">
                   {step.captures.map((cap, ci) => (
                     <li key={ci} className="flex items-center gap-2">
                       <Input value={cap.name} disabled={!canEdit} placeholder="變數名(token)" className="w-40"
                         onChange={(e) => patch(i, { captures: step.captures.map((c, idx) => (idx === ci ? { ...c, name: e.target.value } : c)) })} />
-                      <span className="text-xs text-gray-400">←</span>
+                      <span className="text-xs text-gray-400 dark:text-gray-500">←</span>
                       <Input value={cap.from} disabled={!canEdit} placeholder="回應路徑(body.access_token)"
                         onChange={(e) => patch(i, { captures: step.captures.map((c, idx) => (idx === ci ? { ...c, from: e.target.value } : c)) })} />
                       {canEdit && (
@@ -186,21 +186,21 @@ export function ApiSetupPanel({ scope, canEdit }: { scope: Scope; canEdit: boole
                   ))}
                 </ul>
               )}
-              <p className="mt-1 text-[11px] text-gray-400">來源路徑從回應取值:<code>body.…</code>、<code>status</code>、<code>headers.location</code>;陣列用索引 <code>body.items.0.id</code>。</p>
+              <p className="mt-1 text-[11px] text-gray-400 dark:text-gray-500">來源路徑從回應取值:<code>body.…</code>、<code>status</code>、<code>headers.location</code>;陣列用索引 <code>body.items.0.id</code>。</p>
             </div>
           </li>
         ))}
       </ol>
 
       {canEdit && (
-        <div className="flex flex-wrap items-center gap-2 border-t border-gray-100 pt-3">
+        <div className="flex flex-wrap items-center gap-2 border-t border-gray-100 dark:border-gray-800 pt-3">
           <Button variant="secondary" size="sm" onClick={() => setSteps((s) => [...s, blankStep()])}>+ 新增步驟</Button>
           <div className="grow" />
           <Button size="sm" onClick={submit} disabled={save.isPending}>{save.isPending ? "儲存中…" : "儲存前置流程"}</Button>
         </div>
       )}
       {save.isSuccess && !save.isPending && <Notice tone="blue">已儲存。下一趟執行會套用。</Notice>}
-      {localError && <p className="text-xs text-red-600">{localError}</p>}
+      {localError && <p className="text-xs text-red-600 dark:text-red-400">{localError}</p>}
       <ErrorText error={save.error} />
       <ErrorText error={setup.error} />
     </div>

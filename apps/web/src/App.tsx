@@ -34,7 +34,7 @@ export default function App() {
         <Route path="audit" element={<AdminAuditPage />} />
       </Route>
 
-      <Route path="*" element={<p className="p-6 text-sm text-gray-500">找不到頁面。</p>} />
+      <Route path="*" element={<p className="p-6 text-sm text-gray-500 dark:text-gray-400">找不到頁面。</p>} />
     </Routes>
   );
 }

@@ -90,16 +90,16 @@ export function HandoffPanel({
       {!isEditor && <Notice tone="blue">你是檢視者，只能產生與複製交接 prompt，無法匯入文件。</Notice>}
 
       <Card title="① 產生交接 prompt">
-        <p className="mb-3 text-xs text-gray-500">
+        <p className="mb-3 text-xs text-gray-500 dark:text-gray-400">
           複製這段 prompt 貼給你的 coding agent（Claude Code、Cursor 等），請它依格式回傳一份 Markdown 交接文件。
         </p>
         <label className="mb-3 flex items-start gap-2 text-sm">
           <input type="checkbox" className="mt-0.5" checked={incremental} onChange={(e) => setIncremental(e.target.checked)} />
           <span>
-            <span className="text-gray-800">增量模式</span>
-            <span className="ml-1 text-xs text-gray-500">
+            <span className="text-gray-800 dark:text-gray-100">增量模式</span>
+            <span className="ml-1 text-xs text-gray-500 dark:text-gray-400">
               附上「上一次的交接文件」，只請 agent 回報差異；匯入時會走「變更提案」流程，不覆蓋描述。
-              {prompt.data && !prompt.data.hasPrevious && incremental && <span className="ml-1 text-amber-600">（目前還沒有上一份文件可比對）</span>}
+              {prompt.data && !prompt.data.hasPrevious && incremental && <span className="ml-1 text-amber-600 dark:text-amber-400">（目前還沒有上一份文件可比對）</span>}
             </span>
           </span>
         </label>
@@ -107,23 +107,23 @@ export function HandoffPanel({
         <ErrorText error={prompt.error} />
         {prompt.data && (
           <>
-            <div className="mb-2 flex flex-wrap items-center gap-2 text-xs text-gray-500">
+            <div className="mb-2 flex flex-wrap items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
               <Badge tone="blue">harness {prompt.data.harnessVersion}</Badge>
               <span>scope：{prompt.data.scope === "project" ? "Project" : "Target"}</span>
               {prompt.data.kind && <span>kind：{prompt.data.kind}</span>}
               <CopyButton text={prompt.data.prompt} />
             </div>
-            <pre className="max-h-72 overflow-auto rounded-md border border-gray-200 bg-gray-50 p-3 text-xs text-gray-700">
+            <pre className="max-h-72 overflow-auto rounded-md border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 p-3 text-xs text-gray-700 dark:text-gray-200">
               {prompt.data.prompt}
             </pre>
             <div className="mt-3">
-              <h3 className="mb-1 text-xs font-medium text-gray-600">agent 必須回報的 section</h3>
+              <h3 className="mb-1 text-xs font-medium text-gray-600 dark:text-gray-300">agent 必須回報的 section</h3>
               <ul className="space-y-1">
                 {prompt.data.sections.map((s) => (
-                  <li key={s.title} className="text-xs text-gray-600">
-                    <span className="font-medium text-gray-800">{handoffSectionLabel(s.title)}</span>
-                    <span className="text-gray-400">（## {s.title}）</span>
-                    <span className="block text-gray-500">{s.ask}</span>
+                  <li key={s.title} className="text-xs text-gray-600 dark:text-gray-300">
+                    <span className="font-medium text-gray-800 dark:text-gray-100">{handoffSectionLabel(s.title)}</span>
+                    <span className="text-gray-400 dark:text-gray-500">（## {s.title}）</span>
+                    <span className="block text-gray-500 dark:text-gray-400">{s.ask}</span>
                   </li>
                 ))}
               </ul>
@@ -183,9 +183,9 @@ export function HandoffPanel({
             {p.detectedSecrets.length > 0 && <SecretsWarning secrets={p.detectedSecrets} />}
 
             {Object.keys(p.frontMatter).length > 0 && (
-              <div className="flex flex-wrap gap-2 text-xs text-gray-500">
+              <div className="flex flex-wrap gap-2 text-xs text-gray-500 dark:text-gray-400">
                 {Object.entries(p.frontMatter).map(([k, v]) => (
-                  <span key={k} className="rounded bg-gray-100 px-2 py-0.5">
+                  <span key={k} className="rounded bg-gray-100 dark:bg-gray-800 px-2 py-0.5">
                     {k}：{v}
                   </span>
                 ))}
@@ -194,13 +194,13 @@ export function HandoffPanel({
 
             {p.missingSections.length > 0 && (
               <div>
-                <h3 className="mb-1 text-xs font-medium text-gray-600">缺少或仍是空白的 section</h3>
-                <p className="text-xs text-gray-400">{p.missingSections.map((t) => handoffSectionLabel(t)).join("、")}</p>
+                <h3 className="mb-1 text-xs font-medium text-gray-600 dark:text-gray-300">缺少或仍是空白的 section</h3>
+                <p className="text-xs text-gray-400 dark:text-gray-500">{p.missingSections.map((t) => handoffSectionLabel(t)).join("、")}</p>
               </div>
             )}
 
             <div>
-              <h3 className="mb-1 text-xs font-medium text-gray-600">已辨識的 section（{Object.keys(p.sections).length}）</h3>
+              <h3 className="mb-1 text-xs font-medium text-gray-600 dark:text-gray-300">已辨識的 section（{Object.keys(p.sections).length}）</h3>
               {Object.keys(p.sections).length === 0 ? (
                 <Empty>沒有辨識出任何 section。</Empty>
               ) : (
@@ -214,7 +214,7 @@ export function HandoffPanel({
 
             {Object.keys(p.unknownSections).length > 0 && (
               <div>
-                <h3 className="mb-1 text-xs font-medium text-gray-600">未知 section（原樣保留為描述文字）</h3>
+                <h3 className="mb-1 text-xs font-medium text-gray-600 dark:text-gray-300">未知 section（原樣保留為描述文字）</h3>
                 <div className="space-y-1">
                   {Object.entries(p.unknownSections).map(([title, body]) => (
                     <CollapsibleSection key={title} title={title} subtitle="未知 section" body={body} unknown />
@@ -226,30 +226,30 @@ export function HandoffPanel({
             {p.suggestedTestCases.length > 0 && <TestCaseList cases={p.suggestedTestCases} />}
 
             <div>
-              <h3 className="mb-1 text-xs font-medium text-gray-600">解析後的描述</h3>
-              <pre className="max-h-72 overflow-auto rounded-md border border-gray-200 bg-gray-50 p-3 text-xs text-gray-700">
+              <h3 className="mb-1 text-xs font-medium text-gray-600 dark:text-gray-300">解析後的描述</h3>
+              <pre className="max-h-72 overflow-auto rounded-md border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 p-3 text-xs text-gray-700 dark:text-gray-200">
                 {p.renderedDescription || "（空白）"}
               </pre>
             </div>
 
-            <div className="border-t border-gray-100 pt-3">
+            <div className="border-t border-gray-100 dark:border-gray-800 pt-3">
               {incremental ? (
                 <>
-                  <h3 className="mb-2 text-xs font-medium text-gray-600">增量匯入</h3>
+                  <h3 className="mb-2 text-xs font-medium text-gray-600 dark:text-gray-300">增量匯入</h3>
                   <div className="flex flex-wrap items-center gap-2">
                     <Button onClick={() => analyzeChanges.mutate()} disabled={!canApply || analyzeChanges.isPending}>
                       {analyzeChanges.isPending ? "分析中…" : "分析為變更提案"}
                     </Button>
-                    <span className="text-xs text-gray-400">會依差異產生變更提案，到「變更」分頁逐項確認，不直接改描述。</span>
+                    <span className="text-xs text-gray-400 dark:text-gray-500">會依差異產生變更提案，到「變更」分頁逐項確認，不直接改描述。</span>
                   </div>
                   {analyzeChanges.isSuccess && (
-                    <p className="mt-2 text-sm text-green-700">已建立變更提案，請到「變更」分頁逐項確認。</p>
+                    <p className="mt-2 text-sm text-green-700 dark:text-green-300">已建立變更提案，請到「變更」分頁逐項確認。</p>
                   )}
                   <ErrorText error={analyzeChanges.error} />
                 </>
               ) : (
               <>
-              <h3 className="mb-2 text-xs font-medium text-gray-600">套用方式</h3>
+              <h3 className="mb-2 text-xs font-medium text-gray-600 dark:text-gray-300">套用方式</h3>
               <div className="flex flex-wrap items-center gap-2">
                 <Select
                   value={mode}
@@ -266,11 +266,11 @@ export function HandoffPanel({
                 <Button onClick={() => apply.mutate()} disabled={!canApply || apply.isPending}>
                   {apply.isPending ? "套用中…" : "套用"}
                 </Button>
-                <span className="text-xs text-gray-400">建議：{APPLY_MODE_LABEL[p.recommendedMode]}</span>
+                <span className="text-xs text-gray-400 dark:text-gray-500">建議：{APPLY_MODE_LABEL[p.recommendedMode]}</span>
               </div>
               </>
               )}
-              <p className="mt-2 text-xs text-gray-400">
+              <p className="mt-2 text-xs text-gray-400 dark:text-gray-500">
                 覆蓋描述：以解析結果取代現有描述。合併：接在現有描述之後。當作附件：不動描述，只把原始文件存成附件供討論區使用。
               </p>
               <ErrorText error={apply.error} />
@@ -304,10 +304,10 @@ export function HandoffPanel({
             <tbody>
               {documents.data.map((doc) => (
                 <tr key={doc.id}>
-                  <td className="text-gray-500">{formatDate(doc.importedAt)}</td>
+                  <td className="text-gray-500 dark:text-gray-400">{formatDate(doc.importedAt)}</td>
                   <td>{APPLY_MODE_LABEL[doc.applyMode]}</td>
-                  <td className="text-gray-500">{doc.harnessVersion}</td>
-                  <td className="text-gray-500">
+                  <td className="text-gray-500 dark:text-gray-400">{doc.harnessVersion}</td>
+                  <td className="text-gray-500 dark:text-gray-400">
                     {doc.appliedToDescriptionVersion === null ? "－" : `v${doc.appliedToDescriptionVersion}`}
                   </td>
                 </tr>
@@ -347,7 +347,7 @@ function CopyButton({ text }: { text: string }) {
       >
         {copied ? "已複製" : "複製"}
       </Button>
-      {error && <span className="text-xs text-red-600">{error}</span>}
+      {error && <span className="text-xs text-red-600 dark:text-red-400">{error}</span>}
     </span>
   );
 }
@@ -359,7 +359,7 @@ function SecretsWarning({ secrets }: { secrets: DetectedSecret[] }) {
       <ul className="mt-1 space-y-0.5">
         {secrets.map((s, i) => (
           <li key={`${s.key}-${s.line}-${i}`} className="text-xs">
-            第 {s.line} 行 · <code className="rounded bg-white/60 px-1">{s.key}</code> · {s.preview}
+            第 {s.line} 行 · <code className="rounded bg-white/60 dark:bg-gray-900/60 px-1">{s.key}</code> · {s.preview}
           </li>
         ))}
       </ul>
@@ -370,20 +370,20 @@ function SecretsWarning({ secrets }: { secrets: DetectedSecret[] }) {
 function TestCaseList({ cases }: { cases: SuggestedTestCase[] }) {
   return (
     <div>
-      <h3 className="mb-1 text-xs font-medium text-gray-600">建議 test case（{cases.length}）</h3>
-      <p className="mb-2 text-xs text-gray-400">這些會在後續作為 test case 生成 pipeline 的種子，目前僅供檢視。</p>
+      <h3 className="mb-1 text-xs font-medium text-gray-600 dark:text-gray-300">建議 test case（{cases.length}）</h3>
+      <p className="mb-2 text-xs text-gray-400 dark:text-gray-500">這些會在後續作為 test case 生成 pipeline 的種子，目前僅供檢視。</p>
       <ul className="space-y-2">
         {cases.map((c, i) => (
-          <li key={`${c.title}-${i}`} className="rounded-md border border-gray-200 p-2">
-            <p className="text-sm font-medium text-gray-800">{c.title}</p>
+          <li key={`${c.title}-${i}`} className="rounded-md border border-gray-200 dark:border-gray-700 p-2">
+            <p className="text-sm font-medium text-gray-800 dark:text-gray-100">{c.title}</p>
             {c.steps.length > 0 && (
-              <ol className="mt-1 list-inside list-decimal space-y-0.5 text-xs text-gray-600">
+              <ol className="mt-1 list-inside list-decimal space-y-0.5 text-xs text-gray-600 dark:text-gray-300">
                 {c.steps.map((s, j) => (
                   <li key={j}>{s}</li>
                 ))}
               </ol>
             )}
-            {c.expected && <p className="mt-1 text-xs text-gray-500">預期結果：{c.expected}</p>}
+            {c.expected && <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">預期結果：{c.expected}</p>}
           </li>
         ))}
       </ul>
@@ -404,20 +404,20 @@ function CollapsibleSection({
 }) {
   const [open, setOpen] = useState(false);
   return (
-    <div className="rounded-md border border-gray-200">
+    <div className="rounded-md border border-gray-200 dark:border-gray-700">
       <button
         type="button"
         onClick={() => setOpen((s) => !s)}
-        className="flex w-full items-center justify-between gap-2 px-3 py-1.5 text-left text-xs hover:bg-gray-50"
+        className="flex w-full items-center justify-between gap-2 px-3 py-1.5 text-left text-xs hover:bg-gray-50 dark:hover:bg-gray-800"
       >
         <span className="flex items-center gap-2">
-          <span className="font-medium text-gray-800">{title}</span>
-          {unknown ? <Badge tone="amber">未知 section</Badge> : <span className="text-gray-400">{subtitle}</span>}
+          <span className="font-medium text-gray-800 dark:text-gray-100">{title}</span>
+          {unknown ? <Badge tone="amber">未知 section</Badge> : <span className="text-gray-400 dark:text-gray-500">{subtitle}</span>}
         </span>
-        <span className="text-gray-400">{open ? "收合" : "展開"}</span>
+        <span className="text-gray-400 dark:text-gray-500">{open ? "收合" : "展開"}</span>
       </button>
       {open && (
-        <pre className="max-h-64 overflow-auto border-t border-gray-100 bg-gray-50 p-3 text-xs text-gray-700">{body}</pre>
+        <pre className="max-h-64 overflow-auto border-t border-gray-100 dark:border-gray-800 bg-gray-50 dark:bg-gray-800/50 p-3 text-xs text-gray-700 dark:text-gray-200">{body}</pre>
       )}
     </div>
   );

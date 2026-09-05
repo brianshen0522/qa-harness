@@ -68,19 +68,19 @@ export default function AdminUsersPage() {
                 <tr key={u.id}>
                   <td className="font-medium">{u.email}</td>
                   <td>{u.name || "-"}</td>
-                  <td className="text-gray-500">{u.authProvider || "-"}</td>
+                  <td className="text-gray-500 dark:text-gray-400">{u.authProvider || "-"}</td>
                   <td>
                     <Badge tone={u.status === "active" ? "green" : "red"}>{u.status === "active" ? "啟用" : "停用"}</Badge>
                   </td>
                   <td>
                     <div className="flex flex-wrap gap-1">
-                      {u.teams.length === 0 ? <span className="text-gray-400">-</span> : u.teams.map((t) => <Badge key={t.id}>{t.name}</Badge>)}
+                      {u.teams.length === 0 ? <span className="text-gray-400 dark:text-gray-500">-</span> : u.teams.map((t) => <Badge key={t.id}>{t.name}</Badge>)}
                     </div>
                   </td>
                   <td>
                     <div className="flex flex-wrap gap-1">
                       {u.projects.length === 0 ? (
-                        <span className="text-gray-400">-</span>
+                        <span className="text-gray-400 dark:text-gray-500">-</span>
                       ) : (
                         u.projects.map((p) => (
                           <Badge key={p.id} tone="blue">
@@ -90,7 +90,7 @@ export default function AdminUsersPage() {
                       )}
                     </div>
                   </td>
-                  <td className="whitespace-nowrap text-gray-500">{formatDate(u.createdAt)}</td>
+                  <td className="whitespace-nowrap text-gray-500 dark:text-gray-400">{formatDate(u.createdAt)}</td>
                   <td className="text-right">
                     <Button
                       variant={u.status === "active" ? "danger" : "secondary"}

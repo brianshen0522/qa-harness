@@ -74,7 +74,7 @@ export default function ProjectDetailPage() {
 
   return (
     <div className="space-y-4">
-      <nav className="text-xs text-gray-400">
+      <nav className="text-xs text-gray-400 dark:text-gray-500">
         <Link to="/" className="hover:underline">
           Projects
         </Link>{" "}
@@ -103,7 +103,7 @@ export default function ProjectDetailPage() {
             <h1 className="text-lg font-bold">{p.name}</h1>
           )}
           <RoleBadge role={p.myRole} />
-          <span className="text-xs text-gray-500">Team：{p.team.name}</span>
+          <span className="text-xs text-gray-500 dark:text-gray-400">Team：{p.team.name}</span>
         </div>
         {isOwner && !editingName && (
           <div className="flex gap-2">
@@ -173,9 +173,9 @@ export default function ProjectDetailPage() {
                 </thead>
                 <tbody>
                   {p.targets.map((t) => (
-                    <tr key={t.id} className="hover:bg-gray-50">
+                    <tr key={t.id} className="hover:bg-gray-50 dark:hover:bg-gray-800">
                       <td>
-                        <Link to={`/targets/${t.id}`} className="font-medium text-blue-700 hover:underline">
+                        <Link to={`/targets/${t.id}`} className="font-medium text-blue-700 dark:text-blue-300 hover:underline">
                           {t.name}
                         </Link>
                       </td>
@@ -185,7 +185,7 @@ export default function ProjectDetailPage() {
                       <td>
                         <StatusBadge status={t.status} />
                       </td>
-                      <td className="text-gray-500">{formatDate(t.updatedAt)}</td>
+                      <td className="text-gray-500 dark:text-gray-400">{formatDate(t.updatedAt)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -205,7 +205,7 @@ export default function ProjectDetailPage() {
       <NewTargetDialog projectId={id} open={showNewTarget} onClose={() => setShowNewTarget(false)} />
 
       <Dialog open={confirmDelete} title="刪除 Project" onClose={() => setConfirmDelete(false)}>
-        <p className="text-sm text-gray-700">
+        <p className="text-sm text-gray-700 dark:text-gray-200">
           確定要刪除「{p.name}」嗎？其下所有 Target 也會一併刪除，此動作無法復原。
         </p>
         <div className="mt-4 flex justify-end gap-2">
@@ -230,27 +230,27 @@ function VersionHistory({ projectId }: { projectId: string }) {
   const [openId, setOpenId] = useState<string | null>(null);
 
   return (
-    <div className="mt-4 border-t border-gray-100 pt-3">
-      <h3 className="mb-2 text-xs font-medium text-gray-600">版本歷史</h3>
+    <div className="mt-4 border-t border-gray-100 dark:border-gray-800 pt-3">
+      <h3 className="mb-2 text-xs font-medium text-gray-600 dark:text-gray-300">版本歷史</h3>
       {versions.isPending && <Spinner />}
       <ErrorText error={versions.error} />
       {versions.data && versions.data.length === 0 && <Empty>尚無版本。</Empty>}
       <ul className="space-y-1">
         {versions.data?.map((v) => (
-          <li key={v.id} className="rounded-md border border-gray-100">
+          <li key={v.id} className="rounded-md border border-gray-100 dark:border-gray-800">
             <button
               type="button"
-              className="flex w-full items-center justify-between px-3 py-1.5 text-left text-xs hover:bg-gray-50"
+              className="flex w-full items-center justify-between px-3 py-1.5 text-left text-xs hover:bg-gray-50 dark:hover:bg-gray-800"
               onClick={() => setOpenId(openId === v.id ? null : v.id)}
             >
               <span className="font-medium">v{v.version}</span>
-              <span className="text-gray-400">
+              <span className="text-gray-400 dark:text-gray-500">
                 {v.source ? `${v.source} · ` : ""}
                 {formatDate(v.createdAt)}
               </span>
             </button>
             {openId === v.id && (
-              <pre className="whitespace-pre-wrap border-t border-gray-100 bg-gray-50 p-3 font-sans text-xs text-gray-700">{v.content || "（空白）"}</pre>
+              <pre className="whitespace-pre-wrap border-t border-gray-100 dark:border-gray-800 bg-gray-50 dark:bg-gray-800/50 p-3 font-sans text-xs text-gray-700 dark:text-gray-200">{v.content || "（空白）"}</pre>
             )}
           </li>
         ))}
@@ -317,12 +317,12 @@ function ProjectMembers({ projectId, isOwner }: { projectId: string; isOwner: bo
       <ErrorText error={changeRole.error} />
       <ErrorText error={remove.error} />
       {members.data && (
-        <ul className="divide-y divide-gray-100">
+        <ul className="divide-y divide-gray-100 dark:divide-gray-800">
           {members.data.map((m) => (
             <li key={m.userId} className="flex items-center justify-between gap-2 py-2 text-sm">
               <div className="min-w-0">
                 <p className="truncate font-medium">{m.user.name || m.user.email}</p>
-                <p className="truncate text-xs text-gray-400">{m.user.email}</p>
+                <p className="truncate text-xs text-gray-400 dark:text-gray-500">{m.user.email}</p>
               </div>
               {isOwner ? (
                 <div className="flex items-center gap-1">
@@ -409,8 +409,8 @@ function NewTargetDialog({ projectId, open, onClose }: { projectId: string; open
             ))}
           </Select>
         </Field>
-        <div className="rounded-md border border-gray-100 bg-gray-50 p-3">
-          <p className="mb-2 text-xs font-medium text-gray-600">設定</p>
+        <div className="rounded-md border border-gray-100 dark:border-gray-800 bg-gray-50 dark:bg-gray-800/50 p-3">
+          <p className="mb-2 text-xs font-medium text-gray-600 dark:text-gray-300">設定</p>
           <ConfigForm kind={kind} draft={draft} onChange={setDraft} />
         </div>
         <Field label="描述（選填）">
@@ -424,7 +424,7 @@ function NewTargetDialog({ projectId, open, onClose }: { projectId: string; open
             建立
           </Button>
         </div>
-        {localError && <p className="mt-2 text-xs text-red-600">{localError}</p>}
+        {localError && <p className="mt-2 text-xs text-red-600 dark:text-red-400">{localError}</p>}
         <ErrorText error={create.error} />
       </form>
     </Dialog>

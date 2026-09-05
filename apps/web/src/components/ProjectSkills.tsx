@@ -39,7 +39,7 @@ export function ProjectSkills({ projectId, myRole }: { projectId: string; myRole
       title="專案 Skills"
       actions={canEdit && <Button size="sm" onClick={() => setEditing("new")}>新增</Button>}
     >
-      <p className="mb-2 text-xs text-gray-500">
+      <p className="mb-2 text-xs text-gray-500 dark:text-gray-400">
         只套用在這個專案的規則，會和全域 Skills 一起加進生成與執行的提示。
       </p>
       {skills.isPending && <Spinner />}
@@ -50,14 +50,14 @@ export function ProjectSkills({ projectId, myRole }: { projectId: string; myRole
         ) : (
           <ul className="space-y-2">
             {skills.data.map((s) => (
-              <li key={s.id} className="rounded-md border border-gray-200 p-2">
+              <li key={s.id} className="rounded-md border border-gray-200 dark:border-gray-700 p-2">
                 <div className="flex items-start gap-2">
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
-                      <span className="text-sm font-medium text-gray-800">{s.name}</span>
+                      <span className="text-sm font-medium text-gray-800 dark:text-gray-100">{s.name}</span>
                       <Badge tone={s.enabled ? "green" : "gray"}>{s.enabled ? "啟用中" : "已停用"}</Badge>
                     </div>
-                    <pre className="mt-1 max-h-24 overflow-y-auto whitespace-pre-wrap font-sans text-xs text-gray-600">{s.content}</pre>
+                    <pre className="mt-1 max-h-24 overflow-y-auto whitespace-pre-wrap font-sans text-xs text-gray-600 dark:text-gray-300">{s.content}</pre>
                   </div>
                   {canEdit && (
                     <div className="flex flex-col gap-1">
@@ -97,7 +97,7 @@ function Editor({ projectId, skill, onClose, onSaved }: { projectId: string; ski
     onSuccess: onSaved,
   });
   return (
-    <div className="mt-3 space-y-2 rounded-md border border-gray-200 bg-gray-50 p-3">
+    <div className="mt-3 space-y-2 rounded-md border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 p-3">
       <Field label="名稱"><Input value={name} onChange={(e) => setName(e.target.value)} /></Field>
       <Field label="內容（Markdown）"><Textarea rows={5} value={content} onChange={(e) => setContent(e.target.value)} /></Field>
       <div className="flex items-center gap-2">
@@ -105,7 +105,7 @@ function Editor({ projectId, skill, onClose, onSaved }: { projectId: string; ski
           {save.isPending ? "儲存中…" : "儲存"}
         </Button>
         <Button variant="ghost" size="sm" onClick={onClose}>取消</Button>
-        {save.error ? <span className="text-xs text-red-600">{errorMessage(save.error)}</span> : null}
+        {save.error ? <span className="text-xs text-red-600 dark:text-red-400">{errorMessage(save.error)}</span> : null}
       </div>
     </div>
   );

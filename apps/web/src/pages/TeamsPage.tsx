@@ -42,18 +42,18 @@ export default function TeamsPage() {
           {teams.isPending && <Spinner />}
           <ErrorText error={teams.error} />
           {teams.data && teams.data.length === 0 && <Empty>尚無 Team。</Empty>}
-          <ul className="divide-y divide-gray-100">
+          <ul className="divide-y divide-gray-100 dark:divide-gray-800">
             {teams.data?.map((t) => (
               <li key={t.id}>
                 <button
                   type="button"
                   onClick={() => setSelected(t.id)}
-                  className={`flex w-full items-center justify-between px-2 py-2 text-left text-sm hover:bg-gray-50 ${
-                    selectedTeam?.id === t.id ? "bg-blue-50" : ""
+                  className={`flex w-full items-center justify-between px-2 py-2 text-left text-sm hover:bg-gray-50 dark:hover:bg-gray-800 ${
+                    selectedTeam?.id === t.id ? "bg-blue-50 dark:bg-blue-950/40" : ""
                   }`}
                 >
                   <span className="font-medium">{t.name}</span>
-                  <span className="text-xs text-gray-400">
+                  <span className="text-xs text-gray-400 dark:text-gray-500">
                     {t._count.members} 位成員 · {t._count.projects} 個 Project
                   </span>
                 </button>
@@ -90,7 +90,7 @@ function TeamMembers({ team }: { team: Team }) {
   });
 
   return (
-    <Card title={`${team.name} 的成員`} actions={<span className="text-xs text-gray-400">建立於 {formatDate(team.createdAt)}</span>}>
+    <Card title={`${team.name} 的成員`} actions={<span className="text-xs text-gray-400 dark:text-gray-500">建立於 {formatDate(team.createdAt)}</span>}>
       <form
         onSubmit={(e) => {
           e.preventDefault();

@@ -149,7 +149,7 @@ function AnalyzeForm({ base, description, onDone }: { base: string; description:
           >
             {analyze.isPending ? "分析中…" : "分析影響"}
           </Button>
-          <span className="text-xs text-gray-500">分析只會產生提案，不會直接改測試清單。</span>
+          <span className="text-xs text-gray-500 dark:text-gray-400">分析只會產生提案，不會直接改測試清單。</span>
         </div>
         <ErrorText error={analyze.error} />
       </div>
@@ -214,10 +214,10 @@ function ProposalCard({
           <Badge tone="blue">{CHANGE_SOURCE_LABEL[proposal.source]}</Badge>
         </span>
       }
-      actions={<span className="text-xs text-gray-400">{formatDate(proposal.createdAt)}</span>}
+      actions={<span className="text-xs text-gray-400 dark:text-gray-500">{formatDate(proposal.createdAt)}</span>}
     >
       <div className="space-y-4">
-        <p className="text-sm text-gray-800">{proposal.summary}</p>
+        <p className="text-sm text-gray-800 dark:text-gray-100">{proposal.summary}</p>
 
         {running && <Notice>Target 執行中，提案先留著，等這次執行結束才能套用。</Notice>}
         {!!proposal.counts.unresolved && (
@@ -232,7 +232,7 @@ function ProposalCard({
               checked={takeDescription}
               disabled={!canEdit}
               onChange={setTakeDescription}
-              label={<span className="text-sm font-medium text-gray-800">採用新的描述</span>}
+              label={<span className="text-sm font-medium text-gray-800 dark:text-gray-100">採用新的描述</span>}
             />
             <div className="mt-2 pl-6">
               <DiffView text={proposal.descriptionDiff} />
@@ -242,7 +242,7 @@ function ProposalCard({
 
         {!!proposal.featureChanges.length && (
           <section>
-            <h3 className="mb-2 text-xs font-semibold text-gray-500">功能變動</h3>
+            <h3 className="mb-2 text-xs font-semibold text-gray-500 dark:text-gray-400">功能變動</h3>
             <div className="space-y-2">
               {proposal.featureChanges.map((item) => (
                 <FeatureItem
@@ -259,7 +259,7 @@ function ProposalCard({
 
         {!!proposal.caseChanges.length && (
           <section>
-            <h3 className="mb-2 text-xs font-semibold text-gray-500">測試案例變動</h3>
+            <h3 className="mb-2 text-xs font-semibold text-gray-500 dark:text-gray-400">測試案例變動</h3>
             <div className="space-y-2">
               {proposal.caseChanges.map((item) => (
                 <CaseItem
@@ -277,7 +277,7 @@ function ProposalCard({
         )}
 
         {canEdit && (
-          <div className="flex flex-wrap items-center gap-2 border-t border-gray-100 pt-3">
+          <div className="flex flex-wrap items-center gap-2 border-t border-gray-100 dark:border-gray-800 pt-3">
             <Button onClick={() => apply.mutate()} disabled={running || apply.isPending || !acceptedCount}>
               {apply.isPending ? "套用中…" : `套用勾選的 ${acceptedCount} 項`}
             </Button>
@@ -294,7 +294,7 @@ function ProposalCard({
             <Button variant="danger" size="sm" onClick={() => reject.mutate()} disabled={reject.isPending}>
               整份拒絕
             </Button>
-            {proposal.model && <span className="ml-auto text-xs text-gray-400">由 {proposal.model} 產生</span>}
+            {proposal.model && <span className="ml-auto text-xs text-gray-400 dark:text-gray-500">由 {proposal.model} 產生</span>}
           </div>
         )}
         <ErrorText error={apply.error ?? reject.error} />
@@ -337,21 +337,21 @@ function AppliedCard({
 
   return (
     <Card title="提案已套用">
-      <div className="space-y-3 text-sm text-gray-700">
+      <div className="space-y-3 text-sm text-gray-700 dark:text-gray-200">
         <p>{proposal.summary}</p>
-        <ul className="list-inside list-disc text-xs text-gray-600">
+        <ul className="list-inside list-disc text-xs text-gray-600 dark:text-gray-300">
           {result.descriptionVersionAfter !== null && <li>描述更新為 v{result.descriptionVersionAfter}</li>}
           <li>影響 {result.affectedFeatureIds.length} 個功能、{result.affectedTestCaseIds.length} 條測試案例</li>
         </ul>
         {canEdit && proposal.targetId && !!result.regenerableFeatureIds.length && (
-          <div className="rounded-md bg-gray-50 p-3">
-            <p className="mb-2 text-xs text-gray-600">
+          <div className="rounded-md bg-gray-50 dark:bg-gray-800/50 p-3">
+            <p className="mb-2 text-xs text-gray-600 dark:text-gray-300">
               只重新生成受影響的 {result.regenerableFeatureIds.length} 個功能的測試案例，其他功能的清單不動。
             </p>
             <Button size="sm" onClick={() => regenerate.mutate()} disabled={running || regenerate.isPending}>
               {regenerate.isPending ? "生成中…" : "重新生成這些功能的案例"}
             </Button>
-            {progress && <p className="mt-2 text-xs text-gray-500">{progress}</p>}
+            {progress && <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">{progress}</p>}
             <ErrorText error={regenerate.error} />
           </div>
         )}
@@ -383,9 +383,9 @@ function FeatureItem({
           <DiffView text={diffText(item.before.description, item.description)} />
         </div>
       )}
-      {item.op === "add" && item.description && <p className="text-xs text-gray-600">{item.description}</p>}
+      {item.op === "add" && item.description && <p className="text-xs text-gray-600 dark:text-gray-300">{item.description}</p>}
       {item.op === "remove" && (
-        <p className="text-xs text-gray-600">這個功能底下的測試案例會一起標成停用，資料還留著。</p>
+        <p className="text-xs text-gray-600 dark:text-gray-300">這個功能底下的測試案例會一起標成停用，資料還留著。</p>
       )}
     </ItemShell>
   );
@@ -426,13 +426,13 @@ function CaseItem({
         ) : null
       }
     >
-      {item.featureRef && <p className="text-xs text-gray-500">功能：{item.featureRef}</p>}
+      {item.featureRef && <p className="text-xs text-gray-500 dark:text-gray-400">功能：{item.featureRef}</p>}
       {item.op === "modify" && <DiffView text={item.diff} />}
       {item.op === "add" && merged && !open && <CasePreview snapshot={merged} />}
       {item.op === "mark_outdated" && (
-        <p className="text-xs text-gray-600">會標成待處理、預設不執行，等你決定要怎麼改。</p>
+        <p className="text-xs text-gray-600 dark:text-gray-300">會標成待處理、預設不執行，等你決定要怎麼改。</p>
       )}
-      {item.op === "deprecate" && <p className="text-xs text-gray-600">會停用，保留歷史但不再執行。</p>}
+      {item.op === "deprecate" && <p className="text-xs text-gray-600 dark:text-gray-300">會停用，保留歷史但不再執行。</p>}
       {open && merged && <CaseEditor snapshot={merged} onEdit={onEdit} />}
     </ItemShell>
   );
@@ -459,10 +459,10 @@ function ItemShell({
 }) {
   const blocked = !!item.unresolved;
   return (
-    <div className={`rounded-md border p-3 ${blocked ? "border-gray-200 bg-gray-50 opacity-70" : checked ? "border-blue-200 bg-blue-50/40" : "border-gray-200"}`}>
+    <div className={`rounded-md border p-3 ${blocked ? "border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 opacity-70" : checked ? "border-blue-200 dark:border-blue-900 bg-blue-50/40 dark:bg-blue-950/30" : "border-gray-200 dark:border-gray-700"}`}>
       <div className="flex items-start gap-2">
         {blocked ? (
-          <span className="mt-0.5 text-xs text-gray-400">—</span>
+          <span className="mt-0.5 text-xs text-gray-400 dark:text-gray-500">—</span>
         ) : (
           <input
             type="checkbox"
@@ -475,11 +475,11 @@ function ItemShell({
         <div className="min-w-0 flex-1 space-y-1">
           <div className="flex flex-wrap items-center gap-2">
             {label}
-            <span className="text-sm font-medium text-gray-800">{title}</span>
+            <span className="text-sm font-medium text-gray-800 dark:text-gray-100">{title}</span>
             {aside && <span className="ml-auto">{aside}</span>}
           </div>
-          {item.reason && <p className="text-xs text-gray-600">理由：{item.reason}</p>}
-          {blocked && <p className="text-xs text-red-600">{item.unresolved}</p>}
+          {item.reason && <p className="text-xs text-gray-600 dark:text-gray-300">理由：{item.reason}</p>}
+          {blocked && <p className="text-xs text-red-600 dark:text-red-400">{item.unresolved}</p>}
           {children}
         </div>
       </div>
@@ -489,7 +489,7 @@ function ItemShell({
 
 function CasePreview({ snapshot }: { snapshot: CaseSnapshot }) {
   return (
-    <div className="rounded bg-gray-50 p-2 text-xs text-gray-700">
+    <div className="rounded bg-gray-50 dark:bg-gray-800/50 p-2 text-xs text-gray-700 dark:text-gray-200">
       <p>前置條件：{snapshot.precondition || "（無）"}</p>
       <ol className="ml-4 list-decimal">
         {snapshot.steps.map((s, i) => (
@@ -497,7 +497,7 @@ function CasePreview({ snapshot }: { snapshot: CaseSnapshot }) {
         ))}
       </ol>
       <p>預期結果：{snapshot.expected}</p>
-      <p className="text-gray-500">
+      <p className="text-gray-500 dark:text-gray-400">
         {snapshot.priority} / {CASE_TYPE_LABEL[snapshot.type] ?? snapshot.type}
       </p>
     </div>
@@ -507,7 +507,7 @@ function CasePreview({ snapshot }: { snapshot: CaseSnapshot }) {
 /** §4.4 「手動修改後按套用」: the reviewer's edits win over what the model wrote. */
 function CaseEditor({ snapshot, onEdit }: { snapshot: CaseSnapshot; onEdit: (patch: Partial<CaseSnapshot>) => void }) {
   return (
-    <div className="space-y-2 rounded bg-white p-2 ring-1 ring-gray-200">
+    <div className="space-y-2 rounded bg-white dark:bg-gray-900 p-2 ring-1 ring-gray-200 dark:ring-gray-700">
       <Field label="標題">
         <Input value={snapshot.title} onChange={(e) => onEdit({ title: e.target.value })} />
       </Field>
@@ -567,7 +567,7 @@ function CheckRow({
 
 /** Colours a server-computed diff. Lines start with "+ ", "- " or two spaces. */
 function DiffView({ text }: { text: string }) {
-  if (!text.trim()) return <p className="text-xs text-gray-400">（沒有內容變動）</p>;
+  if (!text.trim()) return <p className="text-xs text-gray-400 dark:text-gray-500">（沒有內容變動）</p>;
   return (
     <pre className="overflow-x-auto rounded bg-gray-900/95 p-2 text-xs leading-relaxed text-gray-200">
       {text.split("\n").map((line, i) => (
@@ -580,7 +580,7 @@ function DiffView({ text }: { text: string }) {
                 ? "text-red-300"
                 : line.startsWith("【")
                   ? "mt-1 font-semibold text-gray-100"
-                  : "text-gray-400"
+                  : "text-gray-400 dark:text-gray-500"
           }
         >
           {line || " "}
@@ -604,14 +604,14 @@ function Timeline({ entries, loading, error }: { entries: ChangeLogEntry[]; load
       {!loading && !entries.length && <Empty>還沒有套用過任何變更。</Empty>}
       <ol className="space-y-3">
         {entries.map((entry) => (
-          <li key={entry.id} className="border-l-2 border-gray-200 pl-3">
-            <div className="flex flex-wrap items-center gap-2 text-xs text-gray-500">
+          <li key={entry.id} className="border-l-2 border-gray-200 dark:border-gray-700 pl-3">
+            <div className="flex flex-wrap items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
               <span>{formatDate(entry.appliedAt)}</span>
               <Badge tone="blue">{CHANGE_SOURCE_LABEL[entry.source]}</Badge>
               <span>{entry.appliedBy}</span>
             </div>
-            <p className="text-sm text-gray-800">{entry.summary}</p>
-            <p className="text-xs text-gray-500">
+            <p className="text-sm text-gray-800 dark:text-gray-100">{entry.summary}</p>
+            <p className="text-xs text-gray-500 dark:text-gray-400">
               影響 {entry.featureCount} 個功能、{entry.caseCount} 條案例
               {entry.descriptionVersionAfter !== null && `，描述更新為 v${entry.descriptionVersionAfter}`}
             </p>
@@ -638,13 +638,13 @@ function DecidedList({ proposals }: { proposals: ChangeProposal[] }) {
           {proposals.map((p) => (
             <li key={p.id} className="flex items-start gap-2 text-sm">
               <Badge tone={PROPOSAL_STATE_TONE[p.state]}>{PROPOSAL_STATE_LABEL[p.state]}</Badge>
-              <span className="flex-1 text-gray-700">{p.summary}</span>
-              <span className="text-xs text-gray-400">{formatDate(p.decidedAt ?? p.createdAt)}</span>
+              <span className="flex-1 text-gray-700 dark:text-gray-200">{p.summary}</span>
+              <span className="text-xs text-gray-400 dark:text-gray-500">{formatDate(p.decidedAt ?? p.createdAt)}</span>
             </li>
           ))}
         </ul>
       ) : (
-        <p className="text-xs text-gray-500">已套用或已拒絕的提案都留在這裡。</p>
+        <p className="text-xs text-gray-500 dark:text-gray-400">已套用或已拒絕的提案都留在這裡。</p>
       )}
     </Card>
   );

@@ -20,6 +20,7 @@ import type { McpToolForPrompt } from "./run-prompts";
 import { EvidenceService } from "./evidence.service";
 import { HttpExecutorService, fillCredentials, type HttpLog } from "./http-executor.service";
 import { ApiSetupService, type SetupStep } from "./api-setup.service";
+import { fenceUntrusted } from "../common/untrusted";
 import {
   caseSystemPrompt, verdictSystemPrompt, verdictTranscript,
   type CaseForPrompt, type TargetForPrompt,
@@ -591,7 +592,7 @@ export class RunService implements OnModuleInit {
         try {
           const result = await this.mcp.callTool(String(p.server_id ?? ""), String(p.tool ?? ""), (p.arguments ?? {}) as Record<string, unknown>);
           ok = !result.isError;
-          feedback = `MCP 工具「${p.tool}」回傳：\n${result.text.slice(0, 4000)}`;
+          feedback = `MCP 工具「${p.tool}」回傳：\n${fenceUntrusted("MCP 工具回傳", result.text.slice(0, 4000))}`;
         } catch (err) {
           ok = false;
           feedback = `MCP 工具「${p.tool}」呼叫失敗：${(err as Error).message}`;
@@ -1052,7 +1053,7 @@ function describeOutcome(
     ? `動作 ${step.action.type} 執行完成。`
     : `動作 ${step.action.type} 失敗：${outcome.error ?? "未知錯誤"}`;
   const detail = Object.keys(outcome.detail).length
-    ? `\n結果：${JSON.stringify(outcome.detail).slice(0, 4000)}`
+    ? `\n結果：${fenceUntrusted("回應內容", JSON.stringify(outcome.detail).slice(0, 4000))}`
     : "";
   return `${head}${detail}`;
 }

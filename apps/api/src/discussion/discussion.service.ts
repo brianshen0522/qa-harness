@@ -15,6 +15,7 @@ import {
   type ChecklistItem, type CompletenessMap,
 } from "./checklists";
 import { extractUrls, UrlFetchService, type FetchedPage } from "./url-fetch.service";
+import { fenceUntrusted } from "../common/untrusted";
 
 /** How many past messages are replayed to the model. */
 const HISTORY_LIMIT = 30;
@@ -358,7 +359,7 @@ function buildUserTurn(content: string, pages: FetchedPage[]): string {
   const blocks = pages.map((p) =>
     p.error
       ? `### ${p.url}\n（抓取失敗：${p.error}）`
-      : `### ${p.title ?? p.url}\n來源：${p.url}\n\n${p.text}`,
+      : `### ${p.title ?? p.url}\n來源：${p.url}\n\n${fenceUntrusted("網頁內容", p.text)}`,
   );
   return [content, "", "---", "以下是使用者訊息中連結的內容，請一併參考：", "", ...blocks].join("\n");
 }

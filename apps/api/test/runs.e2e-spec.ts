@@ -742,4 +742,17 @@ describe("test runs (e2e)", () => {
       expect(setup.length).toBe(2);
     }, 60_000);
   });
+
+  it("drops verdict evidence refs that point at no real step (§4.7)", async () => {
+    stubModel(
+      (call) => (call <= 1 ? { type: "http_request", params: { method: "GET", path: "/ok" } } : null),
+      { evidence_refs: ["step-1", "step-99"] },
+    );
+    await api(app).post(`/api/targets/${targetId}/runs`).set("Cookie", editor).send({ caseIds: [caseIds[0]] }).expect(201);
+    const run = await waitForRun(["succeeded", "failed", "aborted"]);
+    const result = await prisma.testResult.findFirstOrThrow({ where: { runId: run.id, testCaseId: caseIds[0] } });
+    const ev = result.evidence as { evidenceRefs: string[] };
+    expect(ev.evidenceRefs).toContain("step-1");
+    expect(ev.evidenceRefs).not.toContain("step-99");
+  }, 60_000);
 });

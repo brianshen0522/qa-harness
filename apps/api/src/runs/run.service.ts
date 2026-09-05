@@ -526,6 +526,9 @@ export class RunService implements OnModuleInit {
     const turns: { assistant: string; user: ContentPart[] }[] = [];
     const transcript: { seq: number; phase: string; intent: string; observation: string; action: unknown; result?: unknown }[] = [];
     const screenshots: string[] = [];
+    // Recent base64 frames (capped) so the judge can SEE the end state, not just the
+    // agent's self-reported observations.
+    const frames: string[] = [];
     const httpLogs: HttpLog[] = [];
     let seq = 0;
     let stopReason = `已達步數上限（${maxSteps}）`;
@@ -546,6 +549,8 @@ export class RunService implements OnModuleInit {
           break;
         }
         screenshot = shot.image;
+        frames.push(screenshot);
+        if (frames.length > SCREENSHOT_WINDOW) frames.shift();
       }
 
       const decided = await this.withLlm(record, () =>
@@ -568,8 +573,14 @@ export class RunService implements OnModuleInit {
 
       if (step.action.type === "done") {
         stopReason = String(step.action.params?.summary ?? step.observation ?? "代理回報完成");
+        // The frame at `done` proves the final state; earlier step shots are all
+        // pre-action, so without this the outcome is never captured as evidence.
+        const doneKey = screenshot
+          ? (await this.evidence.putScreenshot(record.runId, ctx.queueRow.testCaseId, seq, screenshot))?.key ?? null
+          : null;
+        if (doneKey) screenshots.push(doneKey);
         transcript.push({ seq, phase: step.phase, intent: step.intent, observation: step.observation, action: step.action });
-        await this.recordStep(record, ctx.queueRow.testCaseId, seq, step, null, decided.model, 0, null);
+        await this.recordStep(record, ctx.queueRow.testCaseId, seq, step, null, decided.model, 0, doneKey);
         break;
       }
 
@@ -631,7 +642,7 @@ export class RunService implements OnModuleInit {
     const videoKey = recording ? await this.storeRecording(record.runId, ctx.queueRow.testCaseId, ctx.agentPort!) : null;
 
     // ----- judge -----
-    const verdict = await this.judge(record, forPrompt, transcript, stopReason);
+    const verdict = await this.judge(record, forPrompt, transcript, stopReason, frames, ctx.needsSandbox);
     const durationMs = Date.now() - caseStarted;
 
     await this.writeResult(record.runId, ctx.queueRow.testCaseId, testCase.currentVersion, {
@@ -675,18 +686,34 @@ export class RunService implements OnModuleInit {
     testCase: CaseForPrompt,
     transcript: { seq: number; phase: string; intent: string; observation: string; action: unknown; result?: unknown }[],
     stopReason: string,
+    frames: string[] = [],
+    withVision = false,
   ): Promise<CaseVerdict | null> {
+    // Show the judge the actual last frames, not just the agent's self-reported
+    // observations, so it can catch a "登入成功" that the screen contradicts.
+    const content: ContentPart[] = [
+      ...(withVision ? frames.map((base64) => ({ type: "image" as const, mediaType: "image/png" as const, base64 })) : []),
+      { type: "text" as const, text: verdictTranscript(transcript, stopReason) },
+    ];
     const decided = await this.withLlm(record, () =>
       this.gateway.structured("execute", "case_verdict", {
         system: verdictSystemPrompt(testCase),
-        messages: [{ role: "user", content: verdictTranscript(transcript, stopReason) }],
+        messages: [{ role: "user", content }],
         // A judgment call deserves to think, but not so much it blanks the budget on
         // a 90s proxy; a generous ceiling lets it reason and still emit the object.
         maxTokens: 4096,
         reasoningEffort: "medium",
-      }, { context: { projectId: record.projectId, targetId: record.targetId } }),
+      }, { requireVision: withVision && frames.length > 0, context: { projectId: record.projectId, targetId: record.targetId } }),
     );
-    return decided?.data ?? null;
+    if (!decided) return null;
+    // Drop evidence refs that do not point at a real step, so the UI never shows a
+    // citation like step-9 of a 5-step run.
+    const validRefs = new Set(transcript.map((t) => `step-${t.seq}`));
+    const verdict = decided.data;
+    if (Array.isArray(verdict.evidence_refs)) {
+      verdict.evidence_refs = verdict.evidence_refs.filter((r) => validRefs.has(r));
+    }
+    return verdict;
   }
 
   private async performAction(

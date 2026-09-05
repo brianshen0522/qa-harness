@@ -9,6 +9,7 @@ import { LlmExhaustedError, LlmGatewayService } from "../llm/llm-gateway.service
 import { LlmHealthService } from "../llm/llm-health.service";
 import { AuditService } from "../audit/audit.service";
 import { DiscoveryService, type DiscoveryResult } from "./discovery.service";
+import { DesktopDiscoveryService } from "./desktop-discovery.service";
 import { SkillsService } from "../skills/skills.service";
 
 export type GenerationEvent =
@@ -70,6 +71,7 @@ export class GenerationService implements OnModuleInit {
     private readonly health: LlmHealthService,
     private readonly audit: AuditService,
     private readonly skills: SkillsService,
+    private readonly desktopDiscovery: DesktopDiscoveryService,
   ) {}
 
   /**
@@ -222,7 +224,9 @@ export class GenerationService implements OnModuleInit {
       if (saved?.discovery) {
         discovery = { ...saved.discovery, kind: target.kind } as DiscoveryResult;
       } else {
-        discovery = await this.discovery.discover(target.kind, (target.config ?? {}) as Record<string, unknown>);
+        discovery = target.kind === "desktop"
+          ? await this.desktopDiscovery.discover((target.config ?? {}) as Record<string, unknown>, userId)
+          : await this.discovery.discover(target.kind, (target.config ?? {}) as Record<string, unknown>);
       }
       this.publish(record, { type: "discovery", ok: discovery.ok, source: discovery.source, note: discovery.note });
 

@@ -4,6 +4,7 @@ import { PrismaModule } from "./prisma/prisma.module";
 import { CryptoModule } from "./crypto/crypto.module";
 import { AuditModule } from "./audit/audit.module";
 import { AuthModule } from "./auth/auth.module";
+import { MeModule } from "./me/me.module";
 import { PermissionsModule } from "./permissions/permissions.module";
 import { TeamsModule } from "./teams/teams.module";
 import { ProjectsModule } from "./projects/projects.module";
@@ -21,7 +22,7 @@ import { SkillsModule } from "./skills/skills.module";
 import { McpModule } from "./mcp/mcp.module";
 
 @Module({
-  imports: [
+  imports: [MeModule, 
     ConfigModule.forRoot({ isGlobal: true }),
     PrismaModule,
     CryptoModule,

@@ -1,6 +1,7 @@
-import { Link, NavLink, Navigate, Outlet, useLocation } from "react-router-dom";
+import { Link, NavLink, Navigate, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useLogout, useMe } from "../api/auth";
 import { ThemeToggle } from "./ThemeToggle";
+import { useRunWatcher } from "../useRunWatcher";
 import { Button, Spinner } from "./ui";
 
 function navClass({ isActive }: { isActive: boolean }) {
@@ -11,6 +12,8 @@ export function UserLayout() {
   const me = useMe();
   const logout = useLogout();
   const location = useLocation();
+  const navigate = useNavigate();
+  const { active: activeRuns } = useRunWatcher();
 
   if (me.isPending) return <Spinner />;
   if (me.isError) return <p className="p-6 text-sm text-red-600 dark:text-red-400">無法連線到伺服器：{me.error.message}</p>;
@@ -26,6 +29,9 @@ export function UserLayout() {
             </Link>
             <nav className="flex items-center gap-1">
               <NavLink to="/" end className={navClass}>
+                首頁
+              </NavLink>
+              <NavLink to="/projects" className={navClass}>
                 Projects
               </NavLink>
               <NavLink to="/teams" className={navClass}>

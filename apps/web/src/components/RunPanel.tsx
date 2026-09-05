@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useToast } from "./Toast";
+import { requestNotifyPermission } from "../notify";
 import { api, apiEventSource } from "../api/client";
 import type {
   AbortRunResult,
@@ -262,6 +264,7 @@ export function RunPanel({ targetId, kind, myRole }: { targetId: string; kind: T
     qc.invalidateQueries({ queryKey: stepsKey(state.runFinished.runId) });
   }, [state.runFinished, qc]);
 
+  const toast = useToast();
   const start = useMutation({
     mutationFn: (caseIds: string[] | undefined) =>
       api<StartRunResult>(`/targets/${targetId}/runs`, {
@@ -272,13 +275,19 @@ export function RunPanel({ targetId, kind, myRole }: { targetId: string; kind: T
       attachedRef.current = true;
       setEvents([]);
       attach();
+      requestNotifyPermission();
+      toast.success("已開始執行,完成時會通知你");
       qc.invalidateQueries({ queryKey: runsKey(targetId) });
     },
+    onError: (e) => toast.error(e instanceof Error ? e.message : "無法開始執行"),
   });
 
   const abort = useMutation({
     mutationFn: () => api<AbortRunResult>(`/targets/${targetId}/runs/abort`, { method: "POST" }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: runsKey(targetId) }),
+    onSuccess: () => {
+      toast.toast("已送出中止", { tone: "info" });
+      qc.invalidateQueries({ queryKey: runsKey(targetId) });
+    },
   });
 
   const skip = useMutation({

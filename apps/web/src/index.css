@@ -36,3 +36,11 @@ body {
 .theme-pop {
   animation: theme-pop 0.35s ease;
 }
+
+@keyframes toast-in {
+  from { transform: translateY(8px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+.toast-in {
+  animation: toast-in 0.2s ease;
+}

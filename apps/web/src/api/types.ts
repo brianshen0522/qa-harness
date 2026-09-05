@@ -1147,3 +1147,34 @@ export interface SetupStep {
 export interface ApiSetup {
   steps: SetupStep[];
 }
+
+// ---------- Dashboard / run watcher ----------
+export interface Verdicts { pass: number; fail: number; blocked: number; skipped: number }
+export interface MyRun {
+  id: string;
+  targetId: string;
+  targetName: string;
+  projectId: string;
+  status: "running" | "paused" | "queued" | "succeeded" | "failed" | "aborted";
+  total: number;
+  done: number;
+  verdicts: Verdicts;
+  startedAt: string;
+  endedAt: string | null;
+}
+export interface OverviewTarget {
+  id: string;
+  name: string;
+  kind: TargetKind;
+  projectId: string;
+  projectName: string;
+  running: boolean;
+  outdatedCases: number;
+  openFindings: number;
+  activeRun: { id: string; status: string; total: number; done: number } | null;
+  lastRun: { id: string; status: string; endedAt: string | null; verdicts: Verdicts } | null;
+}
+export interface Overview {
+  targets: OverviewTarget[];
+  totals: { activeRuns: number; failingTargets: number; outdatedCases: number; openFindings: number };
+}

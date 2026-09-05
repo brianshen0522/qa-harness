@@ -1,6 +1,7 @@
 import { Navigate, Route, Routes } from "react-router-dom";
 import { AdminLayout, UserLayout } from "./components/Layouts";
 import LoginPage from "./pages/LoginPage";
+import DashboardPage from "./pages/DashboardPage";
 import ProjectsPage from "./pages/ProjectsPage";
 import TeamsPage from "./pages/TeamsPage";
 import ProjectDetailPage from "./pages/ProjectDetailPage";
@@ -17,7 +18,8 @@ export default function App() {
     <Routes>
       <Route path="/login" element={<LoginPage />} />
       <Route element={<UserLayout />}>
-        <Route index element={<ProjectsPage />} />
+        <Route index element={<DashboardPage />} />
+        <Route path="/projects" element={<ProjectsPage />} />
         <Route path="/teams" element={<TeamsPage />} />
         <Route path="/projects/:id" element={<ProjectDetailPage />} />
         <Route path="/targets/:id" element={<TargetDetailPage />} />

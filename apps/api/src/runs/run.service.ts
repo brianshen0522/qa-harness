@@ -153,6 +153,11 @@ export class RunService implements OnModuleInit {
     await this.perms.requireTarget(targetId, userId, Role.editor);
     const target = await this.prisma.qaTarget.findUniqueOrThrow({ where: { id: targetId } });
 
+    // Busy check first, so the message is accurate ("正在探索/生成") even when the
+    // target happens to have no runnable cases. The atomic lock below still wins races.
+    const busy = await targetLockHolder(this.prisma, targetId);
+    if (busy) throw new ConflictException(`${busyMessage(busy)},無法同時執行 QA。`);
+
     const cases = await this.prisma.testCase.findMany({
       where: {
         targetId,

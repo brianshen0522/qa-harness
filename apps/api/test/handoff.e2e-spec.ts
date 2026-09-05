@@ -9,6 +9,15 @@ target_kind: web
 generated_at: 2026-09-04T00:00:00.000Z
 ---
 
+## System Overview
+
+一個待辦清單 web app,讓使用者登入後管理自己的待辦。核心功能:登入、列出/新增/完成待辦。
+
+## User Roles
+
+- 一般使用者:登入後在 /todos 管理自己的待辦。
+- 訪客:只能看到登入頁,其它需登入。
+
 ## Routes
 
 - \`/login\` — 登入頁，不需登入

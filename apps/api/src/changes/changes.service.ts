@@ -162,6 +162,8 @@ export class ChangesService {
   async fromRun(runId: string, userId: string) {
     const run = await this.prisma.testRun.findUnique({ where: { id: runId }, select: { targetId: true } });
     if (!run) throw new NotFoundException("執行不存在");
+    // Authorize before reading results, so a non-member can't probe run existence.
+    await this.perms.requireTarget(run.targetId, userId, Role.editor);
     const results = await this.prisma.testResult.findMany({
       where: { runId, possiblyChanged: true },
       select: {
@@ -191,6 +193,7 @@ export class ChangesService {
       include: { run: { select: { targetId: true } } },
     });
     if (!finding) throw new NotFoundException("Finding 不存在");
+    await this.perms.requireTarget(finding.run.targetId, userId, Role.editor);
 
     const proposal = await this.analyze(Scope.target, finding.run.targetId, userId, {
       source: ChangeSource.finding,

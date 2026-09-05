@@ -143,6 +143,27 @@ describe("HttpExecutorService", () => {
     expect(r.log.status).toBeNull();
   });
 
+  it("only substitutes credentials for the target's own origin (no cross-origin exfil)", async () => {
+    // Same origin as base_url -> filled.
+    await svc.perform({ url: `${base}/same`, headers: { Authorization: "Bearer {{token}}" } }, { base_url: base }, { token: "abc123456" });
+    expect(seen.at(-1)?.headers.authorization).toBe("Bearer abc123456");
+    // Different origin than base_url -> the placeholder is NOT filled, so the secret never leaves.
+    await svc.perform({ url: `${base}/other`, headers: { Authorization: "Bearer {{token}}" } }, { base_url: "http://example.com" }, { token: "abc123456" });
+    expect(seen.at(-1)?.headers.authorization).toBe("Bearer {{token}}");
+  });
+
+  it("value-masks a credential in a custom-named request header (not just by name)", async () => {
+    const r = await svc.perform({ path: "/x", headers: { "X-Session": "{{token}}" } }, { base_url: base }, { token: "abc123456" });
+    expect(seen.at(-1)?.headers["x-session"]).toBe("abc123456"); // really sent
+    expect(r.log.requestHeaders["X-Session"]).toBe("****"); // but masked in the stored log
+  });
+
+  it("masks a credential value echoed back in the response body", async () => {
+    const r = await svc.perform({ path: "/echo/s3cretvalue" }, { base_url: base }, { token: "s3cretvalue" });
+    expect(r.log.responseBody).not.toContain("s3cretvalue");
+    expect(r.log.responseBody).toContain("****");
+  });
+
   it("explains what is wrong with a url instead of failing opaquely", async () => {
     // The model reads these messages, so they have to say what to do differently.
     expect((await svc.perform({}, { base_url: base }, {})).error).toMatch(/缺少 url 或 path/);

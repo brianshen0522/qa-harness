@@ -56,17 +56,29 @@ export class HttpExecutorService {
       return this.failure(method, String(params.url ?? params.path ?? ""), (err as Error).message, started);
     }
 
+    // Credentials are only substituted when the request targets the Target's own
+    // origin, so an editor can't author a step that ships {{secret}} to an external
+    // host (privilege escalation — credentials are owner-only to set).
+    const base = (config.base_url ?? "").trim();
+    let creds = credentials;
+    if (base) {
+      try {
+        if (new URL(url).origin !== new URL(base).origin) creds = {};
+      } catch {
+        creds = {};
+      }
+    }
     const headers: Record<string, string> = {};
     for (const [k, v] of Object.entries({ ...(config.headers ?? {}), ...(asRecord(params.headers) ?? {}) })) {
-      headers[k] = fillCredentials(String(v), credentials);
+      headers[k] = fillCredentials(String(v), creds);
     }
     const rawBody = params.body ?? params.json ?? null;
     const body =
       rawBody === null || rawBody === undefined
         ? null
         : typeof rawBody === "string"
-          ? fillCredentials(rawBody, credentials)
-          : fillCredentials(JSON.stringify(rawBody), credentials);
+          ? fillCredentials(rawBody, creds)
+          : fillCredentials(JSON.stringify(rawBody), creds);
     if (body !== null && !Object.keys(headers).some((h) => h.toLowerCase() === "content-type")) {
       headers["content-type"] = "application/json";
     }
@@ -84,18 +96,18 @@ export class HttpExecutorService {
       const text = await res.text();
       const responseHeaders: Record<string, string> = {};
       res.headers.forEach((v, k) => {
-        responseHeaders[k] = SECRET_HEADER.test(k) ? "****" : v;
+        responseHeaders[k] = SECRET_HEADER.test(k) ? "****" : maskValues(v, credentials);
       });
 
       const log: HttpLog = {
         method,
         url,
-        requestHeaders: redactHeaders(headers),
+        requestHeaders: redactHeaders(headers, credentials),
         requestBody: body ? redactBody(body, credentials) : null,
         status: res.status,
         statusText: res.statusText,
         responseHeaders,
-        responseBody: truncate(text),
+        responseBody: redactBody(text, credentials),
         durationMs: Date.now() - started,
       };
       return {
@@ -107,14 +119,14 @@ export class HttpExecutorService {
           status: res.status,
           statusText: res.statusText,
           headers: responseHeaders,
-          body: parseMaybeJson(truncate(text)),
+          body: parseMaybeJson(redactBody(text, credentials)),
         },
         log,
       };
     } catch (err) {
       const message = (err as Error).name === "AbortError" ? `逾時（${timeoutMs}ms）` : (err as Error).message;
       this.log.warn(`http ${method} ${url} failed: ${message}`);
-      return this.failure(method, url, message, started, redactHeaders(headers));
+      return this.failure(method, url, message, started, redactHeaders(headers, credentials));
     } finally {
       clearTimeout(timer);
     }
@@ -176,10 +188,19 @@ export function fillCredentials(text: string, credentials: Record<string, string
   );
 }
 
-export function redactHeaders(headers: Record<string, string>): Record<string, string> {
+export function redactHeaders(headers: Record<string, string>, credentials: Record<string, string> = {}): Record<string, string> {
   return Object.fromEntries(
-    Object.entries(headers).map(([k, v]) => [k, SECRET_HEADER.test(k) ? "****" : v]),
+    Object.entries(headers).map(([k, v]) => [k, SECRET_HEADER.test(k) ? "****" : maskValues(v, credentials)]),
   );
+}
+
+/** Mask any credential value that appears in a string (header value, etc.). */
+export function maskValues(text: string, credentials: Record<string, string>): string {
+  let out = text;
+  for (const value of Object.values(credentials)) {
+    if (value && value.length >= 4) out = out.split(value).join("****");
+  }
+  return out;
 }
 
 /** Any credential value that made it into a body is masked before it is stored. */

@@ -1,4 +1,5 @@
 import { Injectable, Logger } from "@nestjs/common";
+import { assertPublicUrl } from "../common/net-guard";
 
 export interface FetchedPage {
   url: string;
@@ -95,14 +96,27 @@ export class UrlFetchService {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
     try {
-      const res = await fetch(parsed.toString(), {
-        redirect: "follow",
-        signal: controller.signal,
-        headers: {
-          accept: "text/html,text/plain,application/json;q=0.9,*/*;q=0.5",
-          "user-agent": "QA-Harness/0.1 (discussion fetch)",
-        },
-      });
+      // SSRF guard: validate the host (and every redirect hop) resolves to a public
+      // address, so a link can't be used to read cloud metadata or internal services.
+      let current = parsed.toString();
+      let res: Response;
+      for (let hop = 0; ; hop++) {
+        await assertPublicUrl(current, process.env.ALLOW_PRIVATE_FETCH === "true");
+        res = await fetch(current, {
+          redirect: "manual",
+          signal: controller.signal,
+          headers: {
+            accept: "text/html,text/plain,application/json;q=0.9,*/*;q=0.5",
+            "user-agent": "QA-Harness/0.1 (discussion fetch)",
+          },
+        });
+        if (res.status >= 300 && res.status < 400 && res.headers.get("location")) {
+          if (hop >= 5) return { url, title: null, text: "", chars: 0, error: "重新導向次數過多" };
+          current = new URL(res.headers.get("location")!, current).toString();
+          continue;
+        }
+        break;
+      }
       if (!res.ok) return { url, title: null, text: "", chars: 0, error: `HTTP ${res.status}` };
 
       const ctype = res.headers.get("content-type") ?? "";

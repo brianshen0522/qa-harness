@@ -20,7 +20,9 @@ export const env = {
   WEB_ORIGIN: opt("WEB_ORIGIN", "http://localhost:5173"),
   DATABASE_URL: req("DATABASE_URL"),
   USER_JWT_SECRET: req("USER_JWT_SECRET"),
-  COOKIE_SECURE: bool("COOKIE_SECURE", false),
+  COOKIE_SECURE: bool("COOKIE_SECURE", process.env.NODE_ENV === "production"),
+  // Allow the discussion URL fetcher to reach private/internal hosts (SSRF guard off).
+  ALLOW_PRIVATE_FETCH: bool("ALLOW_PRIVATE_FETCH", false),
   CREDENTIAL_MASTER_KEY: req("CREDENTIAL_MASTER_KEY"),
   GOOGLE_CLIENT_ID: opt("GOOGLE_CLIENT_ID"),
   GOOGLE_CLIENT_SECRET: opt("GOOGLE_CLIENT_SECRET"),

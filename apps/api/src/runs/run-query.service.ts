@@ -1,9 +1,20 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
 import { FindingStatus, Role, Verdict } from "@prisma/client";
+import { LlmGatewayService } from "../llm/llm-gateway.service";
+import type { LlmMessage } from "../llm/providers";
 import { PrismaService } from "../prisma/prisma.service";
 import { PermissionsService } from "../permissions/permissions.service";
 import { AuditService } from "../audit/audit.service";
 import { EvidenceService } from "./evidence.service";
+
+const ASK_SYSTEM = [
+  "你是 QA 分析助理。使用者剛看完一次 QA 執行的結果，對某個判定或發現不太理解，來問你。",
+  "你只能根據下面提供的證據（測試案例、判定與理由、執行過程、finding）回答，不要臆造沒有的資訊。",
+  "回答要能幫他「理解結論並知道下一步去查程式碼的哪裡」：",
+  "- 用白話解釋這個判定/發現到底在說什麼、為什麼會這樣判。",
+  "- 如果是失敗或異常，指出最可能的成因，以及建議去檢查的程式碼位置或邏輯（例如某個 endpoint、某個驗證、某個狀態碼）。",
+  "- 不確定的地方就說不確定，並說明還需要什麼資訊。用繁體中文、精簡、直接。",
+].join("\n");
 
 /** Reading runs, results and findings, plus human review (§4.7). */
 @Injectable()
@@ -13,6 +24,7 @@ export class RunQueryService {
     private readonly perms: PermissionsService,
     private readonly evidence: EvidenceService,
     private readonly audit: AuditService,
+    private readonly gateway: LlmGatewayService,
   ) {}
 
   assertViewer(targetId: string, userId: string) {
@@ -198,7 +210,98 @@ export class RunQueryService {
     if (!rows.length) throw new BadRequestException("這次執行沒有失敗或受阻的案例。");
     return rows.map((r) => r.testCaseId);
   }
+
+  /**
+   * §4.7-adjacent: let a user ask about a QA result they don't understand. The
+   * answer is grounded in this run's own evidence — the case, the verdict and
+   * its reasoning, the step transcript, findings — and steers toward "what to
+   * check in the code", which is what a failing verdict is usually asking for.
+   * Works on a finished or aborted run alike, since it reads persisted results.
+   */
+  async ask(runId: string, userId: string, question: string, opts: { resultId?: string; history?: { role: "user" | "assistant"; content: string }[] } = {}) {
+    const run = await this.prisma.testRun.findUnique({
+      where: { id: runId },
+      include: { target: { select: { id: true, name: true, kind: true, description: true } } },
+    });
+    if (!run) throw new NotFoundException("執行不存在");
+    await this.assertViewer(run.targetId, userId);
+    if (!question?.trim()) throw new BadRequestException("問題不能是空的");
+
+    const context = await this.buildAskContext(run, opts.resultId);
+    const history = (opts.history ?? []).slice(-8).map((m): LlmMessage => ({ role: m.role, content: m.content }));
+    const res = await this.gateway.complete(
+      "discuss",
+      {
+        system: ASK_SYSTEM,
+        messages: [
+          { role: "user", content: context },
+          ...history,
+          { role: "user", content: question.trim() },
+        ],
+        maxTokens: 1500,
+        reasoningEffort: "low",
+      },
+      { context: { projectId: null, targetId: run.targetId } },
+    );
+    return { answer: res.text.trim(), model: res.model };
+  }
+
+  private async buildAskContext(
+    run: { id: string; target: { name: string; kind: string; description: string } },
+    resultId?: string,
+  ): Promise<string> {
+    const lines: string[] = [
+      `# 被測目標\n${run.target.name}（${run.target.kind}）`,
+      run.target.description.trim() ? `## 描述\n${run.target.description.trim().slice(0, 4000)}` : "",
+      "",
+    ];
+
+    if (resultId) {
+      const result = await this.prisma.testResult.findUnique({
+        where: { id: resultId },
+        include: { testCase: { select: { id: true, title: true, precondition: true, steps: true, expected: true } } },
+      });
+      if (result) {
+        const steps = await this.prisma.runStep.findMany({
+          where: { runId: run.id, testCaseId: result.testCaseId },
+          orderBy: { seq: "asc" },
+        });
+        lines.push(
+          "# 這一條測試案例",
+          `標題：${result.testCase.title}`,
+          `前置條件：${result.testCase.precondition || "（無）"}`,
+          `步驟：\n${((result.testCase.steps as string[]) ?? []).map((s, i) => `  ${i + 1}. ${s}`).join("\n")}`,
+          `預期結果：${result.testCase.expected}`,
+          "",
+          "# 執行結果",
+          `模型判定：${result.verdict}`,
+          `判定理由：${result.llmReasoning || "（無）"}`,
+          result.reproSteps.length ? `重現步驟：\n${result.reproSteps.map((s) => `  - ${s}`).join("\n")}` : "",
+          result.possiblyChanged ? "（這條被標記為「可能是功能改了而不是壞了」）" : "",
+          "",
+          "# 執行過程（step transcript）",
+          ...steps.map((s) => `## step-${s.seq}（${s.phase}）\n意圖：${s.intent}\n觀察：${s.observation}\n動作：${JSON.stringify(s.action)}\n結果：${JSON.stringify(s.result).slice(0, 1500)}`),
+        );
+      }
+    } else {
+      const results = await this.prisma.testResult.findMany({
+        where: { runId: run.id },
+        include: { testCase: { select: { title: true } } },
+      });
+      const findings = await this.prisma.runFinding.findMany({ where: { runId: run.id } });
+      lines.push(
+        "# 這次執行的所有結果",
+        ...results.map((r) => `- ${r.testCase.title}：${r.verdict}${r.llmReasoning ? `（${r.llmReasoning.slice(0, 200)}）` : ""}`),
+        "",
+        findings.length ? "# Findings" : "",
+        ...findings.map((f) => `- [${f.severity}] ${f.title}：${f.description.slice(0, 200)}`),
+      );
+    }
+    return lines.filter(Boolean).join("\n").slice(0, 60_000);
+  }
 }
+
+
 
 function tally(rows: { verdict: Verdict; _count: { _all: number } }[]): Record<string, number> {
   const counts: Record<string, number> = { pass: 0, fail: 0, blocked: 0, skipped: 0 };

@@ -1374,6 +1374,7 @@ function ResultCase({
 }) {
   const [open, setOpen] = useState(false);
   const [viewerOpen, setViewerOpen] = useState(false);
+  const [askOpen, setAskOpen] = useState(false);
   const result = item.result;
   const disagree = !!result?.humanVerdict && result.humanVerdict !== result.verdict;
 
@@ -1446,6 +1447,11 @@ function ResultCase({
         </div>
       )}
 
+      {result && (
+        <div className="mt-2 flex items-center gap-2">
+          <Button variant="secondary" size="sm" onClick={() => setAskOpen(true)}>問 LLM 這條結果</Button>
+        </div>
+      )}
       {result && canEdit && <ReviewControls result={result} onReviewed={onReviewed} />}
       {result && !canEdit && result.humanNote && (
         <p className="mt-2 text-xs text-gray-500">覆核備註：{result.humanNote}</p>
@@ -1508,6 +1514,9 @@ function ResultCase({
         </div>
       )}
 
+      {askOpen && result && (
+        <AskLlmDialog runId={runId} resultId={result.id} title={item.testCase.title} onClose={() => setAskOpen(false)} />
+      )}
       {viewerOpen && (
         <StepViewer
           runId={runId}
@@ -1526,6 +1535,73 @@ function ResultCase({
 /** Steps that carry HTTP detail and no screenshot are an api run. */
 function kindOfSteps(steps: RunStepRow[]): "api" | "web" {
   return steps.some((s) => s.screenshotKey) ? "web" : "api";
+}
+
+function AskLlmDialog({
+  runId,
+  resultId,
+  title,
+  onClose,
+}: {
+  runId: string;
+  resultId?: string;
+  title: string;
+  onClose: () => void;
+}) {
+  const [thread, setThread] = useState<{ role: "user" | "assistant"; content: string }[]>([]);
+  const [q, setQ] = useState("");
+
+  const ask = useMutation({
+    mutationFn: (question: string) =>
+      api<{ answer: string; model: string }>(`/runs/${runId}/ask`, {
+        method: "POST",
+        body: { question, resultId, history: thread },
+      }),
+    onSuccess: (data, question) => {
+      setThread((prev) => [...prev, { role: "user", content: question }, { role: "assistant", content: data.answer }]);
+      setQ("");
+    },
+  });
+
+  const send = () => {
+    const question = q.trim();
+    if (question) ask.mutate(question);
+  };
+
+  return (
+    <Dialog open size="lg" title={<span>問 LLM<span className="ml-2 text-xs font-normal text-gray-400">{title}</span></span>} onClose={onClose}>
+      <div className="flex max-h-[70vh] flex-col">
+        <p className="mb-2 text-xs text-gray-500">
+          針對這個結果問問題，LLM 會根據這次執行的證據（案例、判定理由、步驟、finding）回答，
+          並盡量指出可以去檢查程式碼的方向。看不懂結論時很好用。
+        </p>
+        <div className="min-h-0 flex-1 space-y-3 overflow-y-auto rounded-md border border-gray-200 bg-gray-50 p-3">
+          {thread.length === 0 && !ask.isPending && (
+            <Empty>還沒有對話。試試「為什麼這條被判失敗？」「我該去改哪裡？」</Empty>
+          )}
+          {thread.map((m, i) => (
+            <div key={i} className={m.role === "user" ? "text-right" : ""}>
+              <div className={`inline-block max-w-[85%] whitespace-pre-wrap rounded-lg px-3 py-2 text-sm ${m.role === "user" ? "bg-blue-600 text-white" : "bg-white text-gray-800 ring-1 ring-gray-200"}`}>
+                {m.content}
+              </div>
+            </div>
+          ))}
+          {ask.isPending && <Spinner label="思考中…" />}
+        </div>
+        <ErrorText error={ask.error} />
+        <div className="mt-2 flex items-end gap-2">
+          <Textarea
+            rows={2}
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) send(); }}
+            placeholder="問一個關於這個結果的問題…（⌘/Ctrl+Enter 送出）"
+          />
+          <Button onClick={send} disabled={ask.isPending || !q.trim()}>送出</Button>
+        </div>
+      </div>
+    </Dialog>
+  );
 }
 
 function ReviewControls({ result, onReviewed }: { result: TestResultRow; onReviewed: () => void }) {

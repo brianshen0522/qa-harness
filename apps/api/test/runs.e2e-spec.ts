@@ -221,6 +221,33 @@ describe("test runs (e2e)", () => {
     expect(result.reproSteps).toEqual(["呼叫 GET /missing"]);
   }, 60_000);
 
+  it("answers a question about a QA result, grounded in the run's evidence (§4.7)", async () => {
+    // Seed a finished run with a failed result + a step, deterministically.
+    const run = await prisma.testRun.create({ data: { targetId, status: "failed", triggeredById: (await prisma.user.findFirstOrThrow({ where: { email: "editor@r.local" } })).id, endedAt: new Date() } });
+    const result = await prisma.testResult.create({
+      data: { runId: run.id, testCaseId: caseIds[0], caseVersion: 1, verdict: "fail", llmReasoning: "endpoint 不存在，實際回 404", reproSteps: ["呼叫 GET /missing"] },
+    });
+    await prisma.runStep.create({
+      data: { runId: run.id, testCaseId: caseIds[0], seq: 1, phase: "executing", action: { type: "http_request", params: { method: "GET", path: "/missing" } }, intent: "呼叫端點", observation: "回 404", result: { ok: true, durationMs: 5, detail: { status: 404 } } },
+    });
+    // The ask uses the "discuss" purpose; give it a config + a plain-text stub.
+    const cfg = await prisma.llmConfig.findFirstOrThrow({ where: { name: "stub" } });
+    await prisma.llmFallbackChain.deleteMany({ where: { purpose: "discuss" } });
+    await prisma.llmFallbackChain.create({ data: { purpose: "discuss", order: 0, llmConfigId: cfg.id } });
+    const textAdapter: LlmProviderAdapter = {
+      async complete(_c, req) {
+        const ctx = String(req.messages[0]?.content ?? "");
+        return { text: ctx.includes("404") ? "這條失敗是因為 endpoint 不存在(404)，去檢查路由設定。" : "沒有看到證據", model: "stub-ask", usage: { inputTokens: 1, outputTokens: 1 }, nativeJson: false };
+      },
+    };
+    app.get(LlmGatewayService).setProviders({ anthropic: textAdapter, openai: textAdapter, ollama: textAdapter });
+
+    const res = await api(app).post(`/api/runs/${run.id}/ask`).set("Cookie", viewer)
+      .send({ question: "為什麼失敗？", resultId: result.id }).expect(201);
+    expect(res.body.answer).toContain("endpoint 不存在");
+    await api(app).post(`/api/runs/${run.id}/ask`).set("Cookie", viewer).send({ question: " " }).expect(400);
+  }, 60_000);
+
   it("records a finding without letting it become the verdict", async () => {
     stubModel((call) => {
       if (call === 1) {

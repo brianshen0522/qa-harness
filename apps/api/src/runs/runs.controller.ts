@@ -26,6 +26,11 @@ class ReviewDto {
 class FindingStatusDto {
   @IsEnum(FindingStatus) status!: FindingStatus;
 }
+class AskDto {
+  @IsString() @MinLength(1) @MaxLength(4000) question!: string;
+  @IsOptional() @IsUUID() resultId?: string;
+  @IsOptional() @IsArray() history?: { role: "user" | "assistant"; content: string }[];
+}
 class ConvertFindingDto {
   @IsString() @MinLength(1) @MaxLength(500) title!: string;
   @IsOptional() @IsString() @MaxLength(5000) precondition?: string;
@@ -169,6 +174,12 @@ export class RunsController {
       featureId: dto.featureId ?? null,
       featureName: dto.featureName ?? null,
     });
+  }
+
+  /** §4.7: ask the LLM to explain a QA result, grounded in this run's evidence. */
+  @Post("runs/:runId/ask")
+  ask(@CurrentUser() user: UserPrincipal, @Param("runId") runId: string, @Body() dto: AskDto) {
+    return this.query.ask(runId, user.id, dto.question, { resultId: dto.resultId, history: dto.history });
   }
 
   @Post("findings/:findingId/status")

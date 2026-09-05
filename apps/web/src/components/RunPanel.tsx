@@ -623,6 +623,7 @@ function LiveRun({
   adding: boolean;
 }) {
   const [openCase, setOpenCase] = useState<string | null>(null);
+  const [viewerSeq, setViewerSeq] = useState<number | undefined>(undefined);
   const [addOpen, setAddOpen] = useState(false);
 
   // Persisted state is the source of truth; the SSE stream only adds liveness.
@@ -706,7 +707,13 @@ function LiveRun({
 
   const liveView =
     kind === "api" ? (
-      <ApiLiveView runId={runId} step={step} rows={steps.data} loading={steps.isPending} fill />
+      <ApiLivePane
+        step={step}
+        rows={steps.data ?? []}
+        current={current}
+        titles={(id) => state.titles.get(id) ?? detailByCase.get(id)?.testCase.title ?? id}
+        onOpenStep={(caseId, seq) => { setViewerSeq(seq); setOpenCase(caseId); }}
+      />
     ) : viewUrl ? (
       <iframe
         src={viewUrl}
@@ -892,7 +899,8 @@ function LiveRun({
             steps={vs}
             verdict={cv.verdict}
             reasoning={cv.reasoning}
-            onClose={() => setOpenCase(null)}
+            initialSeq={viewerSeq}
+            onClose={() => { setOpenCase(null); setViewerSeq(undefined); }}
           />
         );
       })()}
@@ -911,72 +919,96 @@ function LiveRun({
 }
 
 /** `api` targets have no sandbox; the current request is what "live" means here. */
-function ApiLiveView({
-  runId,
+/**
+ * The live pane for an api run: no screen, so a wasted black box would be silly.
+ * Instead this fills the space with the request log — every HTTP call the agent
+ * has made this run — with the current one pinned on top. Clicking any row opens
+ * the big step viewer at that request.
+ */
+function ApiLivePane({
   step,
   rows,
-  loading,
-  fill,
+  current,
+  titles,
+  onOpenStep,
 }: {
-  runId: string | null;
   step: StepEvent | null;
-  rows: RunStepRow[] | undefined;
-  loading: boolean;
-  /** Fill the cockpit's left pane (grow + scroll) instead of sitting inline. */
-  fill?: boolean;
+  rows: RunStepRow[];
+  current: string | null;
+  titles: (caseId: string) => string;
+  onOpenStep: (caseId: string, seq: number) => void;
 }) {
-  const httpStep = step && step.action.type === "http_request" ? step : null;
-  const row =
-    httpStep && runId
-      ? (rows ?? []).find((r) => r.seq === httpStep.seq && r.testCaseId === httpStep.caseId)
-      : undefined;
-  const detail = (row?.result?.detail ?? {}) as { status?: number; statusText?: string; body?: unknown };
-  const params = (httpStep?.action.params ?? {}) as Record<string, unknown>;
-  const method = String(params.method ?? "GET").toUpperCase();
-  const path = String(params.url ?? params.path ?? "");
-  const body =
-    typeof detail.body === "string" ? detail.body : detail.body === undefined ? "" : JSON.stringify(detail.body, null, 2);
+  const httpRows = rows.filter((r) => r.action?.type === "http_request");
+  const latest = httpRows[httpRows.length - 1];
+
+  const line = (r: RunStepRow) => {
+    const p = (r.action?.params ?? {}) as Record<string, unknown>;
+    const detail = (r.result?.detail ?? {}) as { status?: number; statusText?: string };
+    return {
+      method: String(p.method ?? "GET").toUpperCase(),
+      path: String(p.url ?? p.path ?? ""),
+      status: detail.status,
+      ok: r.result?.ok ?? true,
+      ms: r.result?.durationMs ?? r.durationMs,
+    };
+  };
 
   return (
-    <Card title="目前的請求" className={fill ? "flex flex-1 flex-col overflow-hidden [&>div:last-child]:flex-1 [&>div:last-child]:overflow-y-auto" : undefined}>
-      <p className="mb-2 text-xs text-gray-400">
-        api Target 不會起 sandbox，也就沒有畫面可以看；這裡顯示代理當下送出的 HTTP 請求與回應。
-      </p>
-      {!httpStep ? (
-        <Empty>{step ? `目前這一步是「${step.action.type}」，不是 HTTP 請求。` : "還沒有請求。"}</Empty>
-      ) : (
-        <div className="space-y-2">
-          <div className="flex flex-wrap items-center gap-2">
-            <code className="rounded bg-gray-100 px-1.5 py-0.5 text-xs font-semibold text-gray-700">{method}</code>
-            <code className="min-w-0 break-all text-xs text-gray-700">{path}</code>
-            {detail.status !== undefined && (
-              <Badge tone={detail.status >= 500 ? "red" : detail.status >= 400 ? "amber" : "green"}>
-                {detail.status} {detail.statusText ?? ""}
-              </Badge>
-            )}
-            <span className="text-xs text-gray-400">{step?.result.durationMs}ms</span>
-          </div>
-          {step?.intent && (
-            <p className="text-sm text-gray-800">
-              <span className="mr-1 text-xs font-medium text-gray-500">意圖</span>
-              {step.intent}
-            </p>
-          )}
-          {step?.result.error && <p className="text-xs text-red-600">錯誤：{step.result.error}</p>}
-          <div>
-            <p className="mb-1 text-xs font-medium text-gray-500">回應內容</p>
-            {loading && !row ? (
-              <Spinner label="讀取回應中…" />
-            ) : (
-              <pre className="max-h-96 overflow-auto rounded-md bg-gray-900 p-3 text-xs text-gray-100">
-                {body || "（沒有內容）"}
-              </pre>
-            )}
-          </div>
-        </div>
-      )}
-    </Card>
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-md border border-gray-200 bg-white">
+      <div className="shrink-0 border-b border-gray-100 px-3 py-2">
+        <p className="text-xs font-medium text-gray-500">目前這一步</p>
+        {step ? (
+          <p className="mt-0.5 flex flex-wrap items-center gap-2 text-sm">
+            <code className="rounded bg-gray-100 px-1.5 py-0.5 text-xs font-semibold text-gray-700">{step.action.type}</code>
+            <span className="min-w-0 flex-1 truncate text-gray-700">{step.intent || step.observation}</span>
+            <span className={`text-xs ${step.result.ok ? "text-green-700" : "text-red-600"}`}>{step.result.ok ? "成功" : "失敗"} · {step.result.durationMs}ms</span>
+          </p>
+        ) : (
+          <p className="mt-0.5 text-xs text-gray-400">還沒有動作。</p>
+        )}
+      </div>
+      <div className="flex items-center justify-between px-3 py-1.5 text-xs text-gray-500">
+        <span>請求紀錄（{httpRows.length}）</span>
+        <span className="text-gray-400">點任一列看完整請求與回應</span>
+      </div>
+      <ol className="min-h-0 flex-1 divide-y divide-gray-100 overflow-y-auto">
+        {httpRows.length === 0 ? (
+          <li className="p-6 text-center text-sm text-gray-400">還沒有送出任何 HTTP 請求。</li>
+        ) : (
+          httpRows.map((r) => {
+            const l = line(r);
+            const isLatest = latest && r.id === latest.id;
+            return (
+              <li key={r.id}>
+                <button
+                  type="button"
+                  onClick={() => r.testCaseId && onOpenStep(r.testCaseId, r.seq)}
+                  className={`flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-gray-50 ${isLatest ? "bg-blue-50/60" : ""}`}
+                >
+                  <span className="w-8 shrink-0 text-xs text-gray-400">#{r.seq}</span>
+                  <code className={`w-14 shrink-0 rounded px-1 py-0.5 text-center text-xs font-semibold ${methodTone(l.method)}`}>{l.method}</code>
+                  <code className="min-w-0 flex-1 truncate text-xs text-gray-700">{l.path}</code>
+                  {r.testCaseId && current && r.testCaseId === current && <Badge tone="blue">執行中</Badge>}
+                  {l.status !== undefined && (
+                    <Badge tone={l.status >= 500 ? "red" : l.status >= 400 ? "amber" : "green"}>{l.status}</Badge>
+                  )}
+                  <span className="w-14 shrink-0 text-right text-xs text-gray-400">{l.ms}ms</span>
+                </button>
+              </li>
+            );
+          })
+        )}
+      </ol>
+    </div>
   );
+}
+
+function methodTone(method: string): string {
+  if (method === "GET") return "bg-green-100 text-green-800";
+  if (method === "POST") return "bg-blue-100 text-blue-800";
+  if (method === "DELETE") return "bg-red-100 text-red-800";
+  if (method === "PUT" || method === "PATCH") return "bg-amber-100 text-amber-800";
+  return "bg-gray-100 text-gray-700";
 }
 
 function LiveStepCard({ step, runId }: { step: StepEvent; runId: string | null }) {

@@ -19,9 +19,9 @@ const SUGGESTED_CASES: SectionSpec = {
 };
 
 const PROJECT_SECTIONS: SectionSpec[] = [
-  { title: "Product Goal", key: "product_goal", ask: "這個產品的目標與目標使用者。" },
+  { title: "Product Goal", key: "product_goal", ask: "用幾句話說清楚:這個系統「是什麼、在做什麼、解決什麼問題、給誰用」,以及最核心的功能有哪些。讓沒看過的人能快速理解它到底在幹嘛。" },
   { title: "Modules", key: "modules", ask: "模組清單，每個模組一行，說明職責。" },
-  { title: "User Roles", key: "user_roles", ask: "使用者角色與各自權限。" },
+  { title: "User Roles", key: "user_roles", ask: "系統有哪些使用者角色。每個角色分別說明:他是誰、在系統裡實際會做哪些事(典型操作/流程)、以及能存取與不能存取什麼。重點是「這個角色都在做什麼」,不只是權限表。" },
   { title: "Main Flows", key: "main_flows", ask: "主要使用流程，依序列出步驟。" },
   { title: "Tech Stack", key: "tech_stack", ask: "前端、後端、資料庫、佇列、部署方式。" },
   { title: "Dev Environment", key: "dev_environment", ask: "dev 環境網址、啟動方式、種子資料、如何取得測試帳號。" },

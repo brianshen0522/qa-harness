@@ -631,7 +631,15 @@ export class ExploreService implements OnModuleInit {
       orderBy: { depth: "asc" },
     });
 
-    const descriptionVersion = (await this.prisma.qaTarget.findUniqueOrThrow({ where: { id: targetId }, select: { descriptionVersion: true } })).descriptionVersion;
+    const target = await this.prisma.qaTarget.findUniqueOrThrow({ where: { id: targetId }, select: { descriptionVersion: true, description: true } });
+    const descriptionVersion = target.descriptionVersion;
+    // Feed the system's own description (what it does + who the roles are, from the
+    // handoff/discussion) into synthesis, so cases reflect purpose and per-role
+    // behaviour — not just the page structure that was crawled.
+    const desc = target.description?.trim();
+    const sys = desc
+      ? `${SYNTH_SYSTEM}\n\n## 這個系統在做什麼(依描述/交接,可能比掃描更懂它的目的與角色)\n${desc.slice(0, 5000)}\n\n出題時請「結合」系統的目的、各角色實際會做的事,與這個頁面掃到的真實結構——不要只看結構,也要想這個頁面對應到哪個角色的哪個任務。`
+      : SYNTH_SYSTEM;
     let total = 0;
 
     // One synthesis call per reachable, content-bearing route. Small on purpose:
@@ -656,7 +664,7 @@ export class ExploreService implements OnModuleInit {
         deniedFor: node.deniedFor,
         rwdIssues: rwd,
       };
-      const cases = await this.callSynth(record, SYNTH_SYSTEM, synthesisContext(nodeForSynth, baseUrl));
+      const cases = await this.callSynth(record, sys, synthesisContext(nodeForSynth, baseUrl));
       if (cases === null) return total; // cancelled while parked
       total += await this.persistCases(targetId, userId, descriptionVersion, cases, node.routeKey);
       this.publish(record, { type: "synth", routeKey: node.routeKey, cases: cases.length });
@@ -664,7 +672,7 @@ export class ExploreService implements OnModuleInit {
 
     // One dedicated call for cross-identity access, from the matrix.
     if (matrix.rows.length && matrix.identities.length > 1 && !record.abort.signal.aborted) {
-      const cases = await this.callSynth(record, SYNTH_SYSTEM, permissionContext(matrix, baseUrl));
+      const cases = await this.callSynth(record, sys, permissionContext(matrix, baseUrl));
       if (cases) {
         total += await this.persistCases(targetId, userId, descriptionVersion, cases, "權限控制");
         this.publish(record, { type: "synth", routeKey: "權限控制", cases: cases.length });

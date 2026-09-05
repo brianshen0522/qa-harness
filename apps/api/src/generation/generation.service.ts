@@ -251,7 +251,7 @@ export class GenerationService implements OnModuleInit {
             system: withSkills(FEATURE_SYSTEM),
             messages: [{ role: "user", content: context }],
             maxTokens: 4096,
-          }),
+          }, { context: { projectId: target.projectId, targetId: target.id } }),
         );
         if (!res) return; // cancelled while paused
         features = dedupeFeatures(res.data).slice(0, MAX_FEATURES);
@@ -276,7 +276,7 @@ export class GenerationService implements OnModuleInit {
               { role: "user", content: featurePrompt(feature, features) },
             ],
             maxTokens: 8192,
-          }),
+          }, { context: { projectId: target.projectId, targetId: target.id } }),
           { features, featureIndex: index, cases: collected, discovery: toStoredDiscovery(discovery), lastModel },
         );
         if (!res) return; // cancelled while paused

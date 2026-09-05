@@ -54,6 +54,8 @@ interface ActiveRun {
   abort: AbortController;
   /** Cases the user asked to skip while the run is going. */
   skip: Set<string>;
+  /** Project the run belongs to, for usage attribution (§4.8). Set once known. */
+  projectId: string | null;
   /** Which models actually served this run, and where the chain fell over. */
   llm: LlmUsage;
   /** The case being executed, so a fallback can be pinned to where it happened. */
@@ -246,7 +248,7 @@ export class RunService implements OnModuleInit {
   private spawn(runId: string, targetId: string, targetName: string, kind: TargetKind, total: number) {
     const record: ActiveRun = {
       runId, targetId, events: [], subscribers: new Set(),
-      abort: new AbortController(), skip: new Set(),
+      abort: new AbortController(), skip: new Set(), projectId: null,
       llm: emptyUsage(), currentCaseId: null, finished: false,
     };
     this.active.set(targetId, record);
@@ -274,6 +276,7 @@ export class RunService implements OnModuleInit {
     const startedAt = Date.now();
     const settings = await this.sandbox.settings();
     const target = await this.prisma.qaTarget.findUniqueOrThrow({ where: { id: record.targetId } });
+    record.projectId = target.projectId;
     const credentials = await this.targets.decryptedCredentials(record.targetId);
     // §4.5: global + project house rules fold into every case's system prompt.
     const skillsBlock = await this.skills.promptBlock(target.projectId);
@@ -448,7 +451,7 @@ export class RunService implements OnModuleInit {
           // and returns nothing ("no content outside its reasoning block"), which
           // shows up as invalid_output retries — wasted latency and real cost.
           { system, messages: buildMessages(turns, screenshot, seq, maxSteps), maxTokens: 2048, timeoutMs: stepTimeoutMs, reasoningEffort: "low" },
-          { maxRetries: 3, requireVision: ctx.needsSandbox },
+          { maxRetries: 3, requireVision: ctx.needsSandbox, context: { projectId: record.projectId, targetId: record.targetId } },
         ),
       );
       if (!decided) {
@@ -551,7 +554,7 @@ export class RunService implements OnModuleInit {
         system: verdictSystemPrompt(testCase),
         messages: [{ role: "user", content: verdictTranscript(transcript, stopReason) }],
         maxTokens: 2048,
-      }),
+      }, { context: { projectId: record.projectId, targetId: record.targetId } }),
     );
     return decided?.data ?? null;
   }

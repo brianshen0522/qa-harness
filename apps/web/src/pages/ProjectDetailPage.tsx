@@ -5,6 +5,7 @@ import { api } from "../api/client";
 import type { DescriptionVersion, ProjectDetail, ProjectMember, Role, Target, TargetKind } from "../api/types";
 import { Button, Card, Dialog, Empty, ErrorText, Field, Input, KindBadge, RoleBadge, Select, Spinner, StatusBadge, Table, Tabs, Textarea } from "../components/ui";
 import { DescriptionEditor } from "../components/DescriptionEditor";
+import { ProjectSkills } from "../components/ProjectSkills";
 import { ConfigForm, configToDraft, draftToConfig, type ConfigDraft } from "../components/ConfigForm";
 import { DiscussionPanel } from "../components/DiscussionPanel";
 import { HandoffPanel } from "../components/HandoffPanel";
@@ -192,7 +193,10 @@ export default function ProjectDetailPage() {
           </Card>
         </div>
 
-        <ProjectMembers projectId={id} isOwner={isOwner} />
+        <div className="space-y-4">
+          <ProjectMembers projectId={id} isOwner={isOwner} />
+          <ProjectSkills projectId={id} myRole={p.myRole} />
+        </div>
       </div>
       )}
 

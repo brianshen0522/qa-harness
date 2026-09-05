@@ -41,6 +41,8 @@ export interface StructuredOptions {
   configId?: string;
   /** Require the config to support vision (execute purpose). */
   requireVision?: boolean;
+  /** Attribution for usage/cost accounting (§4.8). */
+  context?: { projectId?: string | null; targetId?: string | null };
 }
 
 /**
@@ -119,7 +121,7 @@ export class LlmGatewayService {
           const e = err instanceof LlmProviderError ? err : new LlmProviderError("unknown", String(err));
           const a: AttemptLog = { configId: cfg.id, configName: cfg.name, model: cfg.model, attempt, outcome: "provider_error", errorKind: e.kind, error: e.message, durationMs: Date.now() - started };
           attempts.push(a);
-          await this.record(purpose, schemaName, cfg, a, null, null);
+          await this.record(purpose, schemaName, cfg, a, null, null, opts.context);
           await this.health.recordFailure(cfg.id, e.kind, e.message);
           this.log.warn(`[${purpose}/${schemaName}] ${cfg.name} attempt ${attempt} provider_error(${e.kind}): ${e.message}`);
           if (FALLBACK_KINDS.has(e.kind)) break; // next config
@@ -138,7 +140,7 @@ export class LlmGatewayService {
         if (validation?.ok) {
           const a: AttemptLog = { configId: cfg.id, configName: cfg.name, model: res.model, attempt, outcome: "ok", durationMs: Date.now() - started };
           attempts.push(a);
-          await this.record(purpose, schemaName, cfg, a, res, null);
+          await this.record(purpose, schemaName, cfg, a, res, null, opts.context);
           await this.health.recordSuccess(cfg.id);
           return { data: validation.data, model: res.model, configId: cfg.id, configName: cfg.name, attempts, fallbacks: ci, raw: res.text };
         }
@@ -146,7 +148,7 @@ export class LlmGatewayService {
         const errorText = parseError ?? describeErrors(validation!.errors);
         const a: AttemptLog = { configId: cfg.id, configName: cfg.name, model: res.model, attempt, outcome: "invalid_output", error: errorText, durationMs: Date.now() - started };
         attempts.push(a);
-        await this.record(purpose, schemaName, cfg, a, res, res.text);
+        await this.record(purpose, schemaName, cfg, a, res, res.text, opts.context);
         this.log.warn(`[${purpose}/${schemaName}] ${cfg.name} attempt ${attempt} invalid_output: ${errorText.slice(0, 300)}`);
 
         if (isBlankOutput(res.text)) {
@@ -184,14 +186,14 @@ export class LlmGatewayService {
         const res = await this.adapterFor(cfg).complete(cfg, req);
         const a: AttemptLog = { configId: cfg.id, configName: cfg.name, model: res.model, attempt: 0, outcome: "ok", durationMs: Date.now() - started };
         attempts.push(a);
-        await this.record(purpose, null, cfg, a, res, null);
+        await this.record(purpose, null, cfg, a, res, null, opts.context);
         await this.health.recordSuccess(cfg.id);
         return { ...res, configId: cfg.id, attempts };
       } catch (err) {
         const e = err instanceof LlmProviderError ? err : new LlmProviderError("unknown", String(err));
         const a: AttemptLog = { configId: cfg.id, configName: cfg.name, model: cfg.model, attempt: 0, outcome: "provider_error", errorKind: e.kind, error: e.message, durationMs: Date.now() - started };
         attempts.push(a);
-        await this.record(purpose, null, cfg, a, null, null);
+        await this.record(purpose, null, cfg, a, null, null, opts.context);
         await this.health.recordFailure(cfg.id, e.kind, e.message);
       }
     }
@@ -255,13 +257,15 @@ export class LlmGatewayService {
     return this.providers[cfg.provider];
   }
 
-  private async record(purpose: LlmPurpose, schemaName: string | null, cfg: ResolvedLlmConfig, a: AttemptLog, res: LlmResponse | null, rawOutput: string | null) {
+  private async record(purpose: LlmPurpose, schemaName: string | null, cfg: ResolvedLlmConfig, a: AttemptLog, res: LlmResponse | null, rawOutput: string | null, context?: { projectId?: string | null; targetId?: string | null }) {
     try {
       await this.prisma.llmCallLog.create({
         data: {
           purpose,
           schemaName,
           llmConfigId: cfg.id,
+          projectId: context?.projectId ?? null,
+          targetId: context?.targetId ?? null,
           model: a.model,
           attempt: a.attempt,
           outcome: a.outcome === "provider_error" ? (a.errorKind ?? "provider_error") : a.outcome,

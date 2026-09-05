@@ -146,7 +146,7 @@ export class DiscussionService {
       system: buildSystemPrompt(ctx, items, current, discussion.draft),
       messages: llmMessages,
       maxTokens: 4096,
-    });
+    }, { context: { projectId: ctx.projectId, targetId: ctx.targetId ?? null } });
     const turn = result.data;
 
     const nextDraft = applyDraftPatch(discussion.draft, turn.draft_patch);

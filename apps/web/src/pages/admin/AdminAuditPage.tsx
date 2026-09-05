@@ -41,10 +41,10 @@ export default function AdminAuditPage() {
               <div>
                 <p className="mb-1 text-xs font-medium text-gray-500">各 Project 執行量</p>
                 <Table>
-                  <thead><tr><th>Project</th><th>Run 數</th><th>步數</th></tr></thead>
+                  <thead><tr><th>Project</th><th>Run 數</th><th>步數</th><th>估算成本</th></tr></thead>
                   <tbody>
                     {usage.data.byProject.map((p) => (
-                      <tr key={p.projectId}><td>{p.name}</td><td className="text-xs">{p.runs}</td><td className="text-xs">{p.steps.toLocaleString()}</td></tr>
+                      <tr key={p.projectId}><td>{p.name}</td><td className="text-xs">{p.runs}</td><td className="text-xs">{p.steps.toLocaleString()}</td><td className="text-xs">{p.costUsd > 0 ? `$${p.costUsd.toFixed(3)}` : <span className="text-gray-400">-</span>}</td></tr>
                     ))}
                   </tbody>
                 </Table>

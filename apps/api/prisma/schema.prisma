@@ -261,6 +261,8 @@ model LlmCallLog {
   purpose      LlmPurpose
   schemaName   String?    @map("schema_name")
   llmConfigId  String?    @map("llm_config_id")
+  projectId    String?    @map("project_id")
+  targetId     String?    @map("target_id")
   model        String
   attempt      Int
   outcome      String // ok | invalid_output | provider_error | timeout | rate_limit
@@ -271,6 +273,7 @@ model LlmCallLog {
   durationMs   Int        @map("duration_ms")
   createdAt    DateTime   @default(now()) @map("created_at")
 
+  @@index([projectId, createdAt])
   @@map("llm_call_logs")
 }
 

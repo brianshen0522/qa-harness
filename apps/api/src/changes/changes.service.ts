@@ -124,7 +124,7 @@ export class ChangesService {
       // answers the same question in a third of the time.
       maxTokens: 12_000,
       reasoningEffort: "low",
-    });
+    }, { context: { projectId: ctx.projectId, targetId: ctx.targetId } });
 
     const normalised = this.normalise(result.data, ctx, features, cases, scope, input.proposedDescription);
     if (!normalised.descriptionAfter && !normalised.featureChanges.length && !normalised.caseChanges.length) {
@@ -587,7 +587,7 @@ export class ChangesService {
             },
           ],
           maxTokens: 2048,
-        });
+        }, { context: { projectId: ctx.projectId, targetId: ctx.targetId } });
         const written = res.data.cases?.[0];
         if (!written) {
           item.unresolved = "模型沒有寫出這條案例的內容。";

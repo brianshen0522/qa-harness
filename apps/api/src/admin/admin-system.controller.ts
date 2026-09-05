@@ -43,7 +43,7 @@ export class AdminSystemController {
 
   @Get("usage")
   async usage() {
-    const [byPurpose, byModel, recent, runAgg, targets] = await Promise.all([
+    const [byPurpose, byModel, recent, runAgg, targets, byProjectModel] = await Promise.all([
       this.prisma.llmCallLog.groupBy({
         by: ["purpose", "outcome"],
         _count: { _all: true },
@@ -62,6 +62,8 @@ export class AdminSystemController {
       // Per-project run count (§4.8 各 project 的 run 數).
       this.prisma.testRun.groupBy({ by: ["targetId"], _count: { _all: true }, _sum: { stepCount: true } }),
       this.prisma.qaTarget.findMany({ select: { id: true, name: true, projectId: true, project: { select: { name: true } } } }),
+      // Per-project LLM cost, from the project attribution on each call (§4.8 估算成本).
+      this.prisma.llmCallLog.groupBy({ by: ["projectId", "model"], _sum: { inputTokens: true, outputTokens: true } }),
     ]);
 
     const models = byModel.map((m) => {
@@ -71,17 +73,27 @@ export class AdminSystemController {
     });
     const totalCostUsd = models.reduce((a, m) => a + m.costUsd, 0);
 
-    // Roll the per-target run/step counts up to projects.
+    // Roll the per-target run/step counts, and the per-project LLM cost, up to projects.
     const byTarget = new Map(targets.map((t) => [t.id, t]));
-    const projects = new Map<string, { projectId: string; name: string; runs: number; steps: number }>();
+    const projectName = new Map(targets.map((t) => [t.projectId, t.project.name]));
+    const projects = new Map<string, { projectId: string; name: string; runs: number; steps: number; costUsd: number }>();
+    const ensure = (projectId: string) =>
+      projects.get(projectId) ??
+      (() => {
+        const e = { projectId, name: projectName.get(projectId) ?? "（未知專案）", runs: 0, steps: 0, costUsd: 0 };
+        projects.set(projectId, e);
+        return e;
+      })();
     for (const r of runAgg) {
       const target = byTarget.get(r.targetId);
       if (!target) continue;
-      const key = target.projectId;
-      const entry = projects.get(key) ?? { projectId: key, name: target.project.name, runs: 0, steps: 0 };
+      const entry = ensure(target.projectId);
       entry.runs += r._count._all;
       entry.steps += r._sum.stepCount ?? 0;
-      projects.set(key, entry);
+    }
+    for (const row of byProjectModel) {
+      if (!row.projectId) continue; // calls not attributed to a project (older logs)
+      ensure(row.projectId).costUsd += estimateCost(row.model, row._sum.inputTokens ?? 0, row._sum.outputTokens ?? 0);
     }
 
     return { byPurpose, models, totalCostUsd, recent, byProject: [...projects.values()] };

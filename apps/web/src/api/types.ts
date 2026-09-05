@@ -262,7 +262,7 @@ export interface Usage {
   }[];
   models: { model: string | null; calls: number; inputTokens: number; outputTokens: number; costUsd: number }[];
   totalCostUsd: number;
-  byProject: { projectId: string; name: string; runs: number; steps: number }[];
+  byProject: { projectId: string; name: string; runs: number; steps: number; costUsd: number }[];
   recent: {
     id: string;
     purpose: string;

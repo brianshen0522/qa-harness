@@ -70,6 +70,8 @@ interface ActiveRun {
   abort: AbortController;
   /** Remaining run-wide interaction-probe clicks (interaction probing). */
   interactLeft: number;
+  /** Project the exploration belongs to, for usage attribution (§4.8). */
+  projectId: string | null;
   finished: boolean;
 }
 
@@ -177,7 +179,7 @@ export class ExploreService implements OnModuleInit {
   }
 
   private spawn(runId: string, targetId: string, url: string, config: ExploreConfig, identities: CrawlIdentity[], userId: string) {
-    const record: ActiveRun = { runId, targetId, events: [], subscribers: new Set(), abort: new AbortController(), interactLeft: 0, finished: false };
+    const record: ActiveRun = { runId, targetId, events: [], subscribers: new Set(), abort: new AbortController(), interactLeft: 0, projectId: null, finished: false };
     this.active.set(targetId, record);
     void this.execute(record, url, config, identities, userId)
       .catch(async (err) => {
@@ -199,7 +201,8 @@ export class ExploreService implements OnModuleInit {
 
   private async execute(record: ActiveRun, url: string, config: ExploreConfig, identities: CrawlIdentity[], userId: string) {
     const startedAt = Date.now();
-    const target = await this.prisma.qaTarget.findUniqueOrThrow({ where: { id: record.targetId }, select: { name: true } });
+    const target = await this.prisma.qaTarget.findUniqueOrThrow({ where: { id: record.targetId }, select: { name: true, projectId: true } });
+    record.projectId = target.projectId;
     this.publish(record, { type: "started", runId: record.runId, target: target.name, identities: identities.map((i) => i.name) });
 
     record.interactLeft = config.doInteract ? config.interactBudget : 0;
@@ -576,7 +579,7 @@ export class ExploreService implements OnModuleInit {
             maxTokens: 2048,
             reasoningEffort: "low",
           },
-          { requireVision: true },
+          { requireVision: true, context: { projectId: record.projectId, targetId: record.targetId } },
         );
         await this.prisma.explorationRun.update({ where: { id: record.runId }, data: { llmCalls: { increment: 1 } } });
         return res.data;
@@ -669,7 +672,7 @@ export class ExploreService implements OnModuleInit {
           messages: [{ role: "user", content: context }],
           maxTokens: 8192,
           reasoningEffort: "low",
-        });
+        }, { context: { projectId: record.projectId, targetId: record.targetId } });
         await this.prisma.explorationRun.update({ where: { id: record.runId }, data: { llmCalls: { increment: 1 } } });
         return (res.data.cases ?? []) as GeneratedCase[];
       } catch (err) {

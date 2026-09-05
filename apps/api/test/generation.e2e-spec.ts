@@ -494,6 +494,16 @@ describe("test case generation and list (e2e)", () => {
     expect(actions).toEqual(expect.arrayContaining(["generation.run", "testcase.create", "testcase.update", "testcase.delete", "feature.delete"]));
   });
 
+  it("attributes its LLM calls to the target's project (§4.8 每專案成本)", async () => {
+    // Scoped to this target so accumulated logs from earlier cases don't confound it.
+    const before = await prisma.llmCallLog.count({ where: { projectId, targetId } });
+    stubGenerator(["登入"], () => [caseFor("登入", 1)]);
+    const res = await generate(owner, "replace");
+    expect(res.events.at(-1)?.type).toBe("finished");
+    const after = await prisma.llmCallLog.count({ where: { projectId, targetId } });
+    expect(after).toBeGreaterThan(before); // this run's calls are attributed to its project + target
+  });
+
   it("folds enabled global skills into the generation prompt (§4.8)", async () => {
     const skill = await prisma.skill.create({
       data: { scope: "global", name: "日期格式", content: "日期一律 YYYY-MM-DD。", enabled: true, order: 0 },

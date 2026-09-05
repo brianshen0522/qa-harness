@@ -103,12 +103,22 @@ describe("context handoff (e2e)", () => {
     expect(p.body.prompt).toContain("## Known Gaps");
     expect(p.body.prompt).toContain("原本的描述");
     expect(p.body.sections.map((s: { title: string }) => s.title)).toContain("Suggested Test Cases");
+    // The prompt must make the agent describe what the system does and what each role does.
+    expect(p.body.prompt).toContain("這個系統「是什麼、在做什麼、解決什麼問題、給誰用」");
+    expect(p.body.prompt).toContain("這個角色都在做什麼");
 
     const t = await api(app).get(`/api/targets/${targetId}/handoff/prompt`).set("Cookie", viewer).expect(200);
     expect(t.body.kind).toBe("web");
     expect(t.body.prompt).toContain("target_kind: web");
     expect(t.body.prompt).toContain("## Selectors");
     expect(t.body.prompt).not.toContain("## Endpoints");
+    // §Target 交接也要先描述系統與角色(這是之前漏掉、後來補上的迴歸守門)。
+    expect(t.body.prompt).toContain("## System Overview");
+    expect(t.body.prompt).toContain("## User Roles");
+    expect(t.body.prompt).toContain("是什麼、在做什麼、解決什麼問題、給誰用");
+    expect(t.body.sections.map((x: { title: string }) => x.title)).toEqual(
+      expect.arrayContaining(["System Overview", "User Roles"]),
+    );
   });
 
   it("previews without writing anything", async () => {

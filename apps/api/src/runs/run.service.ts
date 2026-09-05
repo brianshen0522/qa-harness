@@ -112,6 +112,9 @@ function maskSecrets<T>(value: T, secrets: string[]): T {
 const RETAIN_FINISHED_MS = 120_000;
 /** Screenshots kept in the prompt; older steps keep their text only. */
 const SCREENSHOT_WINDOW = 3;
+/** Cap on the in-memory replay log per run, so a huge run does not balloon memory.
+ *  A late subscriber still gets live state from the polled run detail. */
+const MAX_EVENTS = 2000;
 
 @Injectable()
 export class RunService implements OnModuleInit {
@@ -978,6 +981,7 @@ export class RunService implements OnModuleInit {
 
   private publish(record: ActiveRun, event: RunEvent) {
     record.events.push(event);
+    if (record.events.length > MAX_EVENTS) record.events.splice(0, record.events.length - MAX_EVENTS);
     for (const subscriber of record.subscribers) {
       try {
         subscriber(event);

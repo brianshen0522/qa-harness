@@ -31,7 +31,6 @@ model User {
   @@map("users")
 }
 
-
 // ---------- Team / Project ----------
 
 model Team {
@@ -527,6 +526,7 @@ model TestCase {
   results   TestResult[]
 
   @@index([targetId, order])
+  @@index([targetId, status])
   @@index([featureId])
   @@map("test_cases")
 }
@@ -790,6 +790,7 @@ model RunFinding {
   feature Feature? @relation(fields: [featureId], references: [id], onDelete: SetNull)
 
   @@index([runId, createdAt])
+  @@index([status])
   @@map("run_findings")
 }
 

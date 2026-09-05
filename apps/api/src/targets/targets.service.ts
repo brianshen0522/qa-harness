@@ -2,6 +2,7 @@ import { BadRequestException, ConflictException, Injectable, NotFoundException }
 import { DescriptionSource, Prisma, Role, TargetKind } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { PermissionsService } from "../permissions/permissions.service";
+import { effectiveTargetRole } from "../permissions/roles";
 import { CryptoService } from "../crypto/crypto.service";
 import { AuditService } from "../audit/audit.service";
 import { validateOverride } from "../permissions/roles";
@@ -23,14 +24,20 @@ export class TargetsService {
   ) {}
 
   async list(projectId: string, userId: string) {
-    await this.perms.requireProject(projectId, userId, Role.viewer);
+    // The caller's project role is the base for every target here; only per-target
+    // overrides differ, so fetch those in one query instead of 3 per target.
+    const projectRole = await this.perms.requireProject(projectId, userId, Role.viewer);
     const targets = await this.prisma.qaTarget.findMany({
       where: { projectId },
       orderBy: { createdAt: "asc" },
       include: { _count: { select: { credentials: true, members: true } } },
     });
-    const roles = await Promise.all(targets.map((t) => this.perms.targetRole(t.id, userId)));
-    return targets.map((t, i) => ({ ...t, myRole: roles[i].role }));
+    const overrides = await this.prisma.targetMember.findMany({
+      where: { userId, targetId: { in: targets.map((t) => t.id) } },
+      select: { targetId: true, role: true },
+    });
+    const overrideBy = new Map(overrides.map((o) => [o.targetId, o.role]));
+    return targets.map((t) => ({ ...t, myRole: effectiveTargetRole(projectRole, overrideBy.get(t.id) ?? null) }));
   }
 
   async create(projectId: string, userId: string, input: { name: string; kind: TargetKind; config?: Record<string, unknown>; description?: string }) {

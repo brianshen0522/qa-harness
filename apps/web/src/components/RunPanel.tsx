@@ -167,6 +167,11 @@ function LivePanel({
  * the live page (sandbox view + three levels of progress + queue + findings); once
  * nothing is running it becomes the results view for whichever run is picked.
  */
+const RUN_ACTIVE = new Set(["queued", "running", "paused"]);
+function isActiveStatus(status: string | undefined): boolean {
+  return !!status && RUN_ACTIVE.has(status);
+}
+
 export function RunPanel({ targetId, kind, myRole }: { targetId: string; kind: TargetKind; myRole: Role }) {
   const qc = useQueryClient();
   const canEdit = hasRole(myRole, "editor");
@@ -716,8 +721,11 @@ function LiveRun({
     queryKey: runKey(runId ?? "none"),
     queryFn: () => api<RunDetail>(`/runs/${runId}`),
     enabled: !!runId,
-    refetchInterval: 4000,
+    // Poll only while the run is actually going; a finished run is static, so
+    // stop hammering the server (and the global watcher already covers liveness).
+    refetchInterval: (q) => (isActiveStatus((q.state.data as RunDetail | undefined)?.run.status) ? 4000 : false),
   });
+  const runActive = !detail.data || isActiveStatus(detail.data.run.status);
   // `api` runs have no screen, so the live view leans on the step rows for the
   // request/response — poll all of them there. For web runs, fetching every
   // step on a poll is wasteful, so persisted steps are pulled per expanded case.
@@ -725,13 +733,13 @@ function LiveRun({
     queryKey: stepsKey(runId ?? "none"),
     queryFn: () => api<RunStepRow[]>(`/runs/${runId}/steps`),
     enabled: !!runId && kind === "api",
-    refetchInterval: kind === "api" ? 4000 : false,
+    refetchInterval: kind === "api" && runActive ? 4000 : false,
   });
   const openCaseSteps = useQuery({
     queryKey: [...stepsKey(runId ?? "none"), openCase ?? "none"],
     queryFn: () => api<RunStepRow[]>(`/runs/${runId}/steps?caseId=${openCase}`),
     enabled: !!runId && kind !== "api" && !!openCase,
-    refetchInterval: 4000,
+    refetchInterval: runActive ? 4000 : false,
   });
 
   const detailByCase = useMemo(

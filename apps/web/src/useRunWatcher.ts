@@ -28,9 +28,11 @@ export function useRunWatcher(): { active: MyRun[] } {
     queryFn: () => api<MyRun[]>("/me/runs"),
     refetchInterval: (query) => {
       const data = query.state.data as MyRun[] | undefined;
-      return data && data.some((r) => ACTIVE.has(r.status)) ? 6000 : 20000;
+      return data && data.some((r) => ACTIVE.has(r.status)) ? 6000 : 30000;
     },
-    refetchIntervalInBackground: true,
+    // Do not poll a hidden/background tab: a backgrounded app tab should not be a
+    // permanent load generator. The interval resumes when the tab is focused.
+    refetchIntervalInBackground: false,
     retry: false,
   });
 

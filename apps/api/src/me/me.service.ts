@@ -59,28 +59,34 @@ export class MeService {
     if (!targets.length) return { targets: [], totals: { activeRuns: 0, failingTargets: 0, outdatedCases: 0, openFindings: 0 } };
     const ids = targets.map((t) => t.id);
 
-    const [outdated, openFindings, latestRuns] = await Promise.all([
+    type RunRow = { id: string; targetId: string; status: RunStatus; startedAt: Date; endedAt: Date | null };
+    const [outdated, findingCounts, latestRuns, activeRuns] = await Promise.all([
       this.prisma.testCase.groupBy({ by: ["targetId"], where: { targetId: { in: ids }, status: "outdated" }, _count: { _all: true } }),
-      this.prisma.runFinding.findMany({ where: { status: "open", run: { targetId: { in: ids } } }, select: { run: { select: { targetId: true } } } }),
-      // The most recent run per target (active or not), for last-result + progress.
+      // Count open findings per target in the DB, rather than loading every row.
+      this.prisma.$queryRaw<{ targetId: string; n: number }[]>(Prisma.sql`
+        SELECT r.target_id AS "targetId", COUNT(*)::int AS n
+        FROM run_findings f JOIN test_runs r ON r.id = f.run_id
+        WHERE f.status = 'open' AND r.target_id IN (${Prisma.join(ids)})
+        GROUP BY r.target_id`),
+      // The single latest run per target (DISTINCT ON), not every historical run.
+      this.prisma.$queryRaw<RunRow[]>(Prisma.sql`
+        SELECT DISTINCT ON (target_id) id, target_id AS "targetId", status, started_at AS "startedAt", ended_at AS "endedAt"
+        FROM test_runs WHERE target_id IN (${Prisma.join(ids)})
+        ORDER BY target_id, started_at DESC`),
+      // Active runs are bounded (one-run-per-target lock), so this stays small.
       this.prisma.testRun.findMany({
-        where: { targetId: { in: ids } },
-        orderBy: { startedAt: "desc" },
+        where: { targetId: { in: ids }, status: { in: ACTIVE } },
         select: { id: true, targetId: true, status: true, startedAt: true, endedAt: true },
       }),
     ]);
 
     const outdatedByTarget = new Map(outdated.map((o) => [o.targetId, o._count._all]));
-    const findingsByTarget = new Map<string, number>();
-    for (const f of openFindings) findingsByTarget.set(f.run.targetId, (findingsByTarget.get(f.run.targetId) ?? 0) + 1);
+    const findingsByTarget = new Map<string, number>(findingCounts.map((f) => [f.targetId, Number(f.n)]));
+    const totalOpenFindings = findingCounts.reduce((a, f) => a + Number(f.n), 0);
 
-    // First run seen per target is the latest (list is ordered desc); also track any active run.
-    const lastByTarget = new Map<string, (typeof latestRuns)[number]>();
-    const activeByTarget = new Map<string, (typeof latestRuns)[number]>();
-    for (const r of latestRuns) {
-      if (!lastByTarget.has(r.targetId)) lastByTarget.set(r.targetId, r);
-      if (!activeByTarget.has(r.targetId) && ACTIVE.includes(r.status)) activeByTarget.set(r.targetId, r);
-    }
+    const lastByTarget = new Map<string, RunRow>(latestRuns.map((r) => [r.targetId, r]));
+    const activeByTarget = new Map<string, RunRow>();
+    for (const r of activeRuns) if (!activeByTarget.has(r.targetId)) activeByTarget.set(r.targetId, r as RunRow);
 
     // Verdict tallies + progress for the runs we surface.
     const surfaced = [...new Set([...lastByTarget.values(), ...activeByTarget.values()].map((r) => r.id))];
@@ -126,7 +132,7 @@ export class MeService {
         activeRuns: activeByTarget.size,
         failingTargets,
         outdatedCases: [...outdatedByTarget.values()].reduce((a, b) => a + b, 0),
-        openFindings: openFindings.length,
+        openFindings: totalOpenFindings,
       },
     };
   }

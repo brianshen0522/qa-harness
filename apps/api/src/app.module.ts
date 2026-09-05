@@ -18,6 +18,7 @@ import { RunsModule } from "./runs/runs.module";
 import { ChangesModule } from "./changes/changes.module";
 import { ExploreModule } from "./explore/explore.module";
 import { SkillsModule } from "./skills/skills.module";
+import { McpModule } from "./mcp/mcp.module";
 
 @Module({
   imports: [
@@ -40,6 +41,7 @@ import { SkillsModule } from "./skills/skills.module";
     ChangesModule,
     ExploreModule,
     SkillsModule,
+    McpModule,
   ],
 })
 export class AppModule {}

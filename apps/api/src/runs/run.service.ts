@@ -15,6 +15,8 @@ import { SandboxService, parseResolution, toSandboxUrl } from "../sandbox/sandbo
 import { ComputerService } from "../sandbox/computer.service";
 import { TargetsService } from "../targets/targets.service";
 import { SkillsService } from "../skills/skills.service";
+import { McpService } from "../mcp/mcp.service";
+import type { McpToolForPrompt } from "./run-prompts";
 import { EvidenceService } from "./evidence.service";
 import { HttpExecutorService, fillCredentials, type HttpLog } from "./http-executor.service";
 import {
@@ -109,6 +111,7 @@ export class RunService implements OnModuleInit {
     private readonly targets: TargetsService,
     private readonly audit: AuditService,
     private readonly skills: SkillsService,
+    private readonly mcp: McpService,
   ) {}
 
   /**
@@ -280,6 +283,9 @@ export class RunService implements OnModuleInit {
     const credentials = await this.targets.decryptedCredentials(record.targetId);
     // §4.5: global + project house rules fold into every case's system prompt.
     const skillsBlock = await this.skills.promptBlock(target.projectId);
+    // §6.2 MCP: tools from enabled global + project servers, offered to the agent.
+    const mcpTools = await this.mcp.toolsForProject(target.projectId).catch(() => []);
+    const mcpForPrompt: McpToolForPrompt[] = mcpTools.map((t) => ({ serverId: t.serverId, server: t.server, name: t.tool.name, description: t.tool.description }));
     const needsSandbox = target.kind !== "api";
 
     let sandboxId: string | null = null;
@@ -356,7 +362,7 @@ export class RunService implements OnModuleInit {
 
         record.currentCaseId = next.testCaseId;
         await this.runCase(record, {
-          target, targetPrompt, credentials, settings, agentPort, skillsBlock,
+          target, targetPrompt, credentials, settings, agentPort, skillsBlock, mcpTools: mcpForPrompt,
           queueRow: next, needsSandbox,
         });
 
@@ -390,6 +396,7 @@ export class RunService implements OnModuleInit {
       credentials: Record<string, string>;
       settings: { maxStepsPerCase: number; stepTimeoutSec: number; recordVideo: boolean };
       skillsBlock: string;
+      mcpTools: McpToolForPrompt[];
       agentPort: number | null;
       queueRow: { testCaseId: string; testCase: { title: string; precondition: string; steps: Prisma.JsonValue; expected: string; priority: string; type: string; currentVersion: number; feature: { name: string } | null } };
       needsSandbox: boolean;
@@ -406,7 +413,7 @@ export class RunService implements OnModuleInit {
       type: testCase.type,
       featureName: testCase.feature?.name ?? null,
     };
-    const system = [ctx.skillsBlock, caseSystemPrompt(ctx.targetPrompt, forPrompt)].filter(Boolean).join("\n\n");
+    const system = [ctx.skillsBlock, caseSystemPrompt(ctx.targetPrompt, forPrompt, ctx.mcpTools)].filter(Boolean).join("\n\n");
     const stepTimeoutMs = Math.max(ctx.settings.stepTimeoutSec * 1000, 60_000);
     const maxSteps = ctx.settings.maxStepsPerCase;
 
@@ -465,6 +472,27 @@ export class RunService implements OnModuleInit {
         transcript.push({ seq, phase: step.phase, intent: step.intent, observation: step.observation, action: step.action });
         await this.recordStep(record, ctx.queueRow.testCaseId, seq, step, null, decided.model, 0, null);
         break;
+      }
+
+      if (step.action.type === "mcp_call") {
+        const p = (step.action.params ?? {}) as { server_id?: string; tool?: string; arguments?: Record<string, unknown> };
+        let feedback: string;
+        let ok = true;
+        try {
+          const result = await this.mcp.callTool(String(p.server_id ?? ""), String(p.tool ?? ""), (p.arguments ?? {}) as Record<string, unknown>);
+          ok = !result.isError;
+          feedback = `MCP 工具「${p.tool}」回傳：\n${result.text.slice(0, 4000)}`;
+        } catch (err) {
+          ok = false;
+          feedback = `MCP 工具「${p.tool}」呼叫失敗：${(err as Error).message}`;
+        }
+        transcript.push({ seq, phase: step.phase, intent: step.intent, observation: step.observation, action: step.action, result: { ok, text: feedback.slice(0, 500) } });
+        turns.push({
+          assistant: JSON.stringify({ intent: step.intent, action: step.action }),
+          user: [{ type: "text", text: feedback }],
+        });
+        await this.recordStep(record, ctx.queueRow.testCaseId, seq, step, { ok, durationMs: 0, detail: {} }, decided.model, 0, null);
+        continue;
       }
 
       if (step.action.type === "report_finding") {

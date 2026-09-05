@@ -10,9 +10,10 @@ import { LlmModule } from "../llm/llm.module";
 import { SandboxModule } from "../sandbox/sandbox.module";
 import { TargetsModule } from "../targets/targets.module";
 import { SkillsModule } from "../skills/skills.module";
+import { McpModule } from "../mcp/mcp.module";
 
 @Module({
-  imports: [LlmModule, SandboxModule, TargetsModule, SkillsModule],
+  imports: [LlmModule, SandboxModule, TargetsModule, SkillsModule, McpModule],
   controllers: [RunsController],
   providers: [RunService, RunQueryService, FindingConversionService, EvidenceService, HttpExecutorService, RetentionService],
   exports: [RunService, RunQueryService, EvidenceService, RetentionService],

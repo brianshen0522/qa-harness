@@ -10,6 +10,7 @@ import AdminUsersPage from "./pages/admin/AdminUsersPage";
 import AdminLlmPage from "./pages/admin/AdminLlmPage";
 import AdminSandboxPage from "./pages/admin/AdminSandboxPage";
 import AdminSkillsPage from "./pages/admin/AdminSkillsPage";
+import AdminMcpPage from "./pages/admin/AdminMcpPage";
 import AdminAuditPage from "./pages/admin/AdminAuditPage";
 
 export default function App() {
@@ -30,6 +31,7 @@ export default function App() {
         <Route path="llm" element={<AdminLlmPage />} />
         <Route path="sandbox" element={<AdminSandboxPage />} />
         <Route path="skills" element={<AdminSkillsPage />} />
+        <Route path="mcp" element={<AdminMcpPage />} />
         <Route path="audit" element={<AdminAuditPage />} />
       </Route>
 

@@ -95,6 +95,7 @@ model Project {
   changeProposals     ChangeProposal[]
   changeLogs          ChangeLog[]
   skills              Skill[]
+  mcpServers          McpServer[]
 
   @@map("projects")
 }
@@ -1023,4 +1024,36 @@ model Skill {
   @@index([scope, enabled])
   @@index([projectId])
   @@map("skills")
+}
+
+// ---------- MCP servers (§3.2 / §6.2): external tool providers for worker + discussion ----------
+
+enum McpScope {
+  global
+  project
+}
+
+/// A Model Context Protocol server the agent can call tools on. Auth is stored
+/// encrypted like a credential; the value never leaves the server or reaches a prompt.
+model McpServer {
+  id            String    @id @default(uuid())
+  scope         McpScope  @default(global)
+  projectId     String?   @map("project_id")
+  name          String
+  url           String
+  /// Encrypted bearer/token header value, or empty for an open server.
+  authEncrypted String?   @map("auth_encrypted")
+  enabled       Boolean   @default(true)
+  /// Cached tool list from the last successful connection, for display.
+  toolsCache    Json      @default("[]") @map("tools_cache")
+  lastCheckedAt DateTime? @map("last_checked_at")
+  lastError     String?   @map("last_error")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  project Project? @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([scope, enabled])
+  @@index([projectId])
+  @@map("mcp_servers")
 }

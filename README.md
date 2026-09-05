@@ -15,7 +15,7 @@
 | 7. Sandbox Manager + 容器 image + noVNC 串流 | ✅ |
 | 8. Agent Worker + web 類型執行 + 執行中頁面（進度、Finding、即時編輯） | ✅ |
 | 9. 結果頁 + 人工覆核 + 被動偵測 + Finding 轉換 | ✅ |
-| 10. desktop、skills / MCP、用量、增量 Handoff | ⬜ |
+| 10. desktop、skills / MCP、用量、增量 Handoff | ✅ |
 | 探索優先模式（Explore-first，額外功能） | ✅ |
 
 ## 結構

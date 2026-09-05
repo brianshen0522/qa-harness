@@ -6,6 +6,7 @@ import type { DescriptionVersion, ProjectDetail, ProjectMember, Role, Target, Ta
 import { Button, Card, Dialog, Empty, ErrorText, Field, Input, KindBadge, RoleBadge, Select, Spinner, StatusBadge, Table, Tabs, Textarea } from "../components/ui";
 import { DescriptionEditor } from "../components/DescriptionEditor";
 import { ProjectSkills } from "../components/ProjectSkills";
+import { ProjectMcp } from "../components/ProjectMcp";
 import { ConfigForm, configToDraft, draftToConfig, type ConfigDraft } from "../components/ConfigForm";
 import { DiscussionPanel } from "../components/DiscussionPanel";
 import { HandoffPanel } from "../components/HandoffPanel";
@@ -196,6 +197,7 @@ export default function ProjectDetailPage() {
         <div className="space-y-4">
           <ProjectMembers projectId={id} isOwner={isOwner} />
           <ProjectSkills projectId={id} myRole={p.myRole} />
+          <ProjectMcp projectId={id} myRole={p.myRole} />
         </div>
       </div>
       )}

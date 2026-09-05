@@ -32,7 +32,14 @@ const COMMON_RULES = [
   "- 卡住、做不到、或前置條件不成立時也回傳 `done`，在 summary 說明卡在哪裡。判定會另外做，你這裡不要下結論。",
 ];
 
-export function caseSystemPrompt(target: TargetForPrompt, testCase: CaseForPrompt): string {
+export interface McpToolForPrompt {
+  serverId: string;
+  server: string;
+  name: string;
+  description?: string;
+}
+
+export function caseSystemPrompt(target: TargetForPrompt, testCase: CaseForPrompt, mcpTools: McpToolForPrompt[] = []): string {
   const header = [
     "你是 QA Harness 的測試執行代理。你要照著一條測試案例實際操作被測目標，蒐集足以判斷通過與否的證據。",
     "",
@@ -56,8 +63,9 @@ export function caseSystemPrompt(target: TargetForPrompt, testCase: CaseForPromp
   const rules = ["", "## 規則", ...COMMON_RULES];
   const actions =
     target.kind === "api" ? apiActions(target) : desktopActions(target);
+  const mcp = mcpToolsSection(mcpTools);
 
-  return [...header, ...caseBlock, ...rules, "", ...actions, "", PHASES].join("\n");
+  return [...header, ...caseBlock, ...rules, "", ...actions, ...mcp, "", PHASES].join("\n");
 }
 
 function apiActions(target: TargetForPrompt): string[] {
@@ -115,6 +123,21 @@ function desktopActions(target: TargetForPrompt): string[] {
         ]
       : []),
   ];
+}
+
+/** External MCP tools available this run, and how to call one. */
+function mcpToolsSection(tools: McpToolForPrompt[]): string[] {
+  if (!tools.length) return [];
+  const lines = [
+    "",
+    "## 外部工具（MCP）",
+    "除了上面的動作，你還可以呼叫下列外部工具。用 `mcp_call` 動作，`params` 給 `{ server_id, tool, arguments }`（arguments 是這個工具需要的參數物件）。",
+    "呼叫後你會拿到工具的回傳內容，再決定下一步。只有在對這條 case 真的有幫助時才用，不要為了用而用。",
+  ];
+  for (const t of tools) {
+    lines.push(`- server_id=${t.serverId}｜tool=\`${t.name}\`${t.description ? `：${t.description.slice(0, 200)}` : ""}`);
+  }
+  return lines;
 }
 
 const PHASES =

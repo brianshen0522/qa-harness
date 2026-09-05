@@ -26,6 +26,9 @@ export async function resetDb(prisma: PrismaService) {
   await prisma.auditLog.deleteMany();
   await prisma.llmCallLog.deleteMany();
   await prisma.llmConfig.deleteMany();
+  // Global-scoped rows have no project to cascade from, so clear them explicitly.
+  await prisma.skill.deleteMany();
+  await prisma.mcpServer.deleteMany();
   await prisma.project.deleteMany();
   await prisma.team.deleteMany();
   await prisma.user.deleteMany();

@@ -364,10 +364,11 @@ export const execution_stepSchema = {
             "http_request",
             "navigate",
             "run_command",
+            "mcp_call",
             "report_finding",
             "done"
           ],
-          "description": "要執行的動作。`report_finding` 用來記下與目前 case 無關的問題，記完會繼續原本的流程；`done` 結束這條 case。"
+          "description": "要執行的動作。`report_finding` 用來記下與目前 case 無關的問題，記完會繼續原本的流程；`mcp_call` 呼叫外部 MCP 工具（params 給 server_id、tool、arguments）；`done` 結束這條 case。"
         },
         "params": {
           "type": "object",

@@ -112,7 +112,7 @@ export class OpenAiProvider implements LlmProviderAdapter {
       // The budget went entirely on reasoning. Saying so beats an unexplained
       // blank reply, because the fix is a bigger budget or less thinking.
       throw new LlmProviderError(
-        "bad_request",
+        "budget",
         `回應在寫出內容前就用完 token（completion=${completion.usage?.completion_tokens ?? "?"}），` +
           "多半是思考佔滿了預算：調高 max tokens 或把 reasoning effort 調低。",
       );
@@ -129,6 +129,7 @@ export class OpenAiProvider implements LlmProviderAdapter {
         outputTokens: completion.usage?.completion_tokens ?? null,
       },
       nativeJson,
+      finishReason: choice.finish_reason ?? undefined,
     };
   }
 }

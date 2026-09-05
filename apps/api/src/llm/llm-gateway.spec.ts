@@ -112,6 +112,41 @@ describe("LlmGatewayService.structured", () => {
     expect(a.calls[1].messages).toEqual(a.calls[0].messages);
   });
 
+  it("grows the budget and retries the SAME config on a budget error (no fallback, no breaker hit)", async () => {
+    const { gw, health } = makeGateway([cfg("a", "openai"), cfg("b", "anthropic")]);
+    const a = fakeAdapter((_req, call) => (call === 1 ? new LlmProviderError("budget", "ran out of tokens thinking") : validVerdict));
+    const b = fakeAdapter(() => validVerdict);
+    gw.setProviders({ openai: a, anthropic: b });
+    const r = await gw.structured("execute", "case_verdict", { messages: [{ role: "user", content: "judge" }], maxTokens: 2048 });
+    expect(r.data.verdict).toBe("pass");
+    expect(r.fallbacks).toBe(0); // stayed on config a
+    expect(a.calls).toHaveLength(2); // retried same config
+    expect(b.calls).toHaveLength(0); // never fell through to b
+    expect(a.calls[1].maxTokens).toBeGreaterThan(a.calls[0].maxTokens ?? 0); // budget grew
+    expect(health.recordFailure).not.toHaveBeenCalled(); // budget is not the config's fault
+  });
+
+  it("treats a truncated (finish_reason=length) reply as a budget miss: grows budget, retries untouched", async () => {
+    const { gw } = makeGateway([cfg("a", "openai")]);
+    const calls: LlmRequest[] = [];
+    let n = 0;
+    const adapter = {
+      calls,
+      async complete(_c: ResolvedLlmConfig, req: LlmRequest) {
+        calls.push(req);
+        n++;
+        if (n === 1) return { text: '{"schema_version":"1.0","verdict":"pa', model: "m", usage: { inputTokens: 1, outputTokens: 1 }, nativeJson: false, finishReason: "length" };
+        return { text: validVerdict, model: "m", usage: { inputTokens: 1, outputTokens: 1 }, nativeJson: false, finishReason: "stop" };
+      },
+    } as LlmProviderAdapter & { calls: LlmRequest[] };
+    gw.setProviders({ openai: adapter });
+    const r = await gw.structured("execute", "case_verdict", { messages: [{ role: "user", content: "judge" }], maxTokens: 2048 });
+    expect(r.data.verdict).toBe("pass");
+    expect(calls).toHaveLength(2);
+    expect(calls[1].maxTokens).toBeGreaterThan(2048); // grew
+    expect(calls[1].messages).toHaveLength(1); // retried untouched, no correction turn appended
+  });
+
   it("throws LlmExhaustedError with the attempt log when everything fails", async () => {
     const { gw } = makeGateway([cfg("a", "openai")]);
     gw.setProviders({ openai: fakeAdapter(() => "{}") });

@@ -32,6 +32,8 @@ export interface LlmResponse {
   usage: { inputTokens: number | null; outputTokens: number | null };
   /** true if the provider enforced the schema natively (structured output). */
   nativeJson: boolean;
+  /** Provider stop reason, e.g. "stop" | "length"; lets the gateway detect truncation. */
+  finishReason?: string;
 }
 
 export interface ResolvedLlmConfig {
@@ -51,6 +53,8 @@ export type LlmErrorKind =
   | "network"
   | "auth"
   | "bad_request"
+  /** Output budget spent before content emerged (usually reasoning eating tokens). Retriable with a bigger budget. */
+  | "budget"
   | "refusal"
   | "unknown";
 
@@ -70,5 +74,7 @@ export interface LlmProviderAdapter {
   complete(cfg: ResolvedLlmConfig, req: LlmRequest): Promise<LlmResponse>;
 }
 
-export const DEFAULT_TIMEOUT_MS = 120_000;
+// Just under the proxy's 90s ceiling so a hung call surfaces at the real limit,
+// not 30s later.
+export const DEFAULT_TIMEOUT_MS = 95_000;
 export const DEFAULT_MAX_TOKENS = 8192;

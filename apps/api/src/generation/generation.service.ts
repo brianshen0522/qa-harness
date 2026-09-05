@@ -255,6 +255,7 @@ export class GenerationService implements OnModuleInit {
             system: withSkills(FEATURE_SYSTEM),
             messages: [{ role: "user", content: context }],
             maxTokens: 4096,
+            reasoningEffort: "low",
           }, { context: { projectId: target.projectId, targetId: target.id } }),
         );
         if (!res) return; // cancelled while paused
@@ -280,6 +281,7 @@ export class GenerationService implements OnModuleInit {
               { role: "user", content: featurePrompt(feature, features) },
             ],
             maxTokens: 8192,
+            reasoningEffort: "low",
           }, { context: { projectId: target.projectId, targetId: target.id } }),
           { features, featureIndex: index, cases: collected, discovery: toStoredDiscovery(discovery), lastModel },
         );

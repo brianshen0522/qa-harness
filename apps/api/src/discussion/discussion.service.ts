@@ -146,6 +146,7 @@ export class DiscussionService {
       system: buildSystemPrompt(ctx, items, current, discussion.draft),
       messages: llmMessages,
       maxTokens: 4096,
+      reasoningEffort: "low",
     }, { context: { projectId: ctx.projectId, targetId: ctx.targetId ?? null } });
     const turn = result.data;
 

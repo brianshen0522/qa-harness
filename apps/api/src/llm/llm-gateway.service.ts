@@ -108,17 +108,32 @@ export class LlmGatewayService {
       const cfg = chain[ci];
       const adapter = this.adapterFor(cfg);
       let messages: LlmMessage[] = [...req.messages];
+      // Grown when a call runs out of output budget (reasoning ate it) or truncates,
+      // so the retry can actually finish instead of failing the same way.
+      let maxTokens = req.maxTokens;
+      let reasoningEffort = req.reasoningEffort;
 
       for (let attempt = 0; attempt <= maxRetries; attempt++) {
         const started = Date.now();
         let res: LlmResponse;
         try {
           res = await adapter.complete(cfg, {
-            ...req, system, messages,
+            ...req, system, messages, maxTokens, reasoningEffort,
             jsonSchema: { name: schemaName, schema: providerSchema },
           });
         } catch (err) {
           const e = err instanceof LlmProviderError ? err : new LlmProviderError("unknown", String(err));
+          // A budget error is a request-tuning problem, not a broken config: grow
+          // the budget (and stop over-thinking) and retry the same config rather
+          // than blaming it and falling through the chain.
+          if (e.kind === "budget") {
+            const a: AttemptLog = { configId: cfg.id, configName: cfg.name, model: cfg.model, attempt, outcome: "provider_error", errorKind: e.kind, error: e.message, durationMs: Date.now() - started };
+            attempts.push(a);
+            await this.record(purpose, schemaName, cfg, a, null, null, opts.context);
+            this.log.warn(`[${purpose}/${schemaName}] ${cfg.name} attempt ${attempt} budget exhausted; growing maxTokens`);
+            ({ maxTokens, reasoningEffort } = growBudget(maxTokens, reasoningEffort));
+            continue;
+          }
           const a: AttemptLog = { configId: cfg.id, configName: cfg.name, model: cfg.model, attempt, outcome: "provider_error", errorKind: e.kind, error: e.message, durationMs: Date.now() - started };
           attempts.push(a);
           await this.record(purpose, schemaName, cfg, a, null, null, opts.context);
@@ -151,14 +166,17 @@ export class LlmGatewayService {
         await this.record(purpose, schemaName, cfg, a, res, res.text, opts.context);
         this.log.warn(`[${purpose}/${schemaName}] ${cfg.name} attempt ${attempt} invalid_output: ${errorText.slice(0, 300)}`);
 
-        if (isBlankOutput(res.text)) {
-          // Nothing but reasoning, or nothing at all. Echoing an empty assistant
-          // turn only makes the next attempt worse, so retry the request untouched.
+        if (res.finishReason === "length" || isBlankOutput(res.text)) {
+          // Truncated, or nothing but reasoning: echoing the partial/empty turn only
+          // makes the next attempt worse. Grow the budget and retry untouched.
+          ({ maxTokens, reasoningEffort } = growBudget(maxTokens, reasoningEffort));
           continue;
         }
-        // Feed the validation errors back so the model can correct itself.
+        // Feed the validation errors back so the model can correct itself. Images are
+        // dropped on correction turns — the problem is the JSON shape, not the picture,
+        // and re-uploading full-res screenshots on every retry is pure cost.
         messages = [
-          ...messages,
+          ...stripImages(messages),
           { role: "assistant", content: res.text },
           { role: "user", content: `Your previous output did not satisfy the required JSON schema:\n${errorText}\n\nReturn ONLY a corrected JSON object that satisfies the schema. Include every required field, even when the value seems obvious.` },
         ];
@@ -280,6 +298,29 @@ export class LlmGatewayService {
       this.log.error(`failed to write llm_call_log: ${(err as Error).message}`);
     }
   }
+}
+
+
+/** Grow the output budget (and stop over-thinking) after a budget/truncation miss. */
+function growBudget(
+  maxTokens: number | undefined,
+  _effort: LlmRequest["reasoningEffort"],
+): { maxTokens: number; reasoningEffort: LlmRequest["reasoningEffort"] } {
+  const base = maxTokens ?? 2048;
+  return { maxTokens: Math.min(base * 2, 16384), reasoningEffort: "low" };
+}
+
+/** Drop images from a message list — used on correction retries where the JSON
+ *  shape is wrong, so re-uploading full-res screenshots is wasted cost. */
+function stripImages(messages: LlmMessage[]): LlmMessage[] {
+  return messages.map((m) => {
+    if (typeof m.content === "string") return m;
+    const text = m.content
+      .filter((p): p is { type: "text"; text: string } => p.type === "text")
+      .map((p) => p.text)
+      .join("\n");
+    return { role: m.role, content: text };
+  });
 }
 
 function jsonInstruction(schemaName: SchemaName): string {

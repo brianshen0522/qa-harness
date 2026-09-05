@@ -677,7 +677,10 @@ export class RunService implements OnModuleInit {
       this.gateway.structured("execute", "case_verdict", {
         system: verdictSystemPrompt(testCase),
         messages: [{ role: "user", content: verdictTranscript(transcript, stopReason) }],
-        maxTokens: 2048,
+        // A judgment call deserves to think, but not so much it blanks the budget on
+        // a 90s proxy; a generous ceiling lets it reason and still emit the object.
+        maxTokens: 4096,
+        reasoningEffort: "medium",
       }, { context: { projectId: record.projectId, targetId: record.targetId } }),
     );
     return decided?.data ?? null;

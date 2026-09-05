@@ -56,9 +56,21 @@ function draftToStep(d: StepDraft): SetupStep {
   };
 }
 
-export function ApiSetupPanel({ targetId, canEdit }: { targetId: string; canEdit: boolean }) {
+/** Target-level flow (login→token, shared by every case) or a feature-level one. */
+type Scope = { kind: "target"; targetId: string } | { kind: "feature"; featureId: string };
+
+function scopePath(scope: Scope): string {
+  return scope.kind === "target" ? `/targets/${scope.targetId}/api-setup` : `/features/${scope.featureId}/api-setup`;
+}
+function scopeKey(scope: Scope): string[] {
+  return scope.kind === "target" ? ["targets", scope.targetId, "api-setup"] : ["features", scope.featureId, "api-setup"];
+}
+
+export function ApiSetupPanel({ scope, canEdit }: { scope: Scope; canEdit: boolean }) {
   const qc = useQueryClient();
-  const setup = useQuery({ queryKey: ["targets", targetId, "api-setup"], queryFn: () => api<ApiSetup>(`/targets/${targetId}/api-setup`) });
+  const path = scopePath(scope);
+  const key = scopeKey(scope);
+  const setup = useQuery({ queryKey: key, queryFn: () => api<ApiSetup>(path) });
   const [steps, setSteps] = useState<StepDraft[]>([]);
   const [localError, setLocalError] = useState<string | null>(null);
 
@@ -67,9 +79,9 @@ export function ApiSetupPanel({ targetId, canEdit }: { targetId: string; canEdit
   }, [setup.data]);
 
   const save = useMutation({
-    mutationFn: (payload: SetupStep[]) => api<ApiSetup>(`/targets/${targetId}/api-setup`, { method: "PUT", body: { steps: payload } }),
+    mutationFn: (payload: SetupStep[]) => api<ApiSetup>(path, { method: "PUT", body: { steps: payload } }),
     onSuccess: (data) => {
-      qc.setQueryData(["targets", targetId, "api-setup"], data);
+      qc.setQueryData(key, data);
       setSteps(data.steps.map(toDraft));
     },
   });
@@ -100,9 +112,11 @@ export function ApiSetupPanel({ targetId, canEdit }: { targetId: string; canEdit
   return (
     <div className="space-y-3">
       <p className="text-xs text-gray-500">
-        前置流程會在<b>每一趟執行開始時跑一次</b>(不經 LLM),把 login token 這類「執行期才知道」的值擷取成具名變數。
-        之後每一條 case 都能用 <code className="rounded bg-gray-100 px-1 py-0.5">{"{{名稱}}"}</code> 取用,不必每條都重登入 ——
-        「共用步驟」和「測試」就此分開。
+        {scope.kind === "target" ? (
+          <>前置流程會在<b>每一趟執行開始時跑一次</b>(不經 LLM),把 login token 這類「執行期才知道」的值擷取成具名變數。之後<b>每一條 case</b> 都能用 <code className="rounded bg-gray-100 px-1 py-0.5">{"{{名稱}}"}</code> 取用,不必每條都重登入 ——「共用步驟」和「測試」就此分開。</>
+        ) : (
+          <>這個功能的前置流程會在<b>該功能第一條 case 執行前跑一次</b>(不經 LLM),擷取的變數<b>只給這個功能的 case</b> 用 <code className="rounded bg-gray-100 px-1 py-0.5">{"{{名稱}}"}</code> 取用。適合「先建一筆資料、再測它的各種操作」這類功能專屬前置;登入這種全站共用的請放 Target 層級。</>
+        )}
       </p>
 
       {capturedNames.length > 0 && (

@@ -898,9 +898,9 @@ export interface AddCaseResult {
 export type RunEvent =
   | { type: "run_started"; runId: string; target: string; kind: TargetKind; total: number }
   | { type: "sandbox"; sandboxId: string | null; name: string | null; viewUrl: string | null; note: string }
-  | { type: "setup_step"; seq: number; label: string; method: string; path: string; result: { ok: boolean; status: number | null; durationMs: number; error?: string }; captured: string[] }
-  | { type: "setup_done"; captured: string[]; stepCount: number }
-  | { type: "setup_failed"; message: string }
+  | { type: "setup_step"; seq: number; label: string; method: string; path: string; result: { ok: boolean; status: number | null; durationMs: number; error?: string }; captured: string[]; scope: "target" | "feature"; featureName?: string }
+  | { type: "setup_done"; captured: string[]; stepCount: number; scope: "target" | "feature"; featureName?: string }
+  | { type: "setup_failed"; message: string; scope: "target" | "feature"; featureName?: string }
   | { type: "case_started"; caseId: string; title: string; index: number; total: number; caseVersion: number }
   | {
       type: "step";

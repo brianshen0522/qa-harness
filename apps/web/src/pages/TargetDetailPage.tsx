@@ -178,7 +178,7 @@ export default function TargetDetailPage() {
 
       {tab === "overview" && t.kind === "api" && (
         <Card title="前置流程(共用步驟)" className="mt-4">
-          <ApiSetupPanel targetId={id} canEdit={isEditor && !running} />
+          <ApiSetupPanel scope={{ kind: "target", targetId: id }} canEdit={isEditor && !running} />
         </Card>
       )}
 

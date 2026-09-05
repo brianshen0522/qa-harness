@@ -670,4 +670,76 @@ describe("test runs (e2e)", () => {
       expect(results).toHaveLength(0);
     }, 60_000);
   });
+
+  describe("feature 層級前置流程 / feature-scoped setup (§4.4)", () => {
+    let t2: string, f1: string, f2: string, c1: string, c2: string;
+    beforeAll(async () => {
+      const tg = await api(app).post(`/api/projects/${projectId}/targets`).set("Cookie", owner)
+        .send({ name: "API-F", kind: "api", config: { base_url: apiBase }, description: "feature setup 測試" }).expect(201);
+      t2 = tg.body.id;
+      const ff1 = await api(app).post(`/api/targets/${t2}/features`).set("Cookie", editor).send({ name: "建立資源", description: "" }).expect(201);
+      const ff2 = await api(app).post(`/api/targets/${t2}/features`).set("Cookie", editor).send({ name: "壞前置", description: "" }).expect(201);
+      f1 = ff1.body.id; f2 = ff2.body.id;
+      const cc1 = await api(app).post(`/api/targets/${t2}/test-cases`).set("Cookie", editor)
+        .send({ title: "用 feature 變數", steps: ["x"], expected: "ok", priority: "P1", featureId: f1 }).expect(201);
+      const cc2 = await api(app).post(`/api/targets/${t2}/test-cases`).set("Cookie", editor)
+        .send({ title: "前置會壞", steps: ["x"], expected: "ok", priority: "P1", featureId: f2 }).expect(201);
+      c1 = cc1.body.id; c2 = cc2.body.id;
+    });
+
+    it("only editors can edit a feature flow, and it round-trips", async () => {
+      await api(app).put(`/api/features/${f1}/api-setup`).set("Cookie", viewer).send({ steps: [] }).expect(403);
+      const put = await api(app).put(`/api/features/${f1}/api-setup`).set("Cookie", editor)
+        .send({ steps: [{ label: "建立", request: { method: "POST", path: "/create-resource" }, captures: [{ name: "resPath", from: "body.path" }] }] })
+        .expect(200);
+      expect(put.body.steps[0].captures[0].name).toBe("resPath");
+      const got = await api(app).get(`/api/features/${f1}/api-setup`).set("Cookie", viewer).expect(200);
+      expect(got.body.steps).toHaveLength(1);
+    });
+
+    it("runs a feature flow before that feature's cases; a broken feature flow blocks only its own cases", async () => {
+      // F1: works, captures resPath and the case uses it. F2: capture path missing -> fails.
+      await api(app).put(`/api/features/${f1}/api-setup`).set("Cookie", editor)
+        .send({ steps: [{ label: "建立資源", request: { method: "POST", path: "/create-resource" }, captures: [{ name: "resPath", from: "body.path" }] }] }).expect(200);
+      await api(app).put(`/api/features/${f2}/api-setup`).set("Cookie", editor)
+        .send({ steps: [{ label: "壞掉", request: { method: "POST", path: "/whatever" }, captures: [{ name: "gone", from: "body.not_there" }] }] }).expect(200);
+
+      // Route the F1 case to send its captured var in a header; the server echoes auth.
+      requests = [];
+      let call = 0;
+      const adapter: LlmProviderAdapter = {
+        async complete(_c, req: LlmRequest) {
+          if (req.jsonSchema?.name === "execution_step" && req.messages.length === 1) call = 0;
+          if (req.jsonSchema?.name === "case_verdict") return json({ schema_version: "1.0", verdict: "pass", reasoning: "ok", evidence_refs: ["step-1"], repro_steps: [], possibly_changed: false });
+          call++;
+          const action = call <= 1 ? { type: "http_request", params: { method: "GET", path: "/echo", headers: { Authorization: "Bearer {{resPath}}" } } } : null;
+          return json({ schema_version: "1.0", phase: action ? "executing" : "judging", observation: "s", intent: "i", action: action ?? { type: "done", params: { summary: "done" } } });
+        },
+      };
+      app.get(LlmGatewayService).setProviders({ anthropic: adapter, openai: adapter, ollama: adapter });
+
+      const started = await api(app).post(`/api/targets/${t2}/runs`).set("Cookie", editor).send({}).expect(201);
+      const runId = started.body.runId;
+      const deadline = Date.now() + 20_000;
+      let run;
+      while (Date.now() < deadline) {
+        run = await prisma.testRun.findUnique({ where: { id: runId } });
+        if (run && ["succeeded", "failed", "aborted"].includes(run.status)) break;
+        await new Promise((r) => setTimeout(r, 100));
+      }
+      expect(run?.status).toBe("succeeded"); // a broken feature flow does not fail the whole run
+
+      const results = await prisma.testResult.findMany({ where: { runId } });
+      const byCase = new Map(results.map((r) => [r.testCaseId, r]));
+      expect(byCase.get(c1)?.verdict).toBe("pass");
+      expect(byCase.get(c2)?.verdict).toBe("blocked");
+      expect(byCase.get(c2)?.llmReasoning).toContain("前置流程失敗");
+      // F1's captured var reached its case; F2 never executed a request.
+      const echo = requests.find((r) => r.url === "/echo");
+      expect(echo?.auth).toBe("Bearer /create-resource");
+      // Both feature flows recorded as run-level setup steps.
+      const setup = await prisma.runStep.findMany({ where: { runId, phase: "setup" } });
+      expect(setup.length).toBe(2);
+    }, 60_000);
+  });
 });

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { ApiSetupPanel } from "./ApiSetupPanel";
 import { api, apiEventSource, apiEventStream, errorMessage } from "../api/client";
 import type {
   CaseStatus,
@@ -88,6 +89,7 @@ export function TestCaseList({ targetId }: { targetId: string }) {
   const [versionsFor, setVersionsFor] = useState<TestCase | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<TestCase | null>(null);
   const [confirmFeatureDelete, setConfirmFeatureDelete] = useState<Feature | null>(null);
+  const [setupFor, setSetupFor] = useState<Feature | null>(null);
 
   const data = list.data;
   const features = data?.features ?? [];
@@ -340,6 +342,11 @@ export function TestCaseList({ targetId }: { targetId: string }) {
                     <span className="min-w-0 flex-1 truncate text-xs text-gray-400">
                       {g.feature ? g.feature.description : "不屬於任何功能的案例"}
                     </span>
+                    {g.feature && data.target.kind === "api" && (
+                      <Button size="sm" variant="ghost" onClick={() => setSetupFor(g.feature as Feature)}>
+                        前置流程
+                      </Button>
+                    )}
                     {canEdit && g.feature && (
                       <span className="flex gap-1">
                         <Button
@@ -411,6 +418,12 @@ export function TestCaseList({ targetId }: { targetId: string }) {
             saveFeature.mutate({ id: featureEditing.feature?.id ?? null, name, description })
           }
         />
+      )}
+
+      {setupFor && (
+        <Dialog open title={`前置流程 — ${setupFor.name}`} size="lg" onClose={() => setSetupFor(null)}>
+          <ApiSetupPanel scope={{ kind: "feature", featureId: setupFor.id }} canEdit={canEdit} />
+        </Dialog>
       )}
 
       {versionsFor && <VersionsDialog testCase={versionsFor} onClose={() => setVersionsFor(null)} />}

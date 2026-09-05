@@ -470,9 +470,10 @@ model Feature {
   createdAt                 DateTime      @default(now()) @map("created_at")
   updatedAt                 DateTime      @updatedAt @map("updated_at")
 
-  target    QaTarget     @relation(fields: [targetId], references: [id], onDelete: Cascade)
+  target    QaTarget      @relation(fields: [targetId], references: [id], onDelete: Cascade)
   testCases TestCase[]
   findings  RunFinding[]
+  apiSetup  FeatureSetup?
 
   @@unique([targetId, name])
   @@index([targetId, order])
@@ -552,6 +553,20 @@ model ApiSetup {
   target QaTarget @relation(fields: [targetId], references: [id], onDelete: Cascade)
 
   @@map("api_setups")
+}
+
+/// Feature 層級的前置流程(§4.4):只在「這個 feature 的第一條 case 執行前」跑一次,
+/// 擷取的變數只給該 feature 的 case 使用。適合「先建一筆資料、再測它的各種操作」這類
+/// feature 專屬前置,與 Target 層級(全站共用,如 login)並存。
+model FeatureSetup {
+  id        String   @id @default(uuid())
+  featureId String   @unique @map("feature_id")
+  steps     Json     @default("[]")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  feature Feature @relation(fields: [featureId], references: [id], onDelete: Cascade)
+
+  @@map("feature_setups")
 }
 
 model TestCaseVersion {

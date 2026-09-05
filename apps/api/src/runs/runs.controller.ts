@@ -70,6 +70,16 @@ export class RunsController {
     return this.apiSetup.put(id, user.id, dto.steps);
   }
 
+  @Get("features/:featureId/api-setup")
+  getFeatureSetup(@CurrentUser() user: UserPrincipal, @Param("featureId") featureId: string) {
+    return this.apiSetup.getFeature(featureId, user.id);
+  }
+
+  @Put("features/:featureId/api-setup")
+  putFeatureSetup(@CurrentUser() user: UserPrincipal, @Param("featureId") featureId: string, @Body() dto: ApiSetupDto) {
+    return this.apiSetup.putFeature(featureId, user.id, dto.steps);
+  }
+
   @Post("targets/:id/runs")
   start(@CurrentUser() user: UserPrincipal, @Param("id") id: string, @Body() dto: StartRunDto) {
     return this.runs.start(id, user.id, dto.caseIds);

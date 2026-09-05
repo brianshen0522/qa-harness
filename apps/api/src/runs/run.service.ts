@@ -19,7 +19,7 @@ import { McpService } from "../mcp/mcp.service";
 import type { McpToolForPrompt } from "./run-prompts";
 import { EvidenceService } from "./evidence.service";
 import { HttpExecutorService, fillCredentials, type HttpLog } from "./http-executor.service";
-import { ApiSetupService } from "./api-setup.service";
+import { ApiSetupService, type SetupStep } from "./api-setup.service";
 import {
   caseSystemPrompt, verdictSystemPrompt, verdictTranscript,
   type CaseForPrompt, type TargetForPrompt,
@@ -28,9 +28,9 @@ import {
 export type RunEvent =
   | { type: "run_started"; runId: string; target: string; kind: TargetKind; total: number }
   | { type: "sandbox"; sandboxId: string | null; name: string | null; viewUrl: string | null; note: string }
-  | { type: "setup_step"; seq: number; label: string; method: string; path: string; result: { ok: boolean; status: number | null; durationMs: number; error?: string }; captured: string[] }
-  | { type: "setup_done"; captured: string[]; stepCount: number }
-  | { type: "setup_failed"; message: string }
+  | { type: "setup_step"; seq: number; label: string; method: string; path: string; result: { ok: boolean; status: number | null; durationMs: number; error?: string }; captured: string[]; scope: "target" | "feature"; featureName?: string }
+  | { type: "setup_done"; captured: string[]; stepCount: number; scope: "target" | "feature"; featureName?: string }
+  | { type: "setup_failed"; message: string; scope: "target" | "feature"; featureName?: string }
   | { type: "case_started"; caseId: string; title: string; index: number; total: number; caseVersion: number }
   | {
       type: "step"; caseId: string; seq: number; phase: ExecutionStep["phase"];
@@ -333,18 +333,31 @@ export class RunService implements OnModuleInit {
         this.publish(record, { type: "sandbox", sandboxId: null, name: null, viewUrl: null, note: "API 類型不需要 sandbox" });
       }
 
-      // §4.4 前置流程:API 類型可先跑一組「共用步驟」(如 login→token),把執行期變數
-      // 擷取進 credentials,之後每一條 case 都能以 {{名稱}} 取用。setup 失敗代表所有
-      // case 的前置都不成立,直接把整趟 run 標為 failed。
+      // §4.4 前置流程 state。target 層級跑一次(login→token 這種全站共用);feature
+      // 層級在該 feature 首條 case 前才跑一次,變數只給該 feature 的 case。
+      let setupSeqUsed = 0;
+      const featureCaptured = new Map<string, Record<string, string>>();
+      const featureSetupFailed = new Map<string, string>();
+      const setupConfig = () => {
+        const cfg = (target.config ?? {}) as Record<string, unknown>;
+        return { base_url: String(cfg.base_url ?? ""), headers: (cfg.headers as Record<string, string>) ?? undefined };
+      };
+
+      // target 層級 setup 失敗代表所有 case 的前置都不成立,直接把整趟 run 標為 failed。
       if (!needsSandbox) {
-        const setupOk = await this.runSetup(record, target, credentials);
-        if (!setupOk) {
-          await this.prisma.runCaseQueue.updateMany({
-            where: { runId: record.runId, status: QueueStatus.queued },
-            data: { status: QueueStatus.skipped },
-          });
-          await this.finish(record, RunStatus.failed, startedAt);
-          return;
+        const targetSteps = await this.apiSetup.stepsFor(target.id);
+        if (targetSteps.length) {
+          const r = await this.runSetupFlow(record, targetSteps, setupConfig(), credentials, setupSeqUsed, "target");
+          setupSeqUsed += r.recorded;
+          if (!r.ok) {
+            this.publish(record, { type: "setup_failed", message: r.error ?? "前置流程失敗", scope: "target" });
+            await this.prisma.testRun.update({ where: { id: record.runId }, data: { error: (r.error ?? "前置流程失敗").slice(0, 2000) } });
+            await this.prisma.runCaseQueue.updateMany({ where: { runId: record.runId, status: QueueStatus.queued }, data: { status: QueueStatus.skipped } });
+            await this.finish(record, RunStatus.failed, startedAt);
+            return;
+          }
+          Object.assign(credentials, r.captured);
+          this.publish(record, { type: "setup_done", captured: Object.keys(r.captured), stepCount: r.recorded, scope: "target" });
         }
       }
 
@@ -396,8 +409,56 @@ export class RunService implements OnModuleInit {
         });
 
         record.currentCaseId = next.testCaseId;
+
+        // §4.4 feature 層級前置流程:在該 feature 第一條 case 前跑一次,擷取的變數只給
+        // 這個 feature 的 case;失敗只擋這個 feature 的 case,不影響其他 feature。
+        const featureId = next.testCase.featureId;
+        let caseCreds = credentials;
+        let casePrompt = targetPrompt;
+        if (!needsSandbox && featureId) {
+          if (!featureCaptured.has(featureId) && !featureSetupFailed.has(featureId)) {
+            const fsteps = await this.apiSetup.featureStepsFor(featureId);
+            if (fsteps.length) {
+              const fname = next.testCase.feature?.name ?? undefined;
+              const r = await this.runSetupFlow(record, fsteps, setupConfig(), credentials, setupSeqUsed, "feature", fname);
+              setupSeqUsed += r.recorded;
+              if (r.ok) {
+                featureCaptured.set(featureId, r.captured);
+                this.publish(record, { type: "setup_done", captured: Object.keys(r.captured), stepCount: r.recorded, scope: "feature", featureName: fname });
+              } else {
+                featureSetupFailed.set(featureId, r.error ?? "前置流程失敗");
+                this.publish(record, { type: "setup_failed", message: r.error ?? "前置流程失敗", scope: "feature", featureName: fname });
+              }
+            } else {
+              featureCaptured.set(featureId, {});
+            }
+          }
+          const failMsg = featureSetupFailed.get(featureId);
+          if (failMsg) {
+            await this.writeResult(record.runId, next.testCaseId, next.testCase.currentVersion, {
+              verdict: Verdict.blocked, reasoning: `所屬功能的前置流程失敗,無法執行:${failMsg}`,
+              possiblyChanged: false, reproSteps: [], evidence: {}, stepCount: 0, durationMs: 0,
+            });
+            this.publish(record, {
+              type: "case_finished", caseId: next.testCaseId, verdict: Verdict.blocked,
+              reasoning: `所屬功能的前置流程失敗:${failMsg}`, possiblyChanged: false, stepCount: 0, durationMs: 0,
+            });
+            await this.prisma.runCaseQueue.update({
+              where: { runId_testCaseId: { runId: record.runId, testCaseId: next.testCaseId } },
+              data: { status: QueueStatus.done },
+            });
+            record.currentCaseId = null;
+            continue;
+          }
+          const extra = featureCaptured.get(featureId);
+          if (extra && Object.keys(extra).length) {
+            caseCreds = { ...credentials, ...extra };
+            casePrompt = { ...targetPrompt, credentialKeys: Object.keys(caseCreds) };
+          }
+        }
+
         await this.runCase(record, {
-          target, targetPrompt, credentials, settings, agentPort, skillsBlock, mcpTools: mcpForPrompt,
+          target, targetPrompt: casePrompt, credentials: caseCreds, settings, agentPort, skillsBlock, mcpTools: mcpForPrompt,
           queueRow: next, needsSandbox,
         });
 
@@ -836,56 +897,49 @@ export class RunService implements OnModuleInit {
    * returns false if the flow could not complete — in which case the caller fails
    * the run, since every case depends on the setup.
    */
-  private async runSetup(
+  /**
+   * Run one setup flow (target- or feature-level), record each request as a
+   * run-level RunStep, publish setup_step events, and return the outcome. Does
+   * not mutate credentials or finish the run — the caller decides what a
+   * success/failure means for its scope.
+   */
+  private async runSetupFlow(
     record: ActiveRun,
-    target: { id: string; config: Prisma.JsonValue },
-    credentials: Record<string, string>,
-  ): Promise<boolean> {
-    const steps = await this.apiSetup.stepsFor(target.id);
-    if (!steps.length) return true;
+    steps: SetupStep[],
+    config: { base_url: string; headers?: Record<string, string> },
+    baseCreds: Record<string, string>,
+    seqStart: number,
+    scope: "target" | "feature",
+    featureName?: string,
+  ): Promise<{ ok: boolean; captured: Record<string, string>; error?: string; recorded: number }> {
+    const outcome = await this.apiSetup.run(steps, config, baseCreds);
 
-    const cfg = (target.config ?? {}) as Record<string, unknown>;
-    const config = { base_url: String(cfg.base_url ?? ""), headers: (cfg.headers as Record<string, string>) ?? undefined };
-    const outcome = await this.apiSetup.run(steps, config, credentials);
-
-    // The captured values are secrets we propagate as credentials — mask them in
-    // the stored setup transcript so a token never sits in plaintext (a login
-    // response is the one place it appears before it enters the credential map).
-    // Only long values are treated as secrets to mask; short captures (ids, paths)
-    // are not sensitive and masking them could clobber a matching URL path.
+    // Captured values are secrets we propagate as credentials — mask them in the
+    // stored transcript (a login response is the one place a token appears before
+    // it enters the credential map). Only long values count as secrets, so short
+    // captures (ids, paths) do not clobber a matching URL path.
     const secrets = Object.values(outcome.captured).filter((v) => v && v.length >= 12);
-    let seq = 0;
+    let i = 0;
     for (const st of outcome.steps) {
-      seq++;
+      i++;
       const status = (st.result.detail.status as number | undefined) ?? null;
       await this.prisma.runStep.create({
         data: {
-          runId: record.runId, testCaseId: null, seq: -seq, phase: "setup",
+          runId: record.runId, testCaseId: null, seq: -(seqStart + i), phase: "setup",
           action: { type: "http_request", params: st.request } as unknown as Prisma.InputJsonValue,
-          intent: st.label,
+          intent: featureName ? `[${featureName}] ${st.label}` : st.label,
           observation: st.captured.length ? `擷取變數:${st.captured.join("、")}` : (st.error ?? ""),
           result: maskSecrets(st.result, secrets) as unknown as Prisma.InputJsonValue,
           modelUsed: null, durationMs: st.result.durationMs,
         },
       });
       this.publish(record, {
-        type: "setup_step", seq, label: st.label, method: st.request.method, path: st.request.path,
+        type: "setup_step", seq: seqStart + i, label: st.label, method: st.request.method, path: st.request.path,
         result: { ok: st.result.ok && !st.error, status, durationMs: st.result.durationMs, error: st.error },
-        captured: st.captured,
+        captured: st.captured, scope, featureName,
       });
     }
-
-    // Captured runtime values join the credential map: cases reference them by
-    // name (masked in transcripts just like real credentials).
-    for (const [k, v] of Object.entries(outcome.captured)) credentials[k] = v;
-
-    if (!outcome.ok) {
-      await this.prisma.testRun.update({ where: { id: record.runId }, data: { error: (outcome.error ?? "前置流程失敗").slice(0, 2000) } });
-      this.publish(record, { type: "setup_failed", message: outcome.error ?? "前置流程失敗" });
-      return false;
-    }
-    this.publish(record, { type: "setup_done", captured: Object.keys(outcome.captured), stepCount: outcome.steps.length });
-    return true;
+    return { ok: outcome.ok, captured: outcome.captured, error: outcome.error, recorded: outcome.steps.length };
   }
 
   private async finish(record: ActiveRun, status: RunStatus, startedAt: number) {

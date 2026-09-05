@@ -79,6 +79,35 @@ export class ApiSetupService {
     return (row?.steps as unknown as SetupStep[]) ?? [];
   }
 
+  /** Feature-level flow: scoped to one feature's cases. */
+  async getFeature(featureId: string, userId: string): Promise<{ steps: SetupStep[] }> {
+    const feature = await this.prisma.feature.findUnique({ where: { id: featureId }, select: { targetId: true } });
+    if (!feature) throw new NotFoundException("Feature 不存在");
+    await this.perms.requireTarget(feature.targetId, userId, Role.viewer);
+    const row = await this.prisma.featureSetup.findUnique({ where: { featureId } });
+    return { steps: (row?.steps as unknown as SetupStep[]) ?? [] };
+  }
+
+  async putFeature(featureId: string, userId: string, steps: unknown): Promise<{ steps: SetupStep[] }> {
+    const feature = await this.prisma.feature.findUnique({ where: { id: featureId }, select: { targetId: true, target: { select: { kind: true } } } });
+    if (!feature) throw new NotFoundException("Feature 不存在");
+    await this.perms.requireTarget(feature.targetId, userId, Role.editor);
+    if (feature.target.kind !== "api") throw new BadRequestException("前置流程目前只支援 API 類型的 Target");
+    const clean = normalizeSteps(steps);
+    await this.prisma.featureSetup.upsert({
+      where: { featureId },
+      create: { featureId, steps: clean as unknown as Prisma.InputJsonValue },
+      update: { steps: clean as unknown as Prisma.InputJsonValue },
+    });
+    return { steps: clean };
+  }
+
+  /** Feature flow for a run (no permission check; caller owns the run). */
+  async featureStepsFor(featureId: string): Promise<SetupStep[]> {
+    const row = await this.prisma.featureSetup.findUnique({ where: { featureId } });
+    return (row?.steps as unknown as SetupStep[]) ?? [];
+  }
+
   /**
    * Run the setup flow once, deterministically (no LLM). Each request may use
    * `{{credential}}` and `{{captured}}` placeholders; after each request the

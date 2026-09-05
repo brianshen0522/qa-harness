@@ -4,6 +4,7 @@ import {
 } from "@prisma/client";
 import type { FeatureList, TestCaseOutput } from "@qa-harness/schemas";
 import { PrismaService } from "../prisma/prisma.service";
+import { acquireTargetLock, busyMessage, releaseTargetLock, targetLockHolder } from "../targets/target-lock";
 import { PermissionsService } from "../permissions/permissions.service";
 import { LlmExhaustedError, LlmGatewayService } from "../llm/llm-gateway.service";
 import { LlmHealthService } from "../llm/llm-health.service";
@@ -105,12 +106,15 @@ export class GenerationService implements OnModuleInit {
       where: { id: targetId },
       select: { status: true, descriptionVersion: true },
     });
-    if (target.status === "running") throw new ConflictException("Target 執行中，無法重新生成測試清單。");
     if (this.isInFlight(targetId)) throw new ConflictException("已經有一個生成流程在進行中。");
     const inFlight = await this.prisma.generationRun.findFirst({
       where: { targetId, status: { in: ["running", "paused"] } },
     });
     if (inFlight) throw new ConflictException("已經有一個生成流程在進行中。");
+    if (!(await acquireTargetLock(this.prisma, targetId))) {
+      const holder = await targetLockHolder(this.prisma, targetId);
+      throw new ConflictException(`${busyMessage(holder)},無法同時生成測試清單。`);
+    }
 
     // Regenerating one feature is not "replace the world": only that feature's
     // generated cases go (§4.4 只針對受影響 feature 重生成).
@@ -126,14 +130,19 @@ export class GenerationService implements OnModuleInit {
       throw new BadRequestException("指定的功能都不屬於這個 Target。");
     }
 
-    const run = await this.prisma.generationRun.create({
-      data: {
-        targetId, mode, descriptionVersion: target.descriptionVersion,
-        triggeredById: userId, onlyFeatureIds,
-      },
-    });
-    this.spawn(run.id, targetId, userId);
-    return { runId: run.id };
+    try {
+      const run = await this.prisma.generationRun.create({
+        data: {
+          targetId, mode, descriptionVersion: target.descriptionVersion,
+          triggeredById: userId, onlyFeatureIds,
+        },
+      });
+      this.spawn(run.id, targetId, userId);
+      return { runId: run.id };
+    } catch (err) {
+      await releaseTargetLock(this.prisma, targetId);
+      throw err;
+    }
   }
 
   /** Replays what has happened so far, then streams the rest. */
@@ -182,6 +191,7 @@ export class GenerationService implements OnModuleInit {
           .catch(() => undefined);
       })
       .finally(() => {
+        void releaseTargetLock(this.prisma, record.targetId);
         record.finished = true;
         record.subscribers.clear();
         const evict = setTimeout(() => {

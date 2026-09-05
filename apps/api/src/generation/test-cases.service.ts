@@ -3,6 +3,7 @@ import {
   CaseSource, CaseStatus, FeatureStatus, Prisma, Priority, Role, type CaseType,
 } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
+import { busyMessage, targetLockHolder } from "../targets/target-lock";
 import { PermissionsService } from "../permissions/permissions.service";
 import { AuditService } from "../audit/audit.service";
 import { snapshot } from "./generation.service";
@@ -280,13 +281,22 @@ export class TestCasesService {
     });
     if (target.status !== "running") return;
 
+    const holder = await targetLockHolder(this.prisma, targetId);
+    if (!holder) return; // the lock is stale; nothing is actually running
+    if (holder !== "execute") {
+      // Exploration and generation rewrite the whole list, so it is fully
+      // read-only while either is in flight.
+      throw new ConflictException(`${busyMessage(holder)},測試清單暫時唯讀,等它結束再改。`);
+    }
+
+    // A QA run is in flight: adding a case is allowed (§4.6); only a case that is
+    // actively executing is locked.
+    if (!caseId) return;
     const activeRun = await this.prisma.testRun.findFirst({
       where: { targetId, status: { in: ["running", "paused"] } },
       select: { id: true },
     });
-    if (!activeRun) return; // the lock is stale; nothing is actually executing
-
-    if (!caseId) return; // adding a case mid-run is allowed (§4.6)
+    if (!activeRun) return;
     const row = await this.prisma.runCaseQueue.findUnique({
       where: { runId_testCaseId: { runId: activeRun.id, testCaseId: caseId } },
       select: { status: true },

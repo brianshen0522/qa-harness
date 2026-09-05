@@ -20,6 +20,7 @@ import type { McpToolForPrompt } from "./run-prompts";
 import { EvidenceService } from "./evidence.service";
 import { HttpExecutorService, fillCredentials, type HttpLog } from "./http-executor.service";
 import { ApiSetupService, type SetupStep } from "./api-setup.service";
+import { acquireTargetLock, busyMessage, targetLockHolder } from "../targets/target-lock";
 import { fenceUntrusted } from "../common/untrusted";
 import { SCREENSHOT_WINDOW, buildMessages, maskSecrets } from "./run-utils";
 import {
@@ -165,11 +166,10 @@ export class RunService implements OnModuleInit {
       );
     }
 
-    const locked = await this.prisma.qaTarget.updateMany({
-      where: { id: targetId, status: "idle" },
-      data: { status: "running" },
-    });
-    if (locked.count === 0) throw new ConflictException("這個 Target 已經有一個執行在進行中。");
+    if (!(await acquireTargetLock(this.prisma, targetId))) {
+      const holder = await targetLockHolder(this.prisma, targetId);
+      throw new ConflictException(`${busyMessage(holder)},無法同時執行 QA。`);
+    }
 
     try {
       const configs = await this.prisma.llmConfig.findMany({

@@ -408,7 +408,7 @@ describe("test runs (e2e)", () => {
       await api(app).post(`/api/targets/${targetId}/runs`).set("Cookie", editor).send({}).expect(201);
 
       const second = await api(app).post(`/api/targets/${targetId}/runs`).set("Cookie", editor).send({}).expect(409);
-      expect(second.body.message).toMatch(/已經有一個執行在進行中/);
+      expect(second.body.message).toMatch(/正在執行 QA/);
       await waitForRun(["succeeded", "failed", "aborted"], 60_000);
     }, 90_000);
 
@@ -754,5 +754,24 @@ describe("test runs (e2e)", () => {
     const ev = result.evidence as { evidenceRefs: string[] };
     expect(ev.evidenceRefs).toContain("step-1");
     expect(ev.evidenceRefs).not.toContain("step-99");
+  }, 60_000);
+
+  it("locks the target during exploration: no QA run, no generate, no case edits (§4.6 防呆)", async () => {
+    // Simulate an exploration holding the lock (no sandbox needed for the guard).
+    await prisma.qaTarget.update({ where: { id: targetId }, data: { status: "running" } });
+    const exp = await prisma.explorationRun.create({ data: { targetId, status: "running", triggeredById: (await prisma.user.findFirstOrThrow({ where: { email: "editor@r.local" } })).id } });
+    try {
+      const run = await api(app).post(`/api/targets/${targetId}/runs`).set("Cookie", editor).send({}).expect(409);
+      expect(run.body.message).toContain("探索");
+      const gen = await api(app).post(`/api/targets/${targetId}/generate`).set("Cookie", editor).send({}).expect(409);
+      expect(gen.body.message).toContain("探索");
+      const edit = await api(app).patch(`/api/test-cases/${caseIds[0]}`).set("Cookie", editor).send({ title: "改標題" }).expect(409);
+      expect(edit.body.message).toContain("唯讀");
+    } finally {
+      await prisma.explorationRun.update({ where: { id: exp.id }, data: { status: "failed", endedAt: new Date() } });
+      await prisma.qaTarget.update({ where: { id: targetId }, data: { status: "idle" } });
+    }
+    // Lock released -> edits work again.
+    await api(app).patch(`/api/test-cases/${caseIds[0]}`).set("Cookie", editor).send({ title: "改標題" }).expect(200);
   }, 60_000);
 });

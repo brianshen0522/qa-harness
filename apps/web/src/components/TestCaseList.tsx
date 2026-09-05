@@ -241,7 +241,7 @@ export function TestCaseList({ targetId }: { targetId: string }) {
           </div>
 
           {data.target.locked && (
-            <Notice>此 Target 正在執行中，測試清單目前為唯讀，執行結束後才能新增或修改。</Notice>
+            <Notice>此 Target 忙碌中(執行 QA／探索／生成),測試清單目前為唯讀,等它結束才能新增或修改。</Notice>
           )}
           {!hasRole(data.target.myRole, "editor") && (
             <Notice tone="blue">你是檢視者，只能閱讀測試清單，無法新增或修改。</Notice>

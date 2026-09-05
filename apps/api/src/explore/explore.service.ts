@@ -3,6 +3,7 @@ import {
   CaseSource, CaseStatus, ExplorationStatus, ObservationKind, Prisma, Priority, Role, type CaseType,
 } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
+import { acquireTargetLock, busyMessage, releaseTargetLock, targetLockHolder } from "../targets/target-lock";
 import { PermissionsService } from "../permissions/permissions.service";
 import { LlmExhaustedError, LlmGatewayService } from "../llm/llm-gateway.service";
 import { LlmHealthService } from "../llm/llm-health.service";
@@ -111,6 +112,7 @@ export class ExploreService implements OnModuleInit {
     for (const run of orphans) {
       await this.prisma.explorationRun
         .update({ where: { id: run.id }, data: { status: ExplorationStatus.failed, error: "API 重新啟動，探索已中斷。", endedAt: new Date() } })
+        .then(() => releaseTargetLock(this.prisma, run.targetId))
         .catch(() => undefined);
     }
   }
@@ -119,7 +121,6 @@ export class ExploreService implements OnModuleInit {
     await this.perms.requireTarget(targetId, userId, Role.editor);
     const target = await this.prisma.qaTarget.findUniqueOrThrow({ where: { id: targetId } });
     if (target.kind !== "web") throw new BadRequestException("探索模式目前只支援 web 類型的 Target。");
-    if (target.status === "running") throw new ConflictException("Target 執行中，無法同時探索。");
     if (this.active.get(targetId) && !this.active.get(targetId)!.finished) {
       throw new ConflictException("已經有一個探索在進行中。");
     }
@@ -150,11 +151,20 @@ export class ExploreService implements OnModuleInit {
       interactBudget: partial.interactBudget ?? 60,
     };
 
-    const run = await this.prisma.explorationRun.create({
-      data: { targetId, config: config as unknown as Prisma.InputJsonValue, triggeredById: userId },
-    });
-    this.spawn(run.id, targetId, url, config, identities, userId);
-    return { runId: run.id };
+    if (!(await acquireTargetLock(this.prisma, targetId))) {
+      const holder = await targetLockHolder(this.prisma, targetId);
+      throw new ConflictException(`${busyMessage(holder)},無法同時探索。`);
+    }
+    try {
+      const run = await this.prisma.explorationRun.create({
+        data: { targetId, config: config as unknown as Prisma.InputJsonValue, triggeredById: userId },
+      });
+      this.spawn(run.id, targetId, url, config, identities, userId);
+      return { runId: run.id };
+    } catch (err) {
+      await releaseTargetLock(this.prisma, targetId);
+      throw err;
+    }
   }
 
   subscribe(targetId: string, sub: (e: ExploreEvent) => void): () => void {
@@ -192,6 +202,7 @@ export class ExploreService implements OnModuleInit {
       .finally(() => {
         record.finished = true;
         record.subscribers.clear();
+        void releaseTargetLock(this.prisma, targetId);
         const evict = setTimeout(() => {
           if (this.active.get(targetId) === record) this.active.delete(targetId);
         }, RETAIN_FINISHED_MS);

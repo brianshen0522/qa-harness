@@ -1,5 +1,5 @@
 import {
-  Body, Controller, Get, Param, Post, Query, Req, Res, UseGuards,
+  Body, Controller, Get, Param, Post, Put, Query, Req, Res, UseGuards,
 } from "@nestjs/common";
 import {
   ArrayNotEmpty, IsArray, IsEnum, IsOptional, IsString, IsUUID, MaxLength, MinLength,
@@ -12,6 +12,7 @@ import type { UserPrincipal } from "../common/types";
 import { RunService } from "./run.service";
 import { RunQueryService } from "./run-query.service";
 import { FindingConversionService } from "./finding-conversion.service";
+import { ApiSetupService } from "./api-setup.service";
 
 class StartRunDto {
   @IsOptional() @IsArray() @IsUUID("4", { each: true }) caseIds?: string[];
@@ -31,6 +32,9 @@ class AskDto {
   @IsOptional() @IsUUID() resultId?: string;
   @IsOptional() @IsArray() history?: { role: "user" | "assistant"; content: string }[];
 }
+class ApiSetupDto {
+  @IsArray() steps!: unknown[];
+}
 class ConvertFindingDto {
   @IsString() @MinLength(1) @MaxLength(500) title!: string;
   @IsOptional() @IsString() @MaxLength(5000) precondition?: string;
@@ -49,9 +53,22 @@ export class RunsController {
     private readonly runs: RunService,
     private readonly query: RunQueryService,
     private readonly findings2case: FindingConversionService,
+    private readonly apiSetup: ApiSetupService,
   ) {}
 
   // ---------- running ----------
+
+  // ---------- API 前置流程(§4.4) ----------
+
+  @Get("targets/:id/api-setup")
+  getApiSetup(@CurrentUser() user: UserPrincipal, @Param("id") id: string) {
+    return this.apiSetup.get(id, user.id);
+  }
+
+  @Put("targets/:id/api-setup")
+  putApiSetup(@CurrentUser() user: UserPrincipal, @Param("id") id: string, @Body() dto: ApiSetupDto) {
+    return this.apiSetup.put(id, user.id, dto.steps);
+  }
 
   @Post("targets/:id/runs")
   start(@CurrentUser() user: UserPrincipal, @Param("id") id: string, @Body() dto: StartRunDto) {

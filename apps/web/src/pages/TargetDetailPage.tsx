@@ -12,6 +12,7 @@ import { TestCaseList } from "../components/TestCaseList";
 import { RunPanel } from "../components/RunPanel";
 import { ChangePanel } from "../components/ChangePanel";
 import { ExplorePanel } from "../components/ExplorePanel";
+import { ApiSetupPanel } from "../components/ApiSetupPanel";
 import { ROLES, ROLE_LABEL, hasRole } from "../lib/roles";
 
 type TabKey = "overview" | "discussion" | "handoff" | "explore" | "cases" | "changes" | "runs";
@@ -173,6 +174,12 @@ export default function TargetDetailPage() {
           <TargetMembers targetId={id} isOwner={isOwner} />
         </div>
       </div>
+      )}
+
+      {tab === "overview" && t.kind === "api" && (
+        <Card title="前置流程(共用步驟)" className="mt-4">
+          <ApiSetupPanel targetId={id} canEdit={isEditor && !running} />
+        </Card>
       )}
 
       <Dialog open={confirmDelete} title="刪除 Target" onClose={() => setConfirmDelete(false)}>

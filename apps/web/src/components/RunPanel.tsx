@@ -66,6 +66,7 @@ type FindingEvent = Extract<RunEvent, { type: "finding" }>;
 type CaseFinishedEvent = Extract<RunEvent, { type: "case_finished" }>;
 type PausedEvent = Extract<RunEvent, { type: "paused" }>;
 type SandboxEvent = Extract<RunEvent, { type: "sandbox" }>;
+type SetupStepEvent = Extract<RunEvent, { type: "setup_step" }>;
 
 /** Evidence is served as raw bytes off the run, so it can be an `<img src>` directly. */
 function evidenceUrl(runId: string, key: string): string {
@@ -386,6 +387,9 @@ interface LiveState {
   findings: FindingEvent[];
   findingCase: Map<string, string | null>;
   sandbox: SandboxEvent | null;
+  setupSteps: SetupStepEvent[];
+  setupCaptured: string[];
+  setupFailed: string | null;
   paused: PausedEvent | null;
   resumed: string | null;
   runFinished: Extract<RunEvent, { type: "run_finished" }> | null;
@@ -408,6 +412,9 @@ function digest(events: RunEvent[]): LiveState {
     findings: [],
     findingCase: new Map(),
     sandbox: null,
+    setupSteps: [],
+    setupCaptured: [],
+    setupFailed: null,
     paused: null,
     resumed: null,
     runFinished: null,
@@ -421,6 +428,15 @@ function digest(events: RunEvent[]): LiveState {
         break;
       case "sandbox":
         state.sandbox = event;
+        break;
+      case "setup_step":
+        state.setupSteps.push(event);
+        break;
+      case "setup_done":
+        state.setupCaptured = event.captured;
+        break;
+      case "setup_failed":
+        state.setupFailed = event.message;
         break;
       case "case_started":
         state.titles.set(event.caseId, event.title);
@@ -938,7 +954,8 @@ function ApiLivePane({
   titles: (caseId: string) => string;
   onOpenStep: (caseId: string, seq: number) => void;
 }) {
-  const httpRows = rows.filter((r) => r.action?.type === "http_request");
+  const setupRows = rows.filter((r) => r.phase === "setup").sort((a, b) => a.seq - b.seq);
+  const httpRows = rows.filter((r) => r.action?.type === "http_request" && r.phase !== "setup");
   const latest = httpRows[httpRows.length - 1];
 
   const line = (r: RunStepRow) => {
@@ -967,6 +984,27 @@ function ApiLivePane({
           <p className="mt-0.5 text-xs text-gray-400">還沒有動作。</p>
         )}
       </div>
+      {setupRows.length > 0 && (
+        <div className="shrink-0 border-b border-gray-100 bg-emerald-50/40 px-3 py-2">
+          <p className="mb-1 text-xs font-medium text-emerald-800">前置流程（每趟執行前跑一次，共用給所有 case）</p>
+          <ol className="space-y-1">
+            {setupRows.map((r) => {
+              const p = (r.action?.params ?? {}) as Record<string, unknown>;
+              const d = (r.result?.detail ?? {}) as { status?: number };
+              const ok = (r.result?.ok ?? true) && !String(r.observation).includes("失敗");
+              return (
+                <li key={r.id} className="flex items-center gap-2 text-xs">
+                  <code className={`w-14 shrink-0 rounded px-1 py-0.5 text-center font-semibold ${methodTone(String(p.method ?? "GET").toUpperCase())}`}>{String(p.method ?? "GET").toUpperCase()}</code>
+                  <code className="min-w-0 flex-1 truncate text-gray-700">{String(p.url ?? p.path ?? "")}</code>
+                  <span className="truncate text-emerald-700">{r.observation}</span>
+                  {d.status !== undefined && <Badge tone={d.status >= 400 ? "amber" : "green"}>{d.status}</Badge>}
+                  {!ok && <Badge tone="red">失敗</Badge>}
+                </li>
+              );
+            })}
+          </ol>
+        </div>
+      )}
       <div className="flex items-center justify-between px-3 py-1.5 text-xs text-gray-500">
         <span>請求紀錄（{httpRows.length}）</span>
         <span className="text-gray-400">點任一列看完整請求與回應</span>

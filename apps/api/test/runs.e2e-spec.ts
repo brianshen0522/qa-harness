@@ -592,4 +592,82 @@ describe("test runs (e2e)", () => {
     const actions = (await prisma.auditLog.findMany()).map((a) => a.action);
     expect(actions).toEqual(expect.arrayContaining(["run.start", "run.abort", "result.review"]));
   });
+
+  describe("API 前置流程 / setup flow (§4.4)", () => {
+    afterEach(async () => {
+      // Leave no persisted setup behind — later tests assume none runs.
+      await prisma.apiSetup.deleteMany({ where: { targetId } });
+    });
+
+    it("rejects an invalid capture name and stores a valid flow", async () => {
+      await api(app).put(`/api/targets/${targetId}/api-setup`).set("Cookie", editor)
+        .send({ steps: [{ label: "login", request: { method: "POST", path: "/login" }, captures: [{ name: "1bad", from: "body.x" }] }] })
+        .expect(400);
+      // viewers cannot edit
+      await api(app).put(`/api/targets/${targetId}/api-setup`).set("Cookie", viewer)
+        .send({ steps: [] }).expect(403);
+
+      const put = await api(app).put(`/api/targets/${targetId}/api-setup`).set("Cookie", editor)
+        .send({ steps: [{ label: "登入取得 token", request: { method: "POST", path: "/login", body: { u: "a" } }, captures: [{ name: "sessionPath", from: "body.path" }] }] })
+        .expect(200);
+      expect(put.body.steps).toHaveLength(1);
+      const got = await api(app).get(`/api/targets/${targetId}/api-setup`).set("Cookie", viewer).expect(200);
+      expect(got.body.steps[0].captures[0]).toMatchObject({ name: "sessionPath", from: "body.path" });
+    });
+
+    it("runs the flow once before the cases and exposes captured vars as {{name}}", async () => {
+      await api(app).put(`/api/targets/${targetId}/api-setup`).set("Cookie", editor)
+        .send({ steps: [{ label: "登入", request: { method: "POST", path: "/login" }, captures: [{ name: "sessionPath", from: "body.path" }] }] })
+        .expect(200);
+      // The case uses the captured variable in a header; the test server echoes auth.
+      stubModel((call) => (call <= 1 ? { type: "http_request", params: { method: "GET", path: "/me", headers: { Authorization: "Bearer {{sessionPath}}" } } } : null));
+      const started = await api(app).post(`/api/targets/${targetId}/runs`).set("Cookie", editor)
+        .send({ caseIds: [caseIds[0]] }).expect(201);
+      const run = await waitForRun(["succeeded", "failed", "aborted"]);
+      expect(run.status).toBe("succeeded");
+
+      // Setup ran exactly once, recorded as a run-level step (no case).
+      const setupSteps = await prisma.runStep.findMany({ where: { runId: run.id, phase: "setup" } });
+      expect(setupSteps).toHaveLength(1);
+      expect(setupSteps[0].testCaseId).toBeNull();
+      // The captured value (body.path === "/login") reached the case request.
+      const meReq = requests.find((r) => r.url === "/me");
+      expect(meReq?.auth).toBe("Bearer /login");
+      // GET steps surfaces the setup step for replay.
+      const steps = await api(app).get(`/api/runs/${run.id}/steps`).set("Cookie", viewer).expect(200);
+      expect(steps.body.some((s: { phase: string }) => s.phase === "setup")).toBe(true);
+    }, 60_000);
+
+    it("masks a long captured secret in the stored setup transcript", async () => {
+      // The test server echoes back whatever path was hit; use a long unique path
+      // so the captured value crosses the secret-length threshold and is masked.
+      const secretPath = "/session-" + "z".repeat(24);
+      await api(app).put(`/api/targets/${targetId}/api-setup`).set("Cookie", editor)
+        .send({ steps: [{ label: "登入", request: { method: "POST", path: secretPath }, captures: [{ name: "sess", from: "body.path" }] }] })
+        .expect(200);
+      stubModel((call) => (call <= 1 ? { type: "http_request", params: { method: "GET", path: "/ok" } } : null));
+      await api(app).post(`/api/targets/${targetId}/runs`).set("Cookie", editor).send({ caseIds: [caseIds[0]] }).expect(201);
+      const run = await waitForRun(["succeeded", "failed", "aborted"]);
+      expect(run.status).toBe("succeeded");
+      const setup = await prisma.runStep.findFirstOrThrow({ where: { runId: run.id, phase: "setup" } });
+      // The captured value must not appear verbatim in the stored response.
+      expect(JSON.stringify(setup.result)).not.toContain(secretPath);
+      expect(JSON.stringify(setup.result)).toContain("****");
+    }, 60_000);
+
+    it("fails the run when the setup flow cannot complete", async () => {
+      await api(app).put(`/api/targets/${targetId}/api-setup`).set("Cookie", editor)
+        .send({ steps: [{ label: "登入", request: { method: "POST", path: "/login" }, captures: [{ name: "token2", from: "body.not_there" }] }] })
+        .expect(200);
+      stubModel((call) => (call <= 1 ? { type: "http_request", params: { method: "GET", path: "/ok" } } : null));
+      const started = await api(app).post(`/api/targets/${targetId}/runs`).set("Cookie", editor)
+        .send({ caseIds: [caseIds[0]] }).expect(201);
+      const run = await waitForRun(["succeeded", "failed", "aborted"]);
+      expect(run.status).toBe("failed");
+      expect(run.error).toContain("前置流程");
+      // No case executed: the queued case was skipped.
+      const results = await prisma.testResult.findMany({ where: { runId: run.id } });
+      expect(results).toHaveLength(0);
+    }, 60_000);
+  });
 });

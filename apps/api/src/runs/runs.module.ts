@@ -5,6 +5,7 @@ import { RunQueryService } from "./run-query.service";
 import { FindingConversionService } from "./finding-conversion.service";
 import { EvidenceService } from "./evidence.service";
 import { HttpExecutorService } from "./http-executor.service";
+import { ApiSetupService } from "./api-setup.service";
 import { RetentionService } from "./retention.service";
 import { LlmModule } from "../llm/llm.module";
 import { SandboxModule } from "../sandbox/sandbox.module";
@@ -15,7 +16,7 @@ import { McpModule } from "../mcp/mcp.module";
 @Module({
   imports: [LlmModule, SandboxModule, TargetsModule, SkillsModule, McpModule],
   controllers: [RunsController],
-  providers: [RunService, RunQueryService, FindingConversionService, EvidenceService, HttpExecutorService, RetentionService],
-  exports: [RunService, RunQueryService, EvidenceService, RetentionService],
+  providers: [RunService, RunQueryService, FindingConversionService, EvidenceService, HttpExecutorService, ApiSetupService, RetentionService],
+  exports: [RunService, RunQueryService, EvidenceService, ApiSetupService, RetentionService],
 })
 export class RunsModule {}

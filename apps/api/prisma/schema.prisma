@@ -165,6 +165,7 @@ model QaTarget {
   changeLogs       ChangeLog[]
   identities       TargetIdentity[]
   explorationRuns  ExplorationRun[]
+  apiSetup         ApiSetup?
 
   @@map("qa_targets")
 }
@@ -534,6 +535,23 @@ model TestCase {
   @@index([targetId, order])
   @@index([featureId])
   @@map("test_cases")
+}
+
+/// API 前置流程(§4.4 延伸):在一趟 run 開始時「執行一次」的一組請求,把 login token
+/// 這類「執行期才知道」的值擷取成具名變數,供該 run 的每一條 case 以 {{名稱}} 取用。
+/// 把「共用步驟(login→token)」和「測試(各種變體)」拆成兩個概念:前者放這裡跑一次,
+/// 後者留在 TestCase,只描述差異與預期。
+model ApiSetup {
+  id        String   @id @default(uuid())
+  targetId  String   @unique @map("target_id")
+  /// SetupStep[]:{ label, request:{method,path,headers,query,body}, captures:[{name, from}] }
+  /// from 是回應裡的取值路徑,如 `body.access_token`、`status`、`headers.location`。
+  steps     Json     @default("[]")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  target QaTarget @relation(fields: [targetId], references: [id], onDelete: Cascade)
+
+  @@map("api_setups")
 }
 
 model TestCaseVersion {

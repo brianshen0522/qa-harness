@@ -19,6 +19,7 @@ import { McpService } from "../mcp/mcp.service";
 import type { McpToolForPrompt } from "./run-prompts";
 import { EvidenceService } from "./evidence.service";
 import { HttpExecutorService, fillCredentials, type HttpLog } from "./http-executor.service";
+import { ApiSetupService } from "./api-setup.service";
 import {
   caseSystemPrompt, verdictSystemPrompt, verdictTranscript,
   type CaseForPrompt, type TargetForPrompt,
@@ -27,6 +28,9 @@ import {
 export type RunEvent =
   | { type: "run_started"; runId: string; target: string; kind: TargetKind; total: number }
   | { type: "sandbox"; sandboxId: string | null; name: string | null; viewUrl: string | null; note: string }
+  | { type: "setup_step"; seq: number; label: string; method: string; path: string; result: { ok: boolean; status: number | null; durationMs: number; error?: string }; captured: string[] }
+  | { type: "setup_done"; captured: string[]; stepCount: number }
+  | { type: "setup_failed"; message: string }
   | { type: "case_started"; caseId: string; title: string; index: number; total: number; caseVersion: number }
   | {
       type: "step"; caseId: string; seq: number; phase: ExecutionStep["phase"];
@@ -89,6 +93,21 @@ function emptyUsage(): LlmUsage {
   return { configs: [], switches: [], outages: [] };
 }
 
+/** Replace each secret string with **** anywhere in a serializable value. */
+function maskSecrets<T>(value: T, secrets: string[]): T {
+  if (!secrets.length) return value;
+  try {
+    let json = JSON.stringify(value);
+    for (const secret of secrets) {
+      if (!secret) continue;
+      json = json.split(JSON.stringify(secret).slice(1, -1)).join("****");
+    }
+    return JSON.parse(json) as T;
+  } catch {
+    return value;
+  }
+}
+
 /** A finished run stays readable so a late subscriber still sees how it went. */
 const RETAIN_FINISHED_MS = 120_000;
 /** Screenshots kept in the prompt; older steps keep their text only. */
@@ -112,6 +131,7 @@ export class RunService implements OnModuleInit {
     private readonly audit: AuditService,
     private readonly skills: SkillsService,
     private readonly mcp: McpService,
+    private readonly apiSetup: ApiSetupService,
   ) {}
 
   /**
@@ -311,6 +331,21 @@ export class RunService implements OnModuleInit {
         });
       } else {
         this.publish(record, { type: "sandbox", sandboxId: null, name: null, viewUrl: null, note: "API 類型不需要 sandbox" });
+      }
+
+      // §4.4 前置流程:API 類型可先跑一組「共用步驟」(如 login→token),把執行期變數
+      // 擷取進 credentials,之後每一條 case 都能以 {{名稱}} 取用。setup 失敗代表所有
+      // case 的前置都不成立,直接把整趟 run 標為 failed。
+      if (!needsSandbox) {
+        const setupOk = await this.runSetup(record, target, credentials);
+        if (!setupOk) {
+          await this.prisma.runCaseQueue.updateMany({
+            where: { runId: record.runId, status: QueueStatus.queued },
+            data: { status: QueueStatus.skipped },
+          });
+          await this.finish(record, RunStatus.failed, startedAt);
+          return;
+        }
       }
 
       const targetPrompt: TargetForPrompt = {
@@ -793,6 +828,64 @@ export class RunService implements OnModuleInit {
         stepCount: data.stepCount, durationMs: data.durationMs,
       },
     });
+  }
+
+  /**
+   * Run the target's shared API setup flow once (§4.4). Records each request as a
+   * run-level step (no case), merges captured variables into `credentials`, and
+   * returns false if the flow could not complete — in which case the caller fails
+   * the run, since every case depends on the setup.
+   */
+  private async runSetup(
+    record: ActiveRun,
+    target: { id: string; config: Prisma.JsonValue },
+    credentials: Record<string, string>,
+  ): Promise<boolean> {
+    const steps = await this.apiSetup.stepsFor(target.id);
+    if (!steps.length) return true;
+
+    const cfg = (target.config ?? {}) as Record<string, unknown>;
+    const config = { base_url: String(cfg.base_url ?? ""), headers: (cfg.headers as Record<string, string>) ?? undefined };
+    const outcome = await this.apiSetup.run(steps, config, credentials);
+
+    // The captured values are secrets we propagate as credentials — mask them in
+    // the stored setup transcript so a token never sits in plaintext (a login
+    // response is the one place it appears before it enters the credential map).
+    // Only long values are treated as secrets to mask; short captures (ids, paths)
+    // are not sensitive and masking them could clobber a matching URL path.
+    const secrets = Object.values(outcome.captured).filter((v) => v && v.length >= 12);
+    let seq = 0;
+    for (const st of outcome.steps) {
+      seq++;
+      const status = (st.result.detail.status as number | undefined) ?? null;
+      await this.prisma.runStep.create({
+        data: {
+          runId: record.runId, testCaseId: null, seq: -seq, phase: "setup",
+          action: { type: "http_request", params: st.request } as unknown as Prisma.InputJsonValue,
+          intent: st.label,
+          observation: st.captured.length ? `擷取變數:${st.captured.join("、")}` : (st.error ?? ""),
+          result: maskSecrets(st.result, secrets) as unknown as Prisma.InputJsonValue,
+          modelUsed: null, durationMs: st.result.durationMs,
+        },
+      });
+      this.publish(record, {
+        type: "setup_step", seq, label: st.label, method: st.request.method, path: st.request.path,
+        result: { ok: st.result.ok && !st.error, status, durationMs: st.result.durationMs, error: st.error },
+        captured: st.captured,
+      });
+    }
+
+    // Captured runtime values join the credential map: cases reference them by
+    // name (masked in transcripts just like real credentials).
+    for (const [k, v] of Object.entries(outcome.captured)) credentials[k] = v;
+
+    if (!outcome.ok) {
+      await this.prisma.testRun.update({ where: { id: record.runId }, data: { error: (outcome.error ?? "前置流程失敗").slice(0, 2000) } });
+      this.publish(record, { type: "setup_failed", message: outcome.error ?? "前置流程失敗" });
+      return false;
+    }
+    this.publish(record, { type: "setup_done", captured: Object.keys(outcome.captured), stepCount: outcome.steps.length });
+    return true;
   }
 
   private async finish(record: ActiveRun, status: RunStatus, startedAt: number) {

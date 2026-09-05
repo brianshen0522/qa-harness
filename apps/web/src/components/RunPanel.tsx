@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useToast } from "./Toast";
 import { requestNotifyPermission } from "../notify";
@@ -177,6 +177,9 @@ export function RunPanel({ targetId, kind, myRole }: { targetId: string; kind: T
   const [detached, setDetached] = useState(false);
   const [streamError, setStreamError] = useState<string | null>(null);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
+  const [searchParams] = useSearchParams();
+  const runParam = searchParams.get("run");
+  const runParamApplied = useRef(false);
   const sourceRef = useRef<EventSource | null>(null);
   /** Re-attaching is worth doing once per mount, however the runs query settles. */
   const attachedRef = useRef(false);
@@ -188,6 +191,16 @@ export function RunPanel({ targetId, kind, myRole }: { targetId: string; kind: T
 
   // The run lives on the server; leaving the tab only hangs up this reader.
   useEffect(() => () => sourceRef.current?.close(), []);
+
+  // Deep-link: ?run=<id> (e.g. from the Finding inbox) preselects that run once.
+  useEffect(() => {
+    if (runParamApplied.current || !runParam || !runs.data) return;
+    if (runs.data.some((r) => r.id === runParam)) {
+      setSelectedRunId(runParam);
+      runParamApplied.current = true;
+    }
+  }, [runParam, runs.data]);
+
 
   const finish = useCallback(() => {
     sourceRef.current?.close();
@@ -527,8 +540,10 @@ function StartPanel({
   starting: boolean;
   onStart: (caseIds: string[] | undefined) => void;
 }) {
-  const [mode, setMode] = useState<"all" | "pick">("all");
+  const [mode, setMode] = useState<"all" | "feature" | "priority" | "pick">("all");
   const [picked, setPicked] = useState<Set<string>>(new Set());
+  const [featureId, setFeatureId] = useState<string>("");
+  const [priority, setPriority] = useState<Priority>("P0");
 
   const list = useQuery({
     queryKey: casesKey(targetId),
@@ -537,8 +552,19 @@ function StartPanel({
 
   const all = flattenCases(list.data);
   const active = all.filter((c) => c.status === "active");
-  const count = mode === "all" ? active.length : picked.size;
+  const features = list.data?.features ?? [];
   const locked = list.data?.target.locked ?? false;
+
+  // The case ids a run would cover for the current scope (undefined = all active).
+  const scopedIds =
+    mode === "all"
+      ? undefined
+      : mode === "pick"
+        ? [...picked]
+        : mode === "feature"
+          ? active.filter((c) => c.featureId === featureId).map((c) => c.id)
+          : active.filter((c) => c.priority === priority).map((c) => c.id);
+  const count = mode === "all" ? active.length : scopedIds?.length ?? 0;
 
   const toggle = (id: string) =>
     setPicked((prev) => {
@@ -561,12 +587,39 @@ function StartPanel({
         <div className="flex flex-wrap items-end gap-3">
           <div className="w-52">
             <span className="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">範圍</span>
-            <Select value={mode} disabled={!canEdit || locked} onChange={(e) => setMode(e.target.value as "all" | "pick")}>
+            <Select value={mode} disabled={!canEdit || locked} onChange={(e) => setMode(e.target.value as typeof mode)}>
               <option value="all">全部「正常」狀態的案例</option>
+              <option value="feature">只跑某個功能</option>
+              <option value="priority">只跑某個優先級</option>
               <option value="pick">自選案例</option>
             </Select>
           </div>
-          <Button disabled={!canEdit || locked || starting || count === 0} onClick={() => onStart(mode === "all" ? undefined : [...picked])}>
+          {mode === "feature" && (
+            <div className="w-56">
+              <span className="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">功能</span>
+              <Select value={featureId} disabled={!canEdit || locked} onChange={(e) => setFeatureId(e.target.value)}>
+                <option value="">請選擇功能…</option>
+                {features.map((f) => (
+                  <option key={f.id} value={f.id}>
+                    {f.name}（{f.cases.filter((c) => c.status === "active").length}）
+                  </option>
+                ))}
+              </Select>
+            </div>
+          )}
+          {mode === "priority" && (
+            <div className="w-32">
+              <span className="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">優先級</span>
+              <Select value={priority} disabled={!canEdit || locked} onChange={(e) => setPriority(e.target.value as Priority)}>
+                {PRIORITIES.map((pr) => (
+                  <option key={pr} value={pr}>
+                    {pr}（{active.filter((c) => c.priority === pr).length}）
+                  </option>
+                ))}
+              </Select>
+            </div>
+          )}
+          <Button disabled={!canEdit || locked || starting || count === 0} onClick={() => onStart(scopedIds)}>
             {starting ? "啟動中…" : `開始執行（${count} 條）`}
           </Button>
           {mode === "all" && (
@@ -575,6 +628,11 @@ function StartPanel({
             </span>
           )}
           {mode === "pick" && count === 0 && <span className="text-xs text-gray-500 dark:text-gray-400">請至少勾選一條案例。</span>}
+          {(mode === "feature" || mode === "priority") && (
+            <span className="text-xs text-gray-500 dark:text-gray-400">
+              {count > 0 ? `符合的「正常」案例共 ${count} 條。` : "這個範圍沒有正常狀態的案例。"}
+            </span>
+          )}
         </div>
 
         {list.isPending && <Spinner />}
@@ -1297,6 +1355,7 @@ function ResultsView({
                   {d.cases.map((c) => (
                     <ResultCase
                       key={c.caseId}
+                      targetId={targetId}
                       runId={d.run.id}
                       item={c}
                       steps={stepsByCase.get(c.caseId) ?? []}
@@ -1407,12 +1466,14 @@ function LlmUsageBlock({ usage, fallbackModels }: { usage: RunLlmUsage | null; f
 }
 
 function ResultCase({
+  targetId,
   runId,
   item,
   steps,
   canEdit,
   onReviewed,
 }: {
+  targetId: string;
   runId: string;
   item: RunCase;
   steps: RunStepRow[];
@@ -1497,6 +1558,7 @@ function ResultCase({
       {result && (
         <div className="mt-2 flex items-center gap-2">
           <Button variant="secondary" size="sm" onClick={() => setAskOpen(true)}>問 LLM 這條結果</Button>
+          <Link to={`/targets/${targetId}?tab=cases&case=${item.caseId}`} className="text-xs text-blue-700 hover:underline dark:text-blue-300">看案例定義 →</Link>
         </div>
       )}
       {result && canEdit && <ReviewControls result={result} onReviewed={onReviewed} />}

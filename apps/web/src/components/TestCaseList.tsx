@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Link, useSearchParams } from "react-router-dom";
 import { ApiSetupPanel } from "./ApiSetupPanel";
+import { useConfirm } from "./Confirm";
 import { api, apiEventSource, apiEventStream, errorMessage } from "../api/client";
 import type {
   CaseStatus,
@@ -82,6 +84,8 @@ export function TestCaseList({ targetId }: { targetId: string }) {
 
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [openCases, setOpenCases] = useState<Set<string>>(new Set());
+  const [searchParams, setSearchParams] = useSearchParams();
+  const caseParamApplied = useRef(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
   const [editing, setEditing] = useState<{ mode: "create" | "edit"; testCase: TestCase | null } | null>(null);
@@ -92,6 +96,18 @@ export function TestCaseList({ targetId }: { targetId: string }) {
   const [setupFor, setSetupFor] = useState<Feature | null>(null);
 
   const data = list.data;
+
+  // Deep-link: ?case=<id> (e.g. from a run result) opens and scrolls to that case once.
+  const caseParam = searchParams.get("case");
+  useEffect(() => {
+    if (caseParamApplied.current || !caseParam || !data) return;
+    caseParamApplied.current = true;
+    setOpenCases((prev) => new Set(prev).add(caseParam));
+    requestAnimationFrame(() => document.getElementById(`case-${caseParam}`)?.scrollIntoView({ block: "center" }));
+    const next = new URLSearchParams(searchParams);
+    next.delete("case");
+    setSearchParams(next, { replace: true });
+  }, [caseParam, data, searchParams, setSearchParams]);
   const features = data?.features ?? [];
   const canEdit = !!data && hasRole(data.target.myRole, "editor") && !data.target.locked;
 
@@ -373,6 +389,7 @@ export function TestCaseList({ targetId }: { targetId: string }) {
                       {g.cases.map((c) => (
                         <CaseRow
                           key={c.id}
+                          targetId={targetId}
                           testCase={c}
                           open={openCases.has(c.id)}
                           selected={selected.has(c.id)}
@@ -485,6 +502,7 @@ function PriorityBadge({ priority }: { priority: Priority }) {
 }
 
 function CaseRow({
+  targetId,
   testCase,
   open,
   selected,
@@ -495,6 +513,7 @@ function CaseRow({
   onVersions,
   onDelete,
 }: {
+  targetId: string;
   testCase: TestCase;
   open: boolean;
   selected: boolean;
@@ -507,7 +526,7 @@ function CaseRow({
 }) {
   const c = testCase;
   return (
-    <li className="border-t border-gray-100 dark:border-gray-800 first:border-t-0">
+    <li id={`case-${c.id}`} className="scroll-mt-4 border-t border-gray-100 dark:border-gray-800 first:border-t-0">
       <div className="flex items-start gap-2 px-3 py-2">
         <input
           type="checkbox"
@@ -565,6 +584,9 @@ function CaseRow({
             <Button size="sm" variant="danger" disabled={!canEdit} onClick={onDelete}>
               刪除
             </Button>
+            <Link to={`/targets/${targetId}?tab=runs`} className="text-xs text-blue-700 hover:underline dark:text-blue-300">
+              看執行結果 →
+            </Link>
             <span className="text-xs text-gray-400 dark:text-gray-500">
               依描述 v{c.basedOnDescriptionVersion} 產生 · 更新於 {formatDate(c.updatedAt)}
             </span>
@@ -603,6 +625,7 @@ function GenerationPanel({
   onFinished: () => void;
 }) {
   const qc = useQueryClient();
+  const confirm = useConfirm();
   const [mode, setMode] = useState<GenerationMode>("replace");
   const [events, setEvents] = useState<GenerationEvent[]>([]);
   const [running, setRunning] = useState(false);
@@ -689,9 +712,12 @@ function GenerationPanel({
       mode === "replace"
         ? "「重新生成」會清掉先前由 LLM 生成的案例（手動撰寫的會保留），再重跑整個 pipeline。"
         : "「附加」會保留現有清單，把新生成的功能與案例加在後面。";
-    if (!window.confirm(`${explain}\n\n整個流程需要數分鐘（每個功能大約 25 秒）。生成在伺服器上進行，關掉分頁也不會中斷，回來時會自動接上。要開始嗎？`)) {
-      return;
-    }
+    const ok = await confirm({
+      title: mode === "replace" ? "重新生成測試清單" : "附加生成",
+      body: `${explain}\n\n整個流程需要數分鐘（每個功能大約 25 秒）。生成在伺服器上進行，關掉分頁也不會中斷，回來時會自動接上。`,
+      confirmLabel: "開始生成",
+    });
+    if (!ok) return;
     attachedRef.current = true;
     setEvents([]);
     setError(null);

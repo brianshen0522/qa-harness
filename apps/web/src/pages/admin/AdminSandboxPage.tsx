@@ -1,3 +1,4 @@
+import { useConfirm } from "../../components/Confirm";
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, apiEventSource, errorMessage } from "../../api/client";
@@ -424,6 +425,7 @@ function formatParams(params: Record<string, unknown>): string {
  * a reload paints immediately and the replay on connect fills in the rest.
  */
 function AgentPanel({ instance, defaultMaxSteps }: { instance: SandboxInstance; defaultMaxSteps: number }) {
+  const confirm = useConfirm();
   const [events, setEvents] = useState<SessionEvent[]>([]);
   const [status, setStatus] = useState<SessionStatus>("idle");
   const [reconnecting, setReconnecting] = useState(false);
@@ -533,8 +535,14 @@ function AgentPanel({ instance, defaultMaxSteps }: { instance: SandboxInstance; 
     send.mutate(draft.trim());
   };
 
-  const confirmClear = () => {
-    if (window.confirm("清除這個 sandbox 的整段對話？先前的訊息與步驟都會消失，無法復原。")) clear.mutate();
+  const confirmClear = async () => {
+    const ok = await confirm({
+      title: "清除對話",
+      body: "清除這個 sandbox 的整段對話？先前的訊息與步驟都會消失,無法復原。",
+      confirmLabel: "清除",
+      tone: "danger",
+    });
+    if (ok) clear.mutate();
   };
 
   const running = status === "running";

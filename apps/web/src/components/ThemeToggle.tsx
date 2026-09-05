@@ -30,16 +30,15 @@ export function ThemeToggle({ subtle = false }: { subtle?: boolean }) {
       onClick={cycle}
       title={`主題:${LABEL[pref]}(點擊切換)`}
       aria-label={`切換主題,目前為${LABEL[pref]}`}
-      className={`inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs font-medium transition-colors ${
+      className={`inline-flex h-8 w-8 items-center justify-center rounded-md border transition-colors ${
         subtle
           ? "border-gray-700 text-gray-200 hover:bg-gray-800"
-          : "border-gray-300 dark:border-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+          : "border-gray-300 dark:border-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800"
       }`}
     >
       <span key={pref} className="theme-pop inline-flex">
         {ICON[pref]}
       </span>
-      <span className="hidden sm:inline">{LABEL[pref]}</span>
     </button>
   );
 }

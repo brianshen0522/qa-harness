@@ -409,7 +409,7 @@ interface LiveState {
   finished: Map<string, CaseFinishedEvent>;
   skipped: Set<string>;
   added: string[];
-  currentCaseId: string | null;
+  runningIds: Set<string>;
   stepsByCase: Map<string, StepEvent[]>;
   findings: FindingEvent[];
   findingCase: Map<string, string | null>;
@@ -434,7 +434,7 @@ function digest(events: RunEvent[]): LiveState {
     finished: new Map(),
     skipped: new Set(),
     added: [],
-    currentCaseId: null,
+    runningIds: new Set(),
     stepsByCase: new Map(),
     findings: [],
     findingCase: new Map(),
@@ -470,7 +470,7 @@ function digest(events: RunEvent[]): LiveState {
         state.started.add(event.caseId);
         state.index = event.index;
         state.total = event.total;
-        state.currentCaseId = event.caseId;
+        state.runningIds.add(event.caseId);
         if (!state.order.includes(event.caseId)) state.order.push(event.caseId);
         break;
       case "step": {
@@ -485,11 +485,12 @@ function digest(events: RunEvent[]): LiveState {
         break;
       case "case_finished":
         state.finished.set(event.caseId, event);
-        if (state.currentCaseId === event.caseId) state.currentCaseId = null;
+        state.runningIds.delete(event.caseId);
         break;
       case "case_skipped":
         state.titles.set(event.caseId, event.title);
         state.skipped.add(event.caseId);
+        state.runningIds.delete(event.caseId);
         break;
       case "case_added":
         state.titles.set(event.caseId, event.title);
@@ -507,7 +508,7 @@ function digest(events: RunEvent[]): LiveState {
         break;
       case "run_finished":
         state.runFinished = event;
-        state.currentCaseId = null;
+        state.runningIds.clear();
         break;
       default:
         break;
@@ -747,8 +748,13 @@ function LiveRun({
     [detail.data],
   );
 
-  const current =
-    state.currentCaseId ?? detail.data?.cases.find((c) => c.queueStatus === "running")?.caseId ?? null;
+  // All cases in flight right now (live events + persisted "running"), minus any
+  // that have since finished/skipped — parallel runs have more than one.
+  const runningIds = new Set<string>(state.runningIds);
+  for (const c of detail.data?.cases ?? []) if (c.queueStatus === "running") runningIds.add(c.caseId);
+  for (const id of state.finished.keys()) runningIds.delete(id);
+  for (const id of state.skipped) runningIds.delete(id);
+  const current = [...runningIds][0] ?? null;
 
   const queue: { caseId: string; title: string; order: number }[] = detail.data
     ? detail.data.cases.map((c) => ({ caseId: c.caseId, title: c.testCase.title, order: c.order }))
@@ -766,7 +772,7 @@ function LiveRun({
       ? "done"
       : state.skipped.has(caseId) || dc?.queueStatus === "skipped"
         ? "skipped"
-        : caseId === current
+        : runningIds.has(caseId)
           ? "running"
           : "queued";
     return {
@@ -801,7 +807,7 @@ function LiveRun({
       <ApiLivePane
         step={step}
         rows={steps.data ?? []}
-        current={current}
+        runningIds={runningIds}
         titles={(id) => state.titles.get(id) ?? detailByCase.get(id)?.testCase.title ?? id}
         onOpenStep={(caseId, seq) => { setViewerSeq(seq); setOpenCase(caseId); }}
       />
@@ -823,7 +829,7 @@ function LiveRun({
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex flex-wrap items-center gap-2">
           <Badge tone={state.paused ? "amber" : "blue"}>{state.paused ? "等待 LLM" : "執行中"}</Badge>
-          <span className="text-sm font-semibold text-gray-800 dark:text-gray-100">第 {runningIndex} / {total} 條</span>
+          <span className="text-sm font-semibold text-gray-800 dark:text-gray-100">執行中 {Math.max(runningIds.size, state.paused ? 0 : 1)} 條 · 完成 {done}/{total}</span>
           <div className="h-2 w-40 overflow-hidden rounded bg-gray-100 dark:bg-gray-800">
             <div className="h-2 rounded bg-blue-500 transition-all" style={{ width: `${pct}%` }} />
           </div>
@@ -931,7 +937,7 @@ function LiveRun({
                     const cv = caseView(q.caseId);
                     const open = openCase === q.caseId;
                     return (
-                      <li key={q.caseId} className={`py-2 ${q.caseId === current ? "-mx-3 border-l-2 border-blue-500 bg-blue-50/40 dark:bg-blue-950/30 px-3" : ""}`}>
+                      <li key={q.caseId} className={`py-2 ${runningIds.has(q.caseId) ? "-mx-3 border-l-2 border-blue-500 bg-blue-50/40 dark:bg-blue-950/30 px-3" : ""}`}>
                         <div className="flex items-start gap-2">
                           <button type="button" className="min-w-0 flex-1 text-left" onClick={() => setOpenCase(q.caseId)}>
                             <p className="truncate text-sm text-gray-800 dark:text-gray-100">{q.title}</p>
@@ -1019,13 +1025,13 @@ function LiveRun({
 function ApiLivePane({
   step,
   rows,
-  current,
+  runningIds,
   titles,
   onOpenStep,
 }: {
   step: StepEvent | null;
   rows: RunStepRow[];
-  current: string | null;
+  runningIds: Set<string>;
   titles: (caseId: string) => string;
   onOpenStep: (caseId: string, seq: number) => void;
 }) {
@@ -1048,15 +1054,25 @@ function ApiLivePane({
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-md border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900">
       <div className="shrink-0 border-b border-gray-100 dark:border-gray-800 px-3 py-2">
-        <p className="text-xs font-medium text-gray-500 dark:text-gray-400">目前這一步</p>
-        {step ? (
-          <p className="mt-0.5 flex flex-wrap items-center gap-2 text-sm">
-            <code className="rounded bg-gray-100 dark:bg-gray-800 px-1.5 py-0.5 text-xs font-semibold text-gray-700 dark:text-gray-200">{step.action.type}</code>
-            <span className="min-w-0 flex-1 truncate text-gray-700 dark:text-gray-200">{step.intent || step.observation}</span>
-            <span className={`text-xs ${step.result.ok ? "text-green-700 dark:text-green-300" : "text-red-600 dark:text-red-400"}`}>{step.result.ok ? "成功" : "失敗"} · {step.result.durationMs}ms</span>
-          </p>
+        <p className="text-xs font-medium text-gray-500 dark:text-gray-400">進行中（{runningIds.size}）</p>
+        {runningIds.size === 0 ? (
+          <p className="mt-0.5 text-xs text-gray-400 dark:text-gray-500">沒有進行中的案例。</p>
         ) : (
-          <p className="mt-0.5 text-xs text-gray-400 dark:text-gray-500">還沒有動作。</p>
+          <ul className="mt-1 flex flex-wrap gap-1.5">
+            {[...runningIds].map((id) => (
+              <li key={id} className="flex items-center gap-1 rounded-full border border-blue-200 dark:border-blue-900 bg-blue-50 dark:bg-blue-950/40 px-2 py-0.5 text-xs text-blue-800 dark:text-blue-300">
+                <span className="relative flex h-1.5 w-1.5"><span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-blue-400 opacity-75" /><span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-blue-500" /></span>
+                <span className="max-w-[16rem] truncate">{titles(id)}</span>
+              </li>
+            ))}
+          </ul>
+        )}
+        {step && (
+          <p className="mt-1.5 flex flex-wrap items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
+            最新一步：<code className="rounded bg-gray-100 dark:bg-gray-800 px-1.5 py-0.5 font-semibold text-gray-700 dark:text-gray-200">{step.action.type}</code>
+            <span className="min-w-0 flex-1 truncate">{step.intent || step.observation}</span>
+            <span className={step.result.ok ? "text-green-700 dark:text-green-300" : "text-red-600 dark:text-red-400"}>{step.result.ok ? "成功" : "失敗"} · {step.result.durationMs}ms</span>
+          </p>
         )}
       </div>
       {setupRows.length > 0 && (
@@ -1101,7 +1117,7 @@ function ApiLivePane({
                   <span className="w-8 shrink-0 text-xs text-gray-400 dark:text-gray-500">#{r.seq}</span>
                   <code className={`w-14 shrink-0 rounded px-1 py-0.5 text-center text-xs font-semibold ${methodTone(l.method)}`}>{l.method}</code>
                   <code className="min-w-0 flex-1 truncate text-xs text-gray-700 dark:text-gray-200">{l.path}</code>
-                  {r.testCaseId && current && r.testCaseId === current && <Badge tone="blue">執行中</Badge>}
+                  {r.testCaseId && runningIds.has(r.testCaseId) && <Badge tone="blue">執行中</Badge>}
                   {l.status !== undefined && (
                     <Badge tone={l.status >= 500 ? "red" : l.status >= 400 ? "amber" : "green"}>{l.status}</Badge>
                   )}

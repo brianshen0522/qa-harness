@@ -112,6 +112,15 @@ describe("LlmGatewayService.structured", () => {
     expect(a.calls[1].messages).toEqual(a.calls[0].messages);
   });
 
+  it("forwards reasoningEffort on the first call and downgrades it to low on a budget retry", async () => {
+    const { gw } = makeGateway([cfg("a", "openai")]);
+    const a = fakeAdapter((_req, call) => (call === 1 ? new LlmProviderError("budget", "blank") : validVerdict));
+    gw.setProviders({ openai: a });
+    await gw.structured("execute", "case_verdict", { messages: [{ role: "user", content: "j" }], maxTokens: 2048, reasoningEffort: "high" });
+    expect(a.calls[0].reasoningEffort).toBe("high"); // forwarded as-is first
+    expect(a.calls[1].reasoningEffort).toBe("low"); // dropped so the retry leaves room for output
+  });
+
   it("grows the budget and retries the SAME config on a budget error (no fallback, no breaker hit)", async () => {
     const { gw, health } = makeGateway([cfg("a", "openai"), cfg("b", "anthropic")]);
     const a = fakeAdapter((_req, call) => (call === 1 ? new LlmProviderError("budget", "ran out of tokens thinking") : validVerdict));

@@ -21,6 +21,7 @@ import { EvidenceService } from "./evidence.service";
 import { HttpExecutorService, fillCredentials, type HttpLog } from "./http-executor.service";
 import { ApiSetupService, type SetupStep } from "./api-setup.service";
 import { fenceUntrusted } from "../common/untrusted";
+import { SCREENSHOT_WINDOW, buildMessages, maskSecrets } from "./run-utils";
 import {
   caseSystemPrompt, verdictSystemPrompt, verdictTranscript,
   type CaseForPrompt, type TargetForPrompt,
@@ -94,25 +95,9 @@ function emptyUsage(): LlmUsage {
   return { configs: [], switches: [], outages: [] };
 }
 
-/** Replace each secret string with **** anywhere in a serializable value. */
-function maskSecrets<T>(value: T, secrets: string[]): T {
-  if (!secrets.length) return value;
-  try {
-    let json = JSON.stringify(value);
-    for (const secret of secrets) {
-      if (!secret) continue;
-      json = json.split(JSON.stringify(secret).slice(1, -1)).join("****");
-    }
-    return JSON.parse(json) as T;
-  } catch {
-    return value;
-  }
-}
 
 /** A finished run stays readable so a late subscriber still sees how it went. */
 const RETAIN_FINISHED_MS = 120_000;
-/** Screenshots kept in the prompt; older steps keep their text only. */
-const SCREENSHOT_WINDOW = 3;
 /** Cap on the in-memory replay log per run, so a huge run does not balloon memory.
  *  A late subscriber still gets live state from the polled run detail. */
 const MAX_EVENTS = 2000;
@@ -1020,30 +1005,6 @@ export class RunService implements OnModuleInit {
   }
 }
 
-function buildMessages(
-  turns: { assistant: string; user: ContentPart[] }[],
-  screenshot: string | null,
-  seq: number,
-  maxSteps: number,
-): LlmMessage[] {
-  const messages: LlmMessage[] = [];
-  const imageFrom = Math.max(0, turns.length - SCREENSHOT_WINDOW);
-  turns.forEach((turn, i) => {
-    messages.push({ role: "assistant", content: turn.assistant });
-    messages.push({
-      role: "user",
-      content: i >= imageFrom ? turn.user : turn.user.filter((p) => p.type === "text"),
-    });
-  });
-  const text = `這是第 ${seq} / ${maxSteps} 步。請決定下一個動作。`;
-  messages.push({
-    role: "user",
-    content: screenshot
-      ? [{ type: "image", mediaType: "image/png", base64: screenshot }, { type: "text", text }]
-      : text,
-  });
-  return messages;
-}
 
 function describeOutcome(
   step: ExecutionStep,

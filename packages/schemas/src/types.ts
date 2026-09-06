@@ -73,6 +73,8 @@ export type ActionType =
   | "mcp_call"
   /** Rotate a credential the case is about to change; params: credential. */
   | "rotate_credential"
+  /** Declare a non-secret credential field (username) changed; params: credential, field, value. */
+  | "update_credential"
   /** Note an issue unrelated to the current case, then carry on (§4.5). */
   | "report_finding"
   /** The whole system is unreachable/dead — stop the entire run; params: reason. */

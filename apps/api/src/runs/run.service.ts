@@ -653,6 +653,8 @@ export class RunService implements OnModuleInit {
     // Rotations requested during this case: credential -> fresh value + whether we
     // saw it take effect. Committed (synced to the store) at case end.
     const caseRotations = new Map<string, { newValue: string; appliedByHttp: boolean; used: boolean }>();
+    // Declared non-secret field changes (a renamed account), verified before sync.
+    const caseRenames = new Map<string, { field: string; value: string }>();
     let seq = 0;
     let stopReason = `已達步數上限（${maxSteps}）`;
     // Set when this case (or another, mid-flight) hit a system-wide fatal error;
@@ -759,6 +761,14 @@ export class RunService implements OnModuleInit {
         break;
       }
 
+      if (step.action.type === "update_credential") {
+        const feedback = this.handleUpdateCredential(step, ctx, caseRenames);
+        transcript.push({ seq, phase: step.phase, intent: step.intent, observation: step.observation, action: step.action, result: { text: feedback } });
+        turns.push({ assistant: JSON.stringify({ intent: step.intent, action: step.action }), user: [{ type: "text", text: feedback }] });
+        await this.recordStep(record, ctx.queueRow.testCaseId, seq, step, { ok: true, durationMs: 0, detail: {} }, decided.model, 0, null);
+        continue;
+      }
+
       if (step.action.type === "rotate_credential") {
         const feedback = this.handleRotateCredential(step, ctx, caseRotations);
         transcript.push({ seq, phase: step.phase, intent: step.intent, observation: step.observation, action: step.action, result: { text: feedback } });
@@ -814,8 +824,8 @@ export class RunService implements OnModuleInit {
 
     // Sync any rotated credential to its new value before recording the result,
     // so the outcome carries what changed and the next case sees the new value.
-    const rotations = caseRotations.size
-      ? await this.commitRotations(record, ctx, caseRotations, verdict?.verdict ?? null)
+    const rotations = caseRotations.size || caseRenames.size
+      ? await this.commitRotations(record, ctx, caseRotations, caseRenames, verdict?.verdict ?? null)
       : [];
 
     await this.writeResult(record.runId, ctx.queueRow.testCaseId, testCase.currentVersion, {
@@ -1021,6 +1031,32 @@ export class RunService implements OnModuleInit {
     ].join("");
   }
 
+  /**
+   * The agent declares that a non-secret credential field changed on the target
+   * (an account was renamed). Unlike a secret, the model legitimately knows this
+   * value — it typed it — so it may report it; we still only trust it after the
+   * new value actually logs in.
+   */
+  private handleUpdateCredential(
+    step: ExecutionStep,
+    ctx: { targetPrompt: TargetForPrompt; rotatableKeys: Set<string> },
+    caseRenames: Map<string, { field: string; value: string }>,
+  ): string {
+    const p = (step.action.params ?? {}) as Record<string, unknown>;
+    const name = String(p.credential ?? p.name ?? "").trim();
+    const field = String(p.field ?? "username").trim();
+    const value = String(p.value ?? "").trim();
+    if (!name || !value) return "update_credential 需要 params.credential（憑證名稱）和 params.value（新的值）。";
+    if (field === "password" || field === "value") {
+      return "密碼不能用 update_credential 傳。要改密碼請用 `rotate_credential`，由平台產生新值，你不會也不該碰到真正的密碼。";
+    }
+    // Same opt-in gate as rotation: only credentials the owner marked rotatable.
+    const rotatable = [...ctx.rotatableKeys].some((r) => r === name || r.startsWith(`${name}.`));
+    if (!rotatable) return `憑證「${name}」沒有開啟「允許輪替」，平台不會同步它的變更。請回傳 done 說明這件事。`;
+    caseRenames.set(name, { field, value });
+    return `已記下「${name}」的 ${field} 變成「${value}」。這條 case 結束後，平台會用新值實際登入驗證，通過才會同步儲存的憑證。`;
+  }
+
   /** After each action, note whether a pending rotation's placeholder was used
    *  (and, for http, whether the change was accepted with a 2xx). For http we use
    *  the keys the executor actually substituted — a cross-origin request never
@@ -1062,16 +1098,22 @@ export class RunService implements OnModuleInit {
       queueRow: { testCaseId: string };
     },
     caseRotations: Map<string, { newValue: string; appliedByHttp: boolean; used: boolean }>,
+    caseRenames: Map<string, { field: string; value: string }>,
     verdict: Verdict | null,
   ): Promise<{ credential: string; committed: boolean; verified: boolean | null; note: string }[]> {
     const results: { credential: string; committed: boolean; verified: boolean | null; note: string }[] = [];
+    const nameOf = (ref: string) => (ref.includes(".") ? ref.slice(0, ref.lastIndexOf(".")) : ref);
     for (const [cred, st] of caseRotations) {
       const placeholder = rotationPlaceholderKey(cred);
+      // A rename staged in the same case must be applied for the login to work.
+      const rename = caseRenames.get(nameOf(cred));
+      const overrides: Record<string, string> = { [cred]: st.newValue };
+      if (rename) overrides[`${nameOf(cred)}.${rename.field}`] = rename.value;
       // api: a 2xx carrying the new value is ground truth. web: we cannot read a
       // status, so prove it by logging in with the new secret — the case verdict is
       // the wrong signal, because a password changed as a *precondition* must be
       // synced even when the case later fails for an unrelated reason.
-      const webVerified = ctx.needsSandbox && st.used ? await this.verifyWebRotation(ctx, cred, st.newValue) : false;
+      const webVerified = ctx.needsSandbox && st.used ? await this.verifyWebCredentials(ctx, overrides) : false;
       const shouldCommit = ctx.needsSandbox ? webVerified : st.appliedByHttp;
 
       if (!shouldCommit) {
@@ -1107,6 +1149,29 @@ export class RunService implements OnModuleInit {
         await this.createFinding(record, ctx.queueRow.testCaseId, Severity.major, `憑證「${cred}」輪替後登入驗證失敗`, note);
       }
       results.push({ credential: cred, committed: true, verified, note });
+      if (rename) caseRenames.delete(nameOf(cred)); // committed together with the rotation
+    }
+
+    // Declared identifier changes (a renamed account). The model supplies the new
+    // value because it is not a secret — but we only trust it once it logs in.
+    for (const [name, ren] of caseRenames) {
+      const ref = `${name}.${ren.field}`;
+      const ok = ctx.needsSandbox ? await this.verifyWebCredentials(ctx, { [ref]: ren.value }) : false;
+      if (!ok) {
+        const note = `「${name}」的 ${ren.field} 宣告改成「${ren.value}」，但用新值登入驗證沒有成功，未同步儲存的憑證。若目標系統其實已改名，這組憑證會失效，請人工確認。`;
+        await this.createFinding(record, ctx.queueRow.testCaseId, Severity.major, `憑證「${name}」的 ${ren.field} 可能已變更但無法驗證`, note);
+        this.publish(record, { type: "credential_rotated", caseId: ctx.queueRow.testCaseId, credential: name, committed: false, verified: false, note });
+        results.push({ credential: name, committed: false, verified: false, note });
+        continue;
+      }
+      await this.withRotationLock(record, async () => {
+        ctx.credentials[ref] = ren.value;
+        ctx.sharedCredentials[ref] = ren.value;
+        await this.targets.setCredentialField(ctx.target.id, name, ren.field, ren.value, record.triggeredById);
+      });
+      const note = `「${name}」的 ${ren.field} 已同步成「${ren.value}」（已用新值登入驗證）。`;
+      this.publish(record, { type: "credential_rotated", caseId: ctx.queueRow.testCaseId, credential: name, committed: true, verified: true, note });
+      results.push({ credential: name, committed: true, verified: true, note });
     }
     return results;
   }
@@ -1175,19 +1240,21 @@ export class RunService implements OnModuleInit {
    * makes "reset the password as a precondition" safe: the stored credential is
    * synced because the new value demonstrably works, not because the case passed.
    */
-  private async verifyWebRotation(
+  private async verifyWebCredentials(
     ctx: { target: { config: Prisma.JsonValue }; agentPort: number | null; identities: Map<string, CrawlIdentity> },
-    rotatedRef: string,
-    newValue: string,
+    overrides: Record<string, string>,
   ): Promise<boolean> {
     if (!ctx.agentPort) return false;
-    const owner = [...ctx.identities.values()].find((i) => !i.isAnonymous && rotatedRef in i.credentials);
+    const refs = Object.keys(overrides);
+    const owner = [...ctx.identities.values()].find((i) => !i.isAnonymous && refs.some((r) => r in i.credentials));
     if (!owner) return false; // nothing to log in as — cannot prove it
     const url = String((ctx.target.config as Record<string, unknown>)?.url ?? "").trim();
     if (!url) return false;
     try {
       await this.computer.cdpReset(ctx.agentPort).catch(() => undefined);
-      const probe: CrawlIdentity = { ...owner, credentials: { ...owner.credentials, [rotatedRef]: newValue } };
+      // Apply every staged change at once: a case that renamed the account *and*
+      // reset its password only logs in when both are used together.
+      const probe: CrawlIdentity = { ...owner, credentials: { ...owner.credentials, ...overrides } };
       return await new Crawler(this.computer, ctx.agentPort, toSandboxUrl(url)).login(probe, () => undefined);
     } catch {
       return false;

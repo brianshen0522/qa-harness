@@ -332,6 +332,24 @@ export class TargetsService {
    * Skips the owner check and running-lock — it is the run engine, already holding
    * the target, writing reality back. Only called for an `allowRotation` credential.
    */
+  /**
+   * Internal: sync a non-secret credential field (the username) after a run
+   * changed it on the target. A profile-edit test can rename an account, which
+   * silently invalidates the stored credential just as surely as a password
+   * change — rotation only ever covered the secret half.
+   */
+  async setCredentialField(targetId: string, name: string, field: string, value: string, actorId: string): Promise<void> {
+    if (field === "password" || field === "value") {
+      throw new BadRequestException("密碼類欄位必須走輪替流程，不能直接設定。");
+    }
+    const row = await this.prisma.targetCredential.findUnique({ where: { targetId_name: { targetId, name } } });
+    if (!row) throw new NotFoundException(`找不到憑證：${name}`);
+    if (!fieldNames(row.type).includes(field)) throw new BadRequestException(`憑證「${name}」沒有欄位「${field}」。`);
+    const fields = { ...(row.fields as Record<string, string>), [field]: this.crypto.encrypt(value) };
+    await this.prisma.targetCredential.update({ where: { targetId_name: { targetId, name } }, data: { fields } });
+    await this.audit.log("user", actorId, "target.credential.field_synced", targetId, { name, field });
+  }
+
   async rotateCredentialValue(targetId: string, ref: string, value: string, actorId: string): Promise<void> {
     const rows = await this.prisma.targetCredential.findMany({ where: { targetId, allowRotation: true } });
     const row = rows.find((r) => rotatableRefKey(r.name, r.type) === ref);

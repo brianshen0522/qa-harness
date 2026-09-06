@@ -371,11 +371,12 @@ export const execution_stepSchema = {
             "run_command",
             "mcp_call",
             "rotate_credential",
+            "update_credential",
             "report_finding",
             "abort_run",
             "done"
           ],
-          "description": "要執行的動作。畫面類 Target 優先用「看得到元素」的動作：`page_snapshot`（讀出目前頁面的連結、表單欄位、按鈕、以及畫面上的錯誤／提示訊息，params 空）、`click_text`（依可見文字點連結/按鈕，params 給 `{ text, exact?}`）、`fill_field`（依欄位名稱或 label 填值，params 給 `{ field, value }`）、`press_key`（送一個按鍵，params 給 `{ key }`，如 Enter/Escape）、`set_viewport`（改視窗尺寸測 RWD，params 給 `{ width, height, mobile? }`）。座標類的 `click`/`type`/`scroll` 只在前述動作做不到時當退路。`report_finding` 用來記下與目前 case 無關的問題，記完會繼續原本的流程；`mcp_call` 呼叫外部 MCP 工具（params 給 server_id、tool、arguments）；`rotate_credential` 用在「這條 case 要修改某個憑證的值（例如改密碼）」時，params 給 `{ credential: 憑證名稱 }`，系統會產生一組新值並讓你用 `{{憑證名稱__next}}` 代入，改成功後平台會自動把儲存的憑證同步成新值；`abort_run` 用在「整個被測系統根本連不上／沒啟動」這種系統性致命錯誤，params 給 `{ reason }`，會中止整趟執行（不要用在單一頁面或單一 API 的錯誤）；`done` 結束這條 case。"
+          "description": "要執行的動作。畫面類 Target 優先用「看得到元素」的動作：`page_snapshot`（讀出目前頁面的連結、表單欄位、按鈕、以及畫面上的錯誤／提示訊息，params 空）、`click_text`（依可見文字點連結/按鈕，params 給 `{ text, exact?}`）、`fill_field`（依欄位名稱或 label 填值，params 給 `{ field, value }`）、`press_key`（送一個按鍵，params 給 `{ key }`，如 Enter/Escape）、`set_viewport`（改視窗尺寸測 RWD，params 給 `{ width, height, mobile? }`）。座標類的 `click`/`type`/`scroll` 只在前述動作做不到時當退路。`report_finding` 用來記下與目前 case 無關的問題，記完會繼續原本的流程；`mcp_call` 呼叫外部 MCP 工具（params 給 server_id、tool、arguments）；`rotate_credential` 用在「這條 case 要修改某個憑證的值（例如改密碼）」時，params 給 `{ credential: 憑證名稱 }`，系統會產生一組新值並讓你用 `{{憑證名稱__next}}` 代入，改成功後平台會自動把儲存的憑證同步成新值；`update_credential` 用在「這條 case 改掉了某個憑證的**帳號名稱**（不是密碼）」時，params 給 `{ credential: 憑證名稱, field: 'username', value: 新帳號 }`，平台會用新帳號實際登入驗證，通過才會同步儲存的憑證（密碼一律走 `rotate_credential`，不要用這個動作傳密碼）；`abort_run` 用在「整個被測系統根本連不上／沒啟動」這種系統性致命錯誤，params 給 `{ reason }`，會中止整趟執行（不要用在單一頁面或單一 API 的錯誤）；`done` 結束這條 case。"
         },
         "params": {
           "type": "object",

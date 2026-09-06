@@ -335,6 +335,18 @@ export function RunPanel({ targetId, kind, myRole }: { targetId: string; kind: T
     },
   });
 
+  const continueRun = useMutation({
+    mutationFn: (runId: string) => api<StartRunResult>(`/runs/${runId}/continue`, { method: "POST" }),
+    onSuccess: () => {
+      attachedRef.current = true;
+      setEvents([]);
+      attach();
+      qc.invalidateQueries({ queryKey: runsKey(targetId) });
+      toast.success("已開始續跑未完成的案例");
+    },
+    onError: (e) => toast.error(e instanceof Error ? e.message : "無法續跑"),
+  });
+
   if (runs.isPending) return <Spinner />;
   if (runs.isError) return <ErrorText error={runs.error} />;
 
@@ -372,6 +384,8 @@ export function RunPanel({ targetId, kind, myRole }: { targetId: string; kind: T
         <>
           <StartPanel
             targetId={targetId}
+            kind={kind}
+            avgCaseMs={avgCaseMsFromHistory(runs.data)}
             canEdit={canEdit}
             starting={start.isPending}
             onStart={(caseIds) => start.mutate(caseIds)}
@@ -390,6 +404,8 @@ export function RunPanel({ targetId, kind, myRole }: { targetId: string; kind: T
               }
             }}
             onRerun={(runId) => rerun.mutate(runId)}
+            onContinue={(runId) => continueRun.mutate(runId)}
+            continuing={continueRun.isPending}
             rerunning={rerun.isPending}
           />
         </>
@@ -546,13 +562,37 @@ function flattenCases(data: TestCaseListData | undefined): TestCase[] {
   return [...data.features.flatMap((f) => f.cases), ...data.unassigned];
 }
 
+/** Wall-clock ms per case, from the most recent finished run that judged cases —
+ *  a target-specific estimate. Null when there is no usable history. */
+function avgCaseMsFromHistory(runs: RunListItem[] | undefined): number | null {
+  const done = (runs ?? []).find((r) => r.endedAt && r._count.results > 0 && ["succeeded", "failed", "aborted", "interrupted"].includes(r.status));
+  if (!done || !done.endedAt) return null;
+  const ms = new Date(done.endedAt).getTime() - new Date(done.startedAt).getTime();
+  return ms > 0 ? Math.round(ms / done._count.results) : null;
+}
+
+/** Rough default when there is no history: web/desktop cases are minutes, api seconds. */
+const DEFAULT_CASE_MS: Record<string, number> = { web: 75_000, desktop: 90_000, api: 12_000 };
+
+function humanDuration(ms: number): string {
+  const min = ms / 60_000;
+  if (min < 1) return `約 ${Math.max(1, Math.round(ms / 1000))} 秒`;
+  if (min < 60) return `約 ${Math.round(min)} 分鐘`;
+  const h = Math.floor(min / 60);
+  return `約 ${h} 小時 ${Math.round(min - h * 60)} 分鐘`;
+}
+
 function StartPanel({
   targetId,
+  kind,
+  avgCaseMs,
   canEdit,
   starting,
   onStart,
 }: {
   targetId: string;
+  kind: TargetKind;
+  avgCaseMs: number | null;
   canEdit: boolean;
   starting: boolean;
   onStart: (caseIds: string[] | undefined) => void;
@@ -639,6 +679,18 @@ function StartPanel({
           <Button disabled={!canEdit || locked || starting || count === 0} onClick={() => onStart(scopedIds)}>
             {starting ? "啟動中…" : `開始執行（${count} 條）`}
           </Button>
+          {count > 0 && (() => {
+            const perCase = avgCaseMs ?? DEFAULT_CASE_MS[kind] ?? 60_000;
+            // api runs ~4 wide; web/desktop run a small sandbox pool (~2).
+            const parallelism = kind === "api" ? 4 : 2;
+            const est = (perCase * count) / parallelism;
+            return (
+              <span className="text-xs text-gray-500 dark:text-gray-400">
+                預估 {humanDuration(est)}{avgCaseMs ? "（依上次執行）" : "（粗估）"}
+                {kind !== "api" && est > 20 * 60_000 && <span className="ml-1 text-amber-600 dark:text-amber-400">· 案例多會跑蠻久，可先縮小範圍</span>}
+              </span>
+            );
+          })()}
           {mode === "all" && (
             <span className="text-xs text-gray-500 dark:text-gray-400">
               狀態為「正常」的案例共 {active.length} 條，全部會依順序執行。
@@ -1278,6 +1330,8 @@ function ResultsView({
   onSelect,
   onRefresh,
   onRerun,
+  onContinue,
+  continuing,
   rerunning,
 }: {
   targetId: string;
@@ -1287,6 +1341,8 @@ function ResultsView({
   onSelect: (runId: string) => void;
   onRefresh: () => void;
   onRerun: (runId: string) => void;
+  onContinue: (runId: string) => void;
+  continuing: boolean;
   rerunning: boolean;
 }) {
   const qc = useQueryClient();
@@ -1335,6 +1391,8 @@ function ResultsView({
 
   const d = detail.data;
   const failed = d ? d.verdicts.fail + d.verdicts.blocked : 0;
+  const selectedRun = runs.find((r) => r.id === runId);
+  const interrupted = selectedRun?.status === "interrupted";
 
   return (
     <Card
@@ -1344,6 +1402,11 @@ function ResultsView({
           <Button size="sm" variant="secondary" onClick={onRefresh}>
             重新整理
           </Button>
+          {runId && interrupted && (
+            <Button size="sm" disabled={!canEdit || continuing} onClick={() => onContinue(runId)}>
+              {continuing ? "啟動中…" : "繼續未完成的案例"}
+            </Button>
+          )}
           {runId && (
             <Button size="sm" disabled={!canEdit || rerunning || failed === 0} onClick={() => onRerun(runId)}>
               {rerunning ? "啟動中…" : `重跑失敗的案例（${failed}）`}
@@ -1590,6 +1653,11 @@ function ResultCase({
       {result?.possiblyChanged && (
         <p className="mt-2 rounded-md border border-amber-200 dark:border-amber-900 bg-amber-50 dark:bg-amber-950/40 px-2 py-1 text-xs text-amber-800 dark:text-amber-300">
           這條的失敗看起來像是功能改了，而不是壞了。可以在下面建立變更提案，一次處理這次執行裡所有這類案例。
+        </p>
+      )}
+      {result?.verdict === "blocked" && item.testCase.setupNote?.trim() && (
+        <p className="mt-2 rounded-md border border-amber-200 dark:border-amber-900 bg-amber-50 dark:bg-amber-950/40 px-2 py-1 text-xs text-amber-800 dark:text-amber-300">
+          受阻可能是因為前置未滿足。這條案例需要先準備：{item.testCase.setupNote}
         </p>
       )}
       {item.editedAfterUse && (

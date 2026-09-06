@@ -598,6 +598,7 @@ export interface TestCase {
   featureId: string | null;
   title: string;
   precondition: string;
+  setupNote?: string;
   steps: string[];
   expected: string;
   priority: Priority;
@@ -664,6 +665,7 @@ export interface TestCaseVersion {
 export interface TestCaseInput {
   title: string;
   precondition?: string;
+  setupNote?: string;
   steps: string[];
   expected: string;
   priority?: Priority;
@@ -714,7 +716,7 @@ export interface GenerationCancelResult {
 // ---------- 執行與結果（spec §4.5–4.7） ----------
 
 /** `paused` keeps the run alive while it waits for a model to come back. */
-export type RunStatus = "queued" | "running" | "paused" | "succeeded" | "failed" | "aborted";
+export type RunStatus = "queued" | "running" | "paused" | "succeeded" | "failed" | "aborted" | "interrupted";
 /** Where a case sits in this run's queue. */
 export type QueueStatus = "queued" | "running" | "done" | "skipped";
 export type Verdict = "pass" | "fail" | "blocked" | "skipped";
@@ -829,6 +831,7 @@ export interface RunCase {
     type: CaseType;
     currentVersion: number;
     precondition: string;
+    setupNote?: string;
     steps: string[];
     expected: string;
     feature: { id: string; name: string } | null;
@@ -1111,7 +1114,7 @@ export interface ExploreDetail {
     target: { id: string; name: string };
     myRole: Role;
   };
-  identities: { id: string; name: string; role: string; isAnonymous: boolean }[];
+  identities: { id: string; name: string; role: string; isAnonymous: boolean; loginFailed?: boolean }[];
   nodes: {
     id: string;
     routeKey: string;
@@ -1180,7 +1183,7 @@ export interface MyRun {
   targetId: string;
   targetName: string;
   projectId: string;
-  status: "running" | "paused" | "queued" | "succeeded" | "failed" | "aborted";
+  status: "running" | "paused" | "queued" | "succeeded" | "failed" | "aborted" | "interrupted";
   total: number;
   done: number;
   verdicts: Verdicts;

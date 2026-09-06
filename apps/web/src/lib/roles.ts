@@ -280,6 +280,7 @@ export const RUN_STATUS_LABEL: Record<RunStatus, string> = {
   succeeded: "已完成",
   failed: "失敗",
   aborted: "已中止",
+  interrupted: "已中斷",
 };
 
 export const RUN_STATUS_TONE: Record<RunStatus, "gray" | "blue" | "amber" | "green" | "red"> = {
@@ -289,6 +290,7 @@ export const RUN_STATUS_TONE: Record<RunStatus, "gray" | "blue" | "amber" | "gre
   succeeded: "green",
   failed: "red",
   aborted: "gray",
+  interrupted: "amber",
 };
 
 /** A run in one of these states still has (or is about to have) a live stream. */

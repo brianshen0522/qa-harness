@@ -543,7 +543,7 @@ describe("test runs (e2e)", () => {
     await app.get(RunService).onModuleInit();
 
     const closed = await prisma.testRun.findUniqueOrThrow({ where: { id: orphan.id } });
-    expect(closed.status).toBe("failed");
+    expect(closed.status).toBe("interrupted"); // environment cut it short, not a test failure
     expect(closed.error).toMatch(/重新啟動/);
     const target = await prisma.qaTarget.findUniqueOrThrow({ where: { id: targetId } });
     expect(target.status).toBe("idle");
@@ -821,10 +821,10 @@ describe("test runs (e2e)", () => {
   it("aborts the entire run when the agent reports a system-wide fatal error", async () => {
     stubModel((call) => (call === 1 ? { type: "abort_run", params: { reason: "首頁連線被拒，整站打不開" } } : null));
     await api(app).post(`/api/targets/${targetId}/runs`).set("Cookie", editor).send({ caseIds, concurrency: 1 }).expect(201);
-    const run = await waitForRun(["succeeded", "failed", "aborted"]);
+    const run = await waitForRun(["succeeded", "failed", "aborted", "interrupted"]);
 
-    // The run fails with the fatal reason, not a normal completion.
-    expect(run.status).toBe("failed");
+    // The run is interrupted (system down), not a normal completion / test failure.
+    expect(run.status).toBe("interrupted");
     expect(run.error).toMatch(/系統無法連線|連線被拒/);
 
     const detail = await api(app).get(`/api/runs/${run.id}`).set("Cookie", viewer).expect(200);
@@ -838,6 +838,14 @@ describe("test runs (e2e)", () => {
     // A critical finding records why everything stopped.
     const finding = await prisma.runFinding.findFirst({ where: { runId: run.id, severity: "critical" } });
     expect(finding?.title).toMatch(/系統無法連線/);
+
+    // The interrupted run can be continued: a fresh run over just the not-done cases.
+    stubModel((call) => (call <= 1 ? { type: "http_request", params: { method: "GET", path: "/ok" } } : null));
+    const cont = await api(app).post(`/api/runs/${run.id}/continue`).set("Cookie", editor).expect(201);
+    expect(cont.body.total).toBe(caseIds.length - 1); // the aborted case was done(blocked); the rest continue
+    const next = await waitForRun(["succeeded", "failed"]);
+    expect(next.id).not.toBe(run.id);
+    expect(next.status).toBe("succeeded");
   }, 60_000);
 
   // A run can change the target's own state; a credential is part of that state.

@@ -168,6 +168,12 @@ export class RunsController {
     return this.runs.start(run.run.targetId, user.id, caseIds);
   }
 
+  /** Start a fresh run over the cases an interrupted run did not finish. */
+  @Post("runs/:runId/continue")
+  continueRun(@CurrentUser() user: UserPrincipal, @Param("runId") runId: string) {
+    return this.runs.continueRun(runId, user.id);
+  }
+
   @Get("runs/:runId/findings")
   findings(@CurrentUser() user: UserPrincipal, @Param("runId") runId: string) {
     return this.query.getFindings(runId, user.id);

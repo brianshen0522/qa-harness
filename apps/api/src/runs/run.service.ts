@@ -118,6 +118,9 @@ const RETAIN_FINISHED_MS = 120_000;
 /** Cap on the in-memory replay log per run, so a huge run does not balloon memory.
  *  A late subscriber still gets live state from the polled run detail. */
 const MAX_EVENTS = 2000;
+/** Default web/desktop parallelism when a run does not override it. Kept modest
+ *  (one live view is shown) and always clamped to the global sandbox cap. */
+const DEFAULT_WEB_CONCURRENCY = 2;
 
 @Injectable()
 export class RunService implements OnModuleInit {
@@ -153,7 +156,9 @@ export class RunService implements OnModuleInit {
       this.log.warn(`closing orphaned run ${run.id} after restart`);
       await this.prisma.testRun.update({
         where: { id: run.id },
-        data: { status: RunStatus.failed, error: "API 重新啟動，這次執行已中斷。", endedAt: new Date() },
+        // Interrupted, not failed: the environment cut it short. Completed case
+        // results are kept and the rest can be continued.
+        data: { status: RunStatus.interrupted, error: "API 重新啟動，這次執行已中斷。已完成的案例結果保留，可「繼續未完成的案例」。", endedAt: new Date() },
       }).catch(() => undefined);
       await this.releaseTarget(run.targetId, run.sandboxId);
     }
@@ -276,6 +281,19 @@ export class RunService implements OnModuleInit {
     return { added: true, total };
   }
 
+  /** Start a fresh run over the cases an earlier (interrupted) run did not finish. */
+  async continueRun(runId: string, userId: string) {
+    const run = await this.prisma.testRun.findUnique({
+      where: { id: runId },
+      include: { queue: { select: { testCaseId: true, status: true } } },
+    });
+    if (!run) throw new NotFoundException("找不到這次執行。");
+    await this.perms.requireTarget(run.targetId, userId, Role.editor);
+    const incomplete = run.queue.filter((q) => q.status !== QueueStatus.done).map((q) => q.testCaseId);
+    if (!incomplete.length) throw new BadRequestException("這次執行的案例都已完成，沒有可續跑的。");
+    return this.start(run.targetId, userId, incomplete);
+  }
+
   // ---------- execution ----------
 
   private spawn(runId: string, targetId: string, triggeredById: string, targetName: string, kind: TargetKind, total: number, concurrency?: number) {
@@ -320,28 +338,35 @@ export class RunService implements OnModuleInit {
     const mcpForPrompt: McpToolForPrompt[] = mcpTools.map((t) => ({ serverId: t.serverId, server: t.server, name: t.tool.name, description: t.tool.description }));
     const needsSandbox = target.kind !== "api";
 
-    let sandboxId: string | null = null;
-    let agentPort: number | null = null;
-    let screen = parseResolution(settings.resolution);
+    // Web/desktop no longer share one sandbox: each worker gets its own so cases
+    // run in a bounded parallel pool. Track them all for cleanup; the first is
+    // stored on the run for the live view.
+    const sandboxIds = new Set<string>();
+    const screen = parseResolution(settings.resolution);
+    let primaryStored = false;
 
-    try {
-      if (needsSandbox) {
-        const startUrl = typeof (target.config as Record<string, unknown>)?.url === "string"
-          ? String((target.config as Record<string, unknown>).url)
-          : undefined;
-        const instance = await this.sandbox.create(record.runId, { purpose: "run", startUrl, ttlMinutes: 240 });
-        sandboxId = instance.id;
-        agentPort = instance.agentPort;
-        screen = parseResolution(instance.resolution ?? settings.resolution);
+    const makeSandbox = async () => {
+      const startUrl = typeof (target.config as Record<string, unknown>)?.url === "string"
+        ? String((target.config as Record<string, unknown>).url)
+        : undefined;
+      const instance = await this.sandbox.create(record.runId, { purpose: "run", startUrl, ttlMinutes: 240 });
+      sandboxIds.add(instance.id);
+      if (!primaryStored) {
+        primaryStored = true;
         await this.prisma.testRun.update({
           where: { id: record.runId },
           data: { sandboxId: instance.id, sandboxName: instance.name, viewUrl: instance.viewUrl },
         });
-        this.publish(record, {
-          type: "sandbox", sandboxId: instance.id, name: instance.name,
-          viewUrl: instance.viewUrl, note: `已啟動 sandbox（${instance.resolution}）`,
-        });
-      } else {
+      }
+      this.publish(record, {
+        type: "sandbox", sandboxId: instance.id, name: instance.name,
+        viewUrl: instance.viewUrl, note: `已啟動 sandbox（${instance.resolution}）`,
+      });
+      return { id: instance.id, agentPort: instance.agentPort };
+    };
+
+    try {
+      if (!needsSandbox) {
         this.publish(record, { type: "sandbox", sandboxId: null, name: null, viewUrl: null, note: "API 類型不需要 sandbox" });
       }
 
@@ -384,10 +409,12 @@ export class RunService implements OnModuleInit {
         screen: { width: screen[0], height: screen[1] },
       };
 
-      // Cases run in a bounded worker pool. API targets have no shared sandbox, so
-      // independent cases can run concurrently (§4.6); web/desktop share one sandbox
-      // and stay serial. concurrency=1 reproduces the old sequential behaviour.
-      const concurrency = needsSandbox ? 1 : Math.max(1, Math.min(record.concurrency ?? settings.apiConcurrency ?? 4, 16));
+      // Cases run in a bounded worker pool (§4.6). API targets run many at once
+      // (no sandbox); web/desktop get one sandbox per worker, capped by the global
+      // sandbox limit so a run can't starve the pool.
+      const concurrency = needsSandbox
+        ? Math.max(1, Math.min(record.concurrency ?? DEFAULT_WEB_CONCURRENCY, settings.maxConcurrent))
+        : Math.max(1, Math.min(record.concurrency ?? settings.apiConcurrency ?? 4, 16));
       const featureSetupLocks = new Map<string, Promise<void>>();
 
       // Only one worker runs a given feature's setup; the rest await the same result.
@@ -438,7 +465,7 @@ export class RunService implements OnModuleInit {
       };
       type QueueRow = NonNullable<Awaited<ReturnType<typeof claimNext>>>;
 
-      const processCase = async (next: QueueRow) => {
+      const processCase = async (next: QueueRow, agentPort: number | null) => {
         const total = await this.prisma.runCaseQueue.count({ where: { runId: record.runId } });
         const index = await this.prisma.runCaseQueue.count({ where: { runId: record.runId, status: { not: QueueStatus.queued } } });
         this.publish(record, { type: "case_started", caseId: next.testCaseId, title: next.testCase.title, index, total, caseVersion: next.testCase.currentVersion });
@@ -469,11 +496,15 @@ export class RunService implements OnModuleInit {
       };
 
       const worker = async () => {
+        // A worker keeps one sandbox and reuses it across its cases; created lazily
+        // so idle workers (fewer cases than the pool) never spin one up.
+        let ws: { id: string; agentPort: number | null } | null = null;
         for (;;) {
           if (record.abort.signal.aborted) return;
           const next = await claimNext();
           if (!next) return;
-          await processCase(next);
+          if (needsSandbox && !ws) ws = await makeSandbox();
+          await processCase(next, ws?.agentPort ?? null);
         }
       };
       await Promise.all(Array.from({ length: concurrency }, () => worker()));
@@ -485,13 +516,13 @@ export class RunService implements OnModuleInit {
           data: { status: QueueStatus.skipped },
         });
       }
-      // A fatal abort (system unreachable) is a failure, not a user stop; record why.
+      // A fatal abort (system unreachable) is an interruption, not a test failure.
       if (record.fatal) {
         await this.prisma.testRun.update({ where: { id: record.runId }, data: { error: `系統無法連線，已中止整趟執行：${record.fatal.reason}`.slice(0, 2000) } }).catch(() => undefined);
       }
-      await this.finish(record, record.fatal ? RunStatus.failed : aborted ? RunStatus.aborted : RunStatus.succeeded, startedAt);
+      await this.finish(record, record.fatal ? RunStatus.interrupted : aborted ? RunStatus.aborted : RunStatus.succeeded, startedAt);
     } finally {
-      await this.releaseTarget(record.targetId, sandboxId);
+      await this.releaseTarget(record.targetId, sandboxIds);
     }
   }
 
@@ -512,7 +543,7 @@ export class RunService implements OnModuleInit {
       skillsBlock: string;
       mcpTools: McpToolForPrompt[];
       agentPort: number | null;
-      queueRow: { testCaseId: string; testCase: { title: string; precondition: string; steps: Prisma.JsonValue; expected: string; priority: string; type: string; currentVersion: number; feature: { name: string } | null } };
+      queueRow: { testCaseId: string; testCase: { title: string; precondition: string; setupNote: string; steps: Prisma.JsonValue; expected: string; priority: string; type: string; currentVersion: number; feature: { name: string } | null } };
       needsSandbox: boolean;
     },
   ) {
@@ -521,6 +552,7 @@ export class RunService implements OnModuleInit {
     const forPrompt: CaseForPrompt = {
       title: testCase.title,
       precondition: testCase.precondition,
+      setupNote: testCase.setupNote,
       steps: (testCase.steps as string[]) ?? [],
       expected: testCase.expected,
       priority: testCase.priority,
@@ -1214,11 +1246,12 @@ export class RunService implements OnModuleInit {
     });
   }
 
-  /** Always runs: the target lock and the sandbox must not outlive the run. */
-  private async releaseTarget(targetId: string, sandboxId: string | null) {
-    if (sandboxId) {
-      await this.sandbox.remove(sandboxId).catch((err) =>
-        this.log.warn(`failed to reclaim sandbox ${sandboxId}: ${(err as Error).message}`),
+  /** Always runs: the target lock and every sandbox must not outlive the run. */
+  private async releaseTarget(targetId: string, sandboxes: string | Set<string> | null) {
+    const ids = sandboxes == null ? [] : typeof sandboxes === "string" ? [sandboxes] : [...sandboxes];
+    for (const id of ids) {
+      await this.sandbox.remove(id).catch((err) =>
+        this.log.warn(`failed to reclaim sandbox ${id}: ${(err as Error).message}`),
       );
     }
     await this.prisma.qaTarget

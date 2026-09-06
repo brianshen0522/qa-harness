@@ -20,6 +20,7 @@ class GenerateDto {
 class CaseDto {
   @IsString() @MinLength(1) @MaxLength(500) title!: string;
   @IsOptional() @IsString() @MaxLength(5000) precondition?: string;
+  @IsOptional() @IsString() @MaxLength(2000) setupNote?: string;
   @IsArray() @ArrayNotEmpty() @IsString({ each: true }) steps!: string[];
   @IsString() @MinLength(1) @MaxLength(5000) expected!: string;
   @IsOptional() @IsEnum(Priority) priority?: Priority;
@@ -29,6 +30,7 @@ class CaseDto {
 class UpdateCaseDto {
   @IsOptional() @IsString() @MinLength(1) @MaxLength(500) title?: string;
   @IsOptional() @IsString() @MaxLength(5000) precondition?: string;
+  @IsOptional() @IsString() @MaxLength(2000) setupNote?: string;
   @IsOptional() @IsArray() @IsString({ each: true }) steps?: string[];
   @IsOptional() @IsString() @MinLength(1) @MaxLength(5000) expected?: string;
   @IsOptional() @IsEnum(Priority) priority?: Priority;

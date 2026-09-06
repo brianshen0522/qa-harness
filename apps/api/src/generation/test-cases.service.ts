@@ -11,6 +11,7 @@ import { snapshot } from "./generation.service";
 export interface CaseInput {
   title: string;
   precondition?: string;
+  setupNote?: string;
   steps: string[];
   expected: string;
   priority?: Priority;
@@ -111,6 +112,7 @@ export class TestCasesService {
           featureId: input.featureId ?? null,
           title: input.title.trim(),
           precondition: input.precondition?.trim() ?? "",
+          setupNote: input.setupNote?.trim() ?? "",
           steps: input.steps as Prisma.InputJsonValue,
           expected: input.expected.trim(),
           priority: input.priority ?? Priority.P2,
@@ -148,7 +150,8 @@ export class TestCasesService {
         where: { id: caseId },
         data: {
           ...(input.title !== undefined ? { title: input.title.trim() } : {}),
-          ...(input.precondition !== undefined ? { precondition: input.precondition.trim() } : {}),
+...(input.precondition !== undefined ? { precondition: input.precondition.trim() } : {}),
+          ...(input.setupNote !== undefined ? { setupNote: input.setupNote.trim() } : {}),
           ...(input.steps !== undefined ? { steps: input.steps as Prisma.InputJsonValue } : {}),
           ...(input.expected !== undefined ? { expected: input.expected.trim() } : {}),
           ...(input.priority !== undefined ? { priority: input.priority } : {}),

@@ -3,6 +3,7 @@ import type { TargetKind } from "@prisma/client";
 export interface CaseForPrompt {
   title: string;
   precondition: string;
+  setupNote?: string;
   steps: string[];
   expected: string;
   priority: string;
@@ -75,6 +76,7 @@ export function caseSystemPrompt(target: TargetForPrompt, testCase: CaseForPromp
     testCase.featureName ? `所屬功能：${testCase.featureName}` : "",
     `優先級：${testCase.priority}　類型：${testCase.type}`,
     `前置條件：${testCase.precondition || "（無）"}`,
+    testCase.setupNote?.trim() ? `需要先準備的資料/狀態：${testCase.setupNote.trim()}（若這些前置在環境裡不存在、你也無法建立，就回傳 done 說明前置未滿足）` : "",
     "步驟：",
     ...testCase.steps.map((s, i) => `  ${i + 1}. ${s}`),
     `預期結果：${testCase.expected}`,

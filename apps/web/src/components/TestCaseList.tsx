@@ -543,6 +543,7 @@ function CaseRow({
             <Badge tone={CASE_TYPE_TONE[c.type]}>{CASE_TYPE_LABEL[c.type]}</Badge>
             <Badge tone={CASE_STATUS_TONE[c.status]}>{CASE_STATUS_LABEL[c.status]}</Badge>
             <span className="text-sm font-medium text-gray-800 dark:text-gray-100">{c.title}</span>
+            {c.setupNote?.trim() && <Badge tone="amber">需前置</Badge>}
             <span className="text-xs text-gray-400 dark:text-gray-500">{CASE_SOURCE_LABEL[c.source]}</span>
           </span>
         </button>
@@ -557,6 +558,11 @@ function CaseRow({
               <p className="text-sm text-gray-400 dark:text-gray-500">無</p>
             )}
           </DetailBlock>
+          {c.setupNote?.trim() && (
+            <DetailBlock label="需前置資料/狀態">
+              <p className="whitespace-pre-wrap rounded-md bg-amber-50 px-2 py-1 text-sm text-amber-800 dark:bg-amber-950/40 dark:text-amber-300">{c.setupNote}</p>
+            </DetailBlock>
+          )}
           <DetailBlock label="步驟">
             {c.steps.length === 0 ? (
               <p className="text-sm text-gray-400 dark:text-gray-500">無</p>
@@ -1039,6 +1045,7 @@ function CaseDialog({
   const [priority, setPriority] = useState<Priority>(initial?.priority ?? "P2");
   const [type, setType] = useState<CaseType>(initial?.type ?? "happy");
   const [precondition, setPrecondition] = useState(initial?.precondition ?? "");
+  const [setupNote, setSetupNote] = useState(initial?.setupNote ?? "");
   const [steps, setSteps] = useState<string[]>(initial?.steps.length ? [...initial.steps] : [""]);
   const [expected, setExpected] = useState(initial?.expected ?? "");
   const [localError, setLocalError] = useState<string | null>(null);
@@ -1067,6 +1074,7 @@ function CaseDialog({
     onSubmit({
       title: title.trim(),
       precondition: precondition.trim(),
+      setupNote: setupNote.trim(),
       steps: cleanSteps,
       expected: expected.trim(),
       priority,
@@ -1116,6 +1124,10 @@ function CaseDialog({
 
           <Field label="前置條件" hint="選填。執行這條案例前必須成立的狀態。">
             <Textarea rows={2} value={precondition} onChange={(e) => setPrecondition(e.target.value)} />
+          </Field>
+
+          <Field label="需前置資料/狀態" hint="選填。單趟自動化跑不出來、需要人先準備的資料或跨角色狀態（例如「需要一個已停用的帳號」）。會提示給執行代理，受阻時也會顯示。">
+            <Textarea rows={2} value={setupNote} onChange={(e) => setSetupNote(e.target.value)} placeholder="例如：需要一個 role=USER、狀態為 DISABLED 的帳號" />
           </Field>
 
           <div>

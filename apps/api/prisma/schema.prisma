@@ -528,6 +528,10 @@ model TestCase {
   featureId                 String?    @map("feature_id")
   title                     String
   precondition              String     @default("")
+  /// Data/state the case needs set up beforehand that a single automated run
+  /// cannot create (e.g. "a DISABLED account must exist"). Shown to the agent and
+  /// surfaced when the case is blocked, so it is clear what to prepare.
+  setupNote                 String     @default("") @map("setup_note")
   /// string[] — the steps an executor follows.
   steps                     Json       @default("[]")
   expected                  String
@@ -656,6 +660,9 @@ enum RunStatus {
   succeeded
   failed
   aborted
+  /// Cut short by the environment (API restart, or the system was unreachable) —
+  /// not a test failure. Completed case results are kept; the rest can be re-run.
+  interrupted
 }
 
 model TestRun {

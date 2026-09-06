@@ -560,7 +560,7 @@ export class RunService implements OnModuleInit {
           }
         }
 
-        await this.runCase(record, { target, targetPrompt: casePrompt, credentials: caseCreds, sharedCredentials: credentials, rotatableKeys, settings, agentPort, skillsBlock, mcpTools: mcpForPrompt, queueRow: next, needsSandbox });
+        await this.runCase(record, { target, targetPrompt: casePrompt, credentials: caseCreds, sharedCredentials: credentials, rotatableKeys, identities: identityById, settings, agentPort, skillsBlock, mcpTools: mcpForPrompt, queueRow: next, needsSandbox });
         await this.prisma.runCaseQueue.update({ where: { runId_testCaseId: { runId: record.runId, testCaseId: next.testCaseId } }, data: { status: QueueStatus.done } });
         await this.saveUsage(record);
       };
@@ -610,6 +610,8 @@ export class RunService implements OnModuleInit {
       sharedCredentials: Record<string, string>;
       /** Which credentials this run is allowed to rotate. */
       rotatableKeys: Set<string>;
+      /** Identities, so a rotated secret can be verified by logging in with it. */
+      identities: Map<string, CrawlIdentity>;
       settings: { maxStepsPerCase: number; stepTimeoutSec: number; recordVideo: boolean };
       skillsBlock: string;
       mcpTools: McpToolForPrompt[];
@@ -1055,6 +1057,8 @@ export class RunService implements OnModuleInit {
       credentials: Record<string, string>;
       sharedCredentials: Record<string, string>;
       needsSandbox: boolean;
+      agentPort: number | null;
+      identities: Map<string, CrawlIdentity>;
       queueRow: { testCaseId: string };
     },
     caseRotations: Map<string, { newValue: string; appliedByHttp: boolean; used: boolean }>,
@@ -1063,7 +1067,12 @@ export class RunService implements OnModuleInit {
     const results: { credential: string; committed: boolean; verified: boolean | null; note: string }[] = [];
     for (const [cred, st] of caseRotations) {
       const placeholder = rotationPlaceholderKey(cred);
-      const shouldCommit = ctx.needsSandbox ? st.used && verdict === Verdict.pass : st.appliedByHttp;
+      // api: a 2xx carrying the new value is ground truth. web: we cannot read a
+      // status, so prove it by logging in with the new secret — the case verdict is
+      // the wrong signal, because a password changed as a *precondition* must be
+      // synced even when the case later fails for an unrelated reason.
+      const webVerified = ctx.needsSandbox && st.used ? await this.verifyWebRotation(ctx, cred, st.newValue) : false;
+      const shouldCommit = ctx.needsSandbox ? webVerified : st.appliedByHttp;
 
       if (!shouldCommit) {
         delete ctx.credentials[placeholder];
@@ -1071,8 +1080,11 @@ export class RunService implements OnModuleInit {
         const note = !st.used
           ? `要求輪替「${cred}」但沒有實際用到 {{${placeholder}}}，未變更儲存的憑證。`
           : ctx.needsSandbox
-            ? `「${cred}」的輪替未同步：這條 case 沒有判為 pass，無法確認改動成功。`
+            ? `「${cred}」的輪替未同步：用新值登入驗證沒有成功，因此不敢覆寫儲存的憑證。若被測系統其實已經改掉密碼，儲存的憑證就會失效，請人工確認。`
             : `「${cred}」的輪替未同步：修改請求沒有回傳 2xx，視為未成功。`;
+        if (st.used && ctx.needsSandbox) {
+          await this.createFinding(record, ctx.queueRow.testCaseId, Severity.major, `憑證「${cred}」可能已被改動但無法驗證`, note);
+        }
         this.publish(record, { type: "credential_rotated", caseId: ctx.queueRow.testCaseId, credential: cred, committed: false, verified: null, note });
         results.push({ credential: cred, committed: false, verified: null, note });
         continue;
@@ -1155,6 +1167,31 @@ export class RunService implements OnModuleInit {
           : "請確認該身份的憑證是否正確、帳號是否存在。");
     record.loginFailures.set(identity.id, reason);
     return reason;
+  }
+
+  /**
+   * Prove a screen-target rotation actually landed by logging in with the new
+   * secret, using the identity that owns the rotated credential. This is what
+   * makes "reset the password as a precondition" safe: the stored credential is
+   * synced because the new value demonstrably works, not because the case passed.
+   */
+  private async verifyWebRotation(
+    ctx: { target: { config: Prisma.JsonValue }; agentPort: number | null; identities: Map<string, CrawlIdentity> },
+    rotatedRef: string,
+    newValue: string,
+  ): Promise<boolean> {
+    if (!ctx.agentPort) return false;
+    const owner = [...ctx.identities.values()].find((i) => !i.isAnonymous && rotatedRef in i.credentials);
+    if (!owner) return false; // nothing to log in as — cannot prove it
+    const url = String((ctx.target.config as Record<string, unknown>)?.url ?? "").trim();
+    if (!url) return false;
+    try {
+      await this.computer.cdpReset(ctx.agentPort).catch(() => undefined);
+      const probe: CrawlIdentity = { ...owner, credentials: { ...owner.credentials, [rotatedRef]: newValue } };
+      return await new Crawler(this.computer, ctx.agentPort, toSandboxUrl(url)).login(probe, () => undefined);
+    } catch {
+      return false;
+    }
   }
 
   /** Serialise rotation commits so concurrent api cases never race the shared map. */

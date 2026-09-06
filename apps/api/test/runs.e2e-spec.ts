@@ -816,6 +816,41 @@ describe("test runs (e2e)", () => {
     }, 60_000);
   });
 
+  // The control plane must not depend on the run living in *this* process.
+  describe("durable control plane", () => {
+    it("records an abort request on the run so it reaches a run owned by another process", async () => {
+      const run = await prisma.testRun.create({ data: { targetId, status: "running", triggeredById: "someone" } });
+      await prisma.qaTarget.update({ where: { id: targetId }, data: { status: "running" } });
+      // No in-process ActiveRun exists for this run — the old code returned false here.
+      const res = await api(app).post(`/api/targets/${targetId}/runs/abort`).set("Cookie", editor).send({}).expect(201);
+      expect(res.body.aborted).toBe(true);
+      const after = await prisma.testRun.findUniqueOrThrow({ where: { id: run.id } });
+      expect(after.abortRequested).toBe(true);
+
+      await prisma.testRun.update({ where: { id: run.id }, data: { status: "aborted", endedAt: new Date() } });
+      await prisma.qaTarget.update({ where: { id: targetId }, data: { status: "idle" } });
+    });
+
+    it("skips a queued case by writing the queue row, so no worker can claim it", async () => {
+      const run = await prisma.testRun.create({
+        data: { targetId, status: "running", triggeredById: "someone", queue: { create: [{ testCaseId: caseIds[0], order: 0 }] } },
+      });
+      await prisma.qaTarget.update({ where: { id: targetId }, data: { status: "running" } });
+
+      await api(app).post(`/api/targets/${targetId}/runs/skip-case`).set("Cookie", editor).send({ caseId: caseIds[0] }).expect(201);
+
+      const row = await prisma.runCaseQueue.findUniqueOrThrow({ where: { runId_testCaseId: { runId: run.id, testCaseId: caseIds[0] } } });
+      expect(row.status).toBe("skipped");
+      const result = await prisma.testResult.findFirst({ where: { runId: run.id, testCaseId: caseIds[0] } });
+      expect(result?.verdict).toBe("skipped");
+      // Skipping it twice is refused rather than double-writing.
+      await api(app).post(`/api/targets/${targetId}/runs/skip-case`).set("Cookie", editor).send({ caseId: caseIds[0] }).expect(400);
+
+      await prisma.testRun.update({ where: { id: run.id }, data: { status: "aborted", endedAt: new Date() } });
+      await prisma.qaTarget.update({ where: { id: targetId }, data: { status: "idle" } });
+    });
+  });
+
   // Regression across runs: a verdict list on its own can't say "this broke".
   describe("cross-run comparison and stability", () => {
     it("reports what regressed / got fixed against the previous run, and flags flaky cases", async () => {

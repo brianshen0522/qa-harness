@@ -70,8 +70,6 @@ interface ActiveRun {
   events: RunEvent[];
   subscribers: Set<Subscriber>;
   abort: AbortController;
-  /** Cases the user asked to skip while the run is going. */
-  skip: Set<string>;
   /** Project the run belongs to, for usage attribution (§4.8). Set once known. */
   projectId: string | null;
   /** Which models actually served this run, and where the chain fell over. */
@@ -83,6 +81,10 @@ interface ActiveRun {
   /** Serialises credential-rotation commits so concurrent cases never race the
    *  shared credential map or double-write the same key. */
   rotationLock: Promise<void>;
+  /** Identities whose login already failed this run, with the reason. Retrying a
+   *  login we know is bad just hammers the target — and trips its rate limiter,
+   *  which then blocks every later case including ones that would have passed. */
+  loginFailures: Map<string, string>;
   /** Set when the agent hit a system-wide fatal error (target unreachable): the
    *  run is aborted as failed rather than run to the end against a dead system. */
   fatal: { reason: string; caseId: string } | null;
@@ -122,6 +124,8 @@ const MAX_EVENTS = 2000;
 /** Default web/desktop parallelism when a run does not override it. Kept modest
  *  (one live view is shown) and always clamped to the global sandbox cap. */
 const DEFAULT_WEB_CONCURRENCY = 2;
+/** How often a running run re-reads its durable abort flag. */
+const ABORT_POLL_MS = 5_000;
 
 @Injectable()
 export class RunService implements OnModuleInit {
@@ -237,26 +241,57 @@ export class RunService implements OnModuleInit {
     return run ? { runId: run.runId, events: run.events, finished: run.finished } : null;
   }
 
+  /**
+   * Stop the run. The flag is written to the database so the stop still lands
+   * when the run is executing in a different process; if we happen to own it,
+   * abort in-process too so it takes effect immediately rather than on the next
+   * poll.
+   */
   async abort(targetId: string, userId: string) {
     await this.perms.requireTarget(targetId, userId, Role.editor);
-    const run = this.active.get(targetId);
-    if (!run || run.finished) return { aborted: false };
-    run.abort.abort();
-    await this.audit.log("user", userId, "run.abort", run.runId);
+    const active = await this.prisma.testRun.findFirst({
+      where: { targetId, status: { in: [RunStatus.running, RunStatus.paused, RunStatus.queued] } },
+      orderBy: { startedAt: "desc" },
+      select: { id: true },
+    });
+    if (!active) return { aborted: false };
+    await this.prisma.testRun.update({ where: { id: active.id }, data: { abortRequested: true } });
+    const local = this.active.get(targetId);
+    if (local && !local.finished) local.abort.abort();
+    await this.audit.log("user", userId, "run.abort", active.id);
     return { aborted: true };
   }
 
   /** §4.6: skip a case that has not started yet. */
+  /**
+   * Skip a case that has not started. Written straight to the queue row so it
+   * holds no matter which process is executing the run: claiming a case is an
+   * atomic status guard, so marking it `skipped` here means no worker can pick
+   * it up afterwards.
+   */
   async skipCase(targetId: string, caseId: string, userId: string) {
     await this.perms.requireTarget(targetId, userId, Role.editor);
-    const run = this.active.get(targetId);
-    if (!run || run.finished) throw new BadRequestException("目前沒有進行中的執行。");
-    const row = await this.prisma.runCaseQueue.findUnique({
-      where: { runId_testCaseId: { runId: run.runId, testCaseId: caseId } },
+    const active = await this.prisma.testRun.findFirst({
+      where: { targetId, status: { in: [RunStatus.running, RunStatus.paused, RunStatus.queued] } },
+      orderBy: { startedAt: "desc" },
+      include: { queue: { where: { testCaseId: caseId }, include: { testCase: { select: { title: true, currentVersion: true } } } } },
     });
+    if (!active) throw new BadRequestException("目前沒有進行中的執行。");
+    const row = active.queue[0];
     if (!row) throw new NotFoundException("這條案例不在本次執行的清單裡。");
     if (row.status !== QueueStatus.queued) throw new BadRequestException("只能跳過還沒開始的案例。");
-    run.skip.add(caseId);
+
+    const claimed = await this.prisma.runCaseQueue.updateMany({
+      where: { runId: active.id, testCaseId: caseId, status: QueueStatus.queued },
+      data: { status: QueueStatus.skipped },
+    });
+    if (claimed.count !== 1) throw new BadRequestException("這條案例已經開始執行了。");
+    await this.writeResult(active.id, caseId, row.testCase.currentVersion, {
+      verdict: Verdict.skipped, reasoning: "使用者在執行中跳過。", possiblyChanged: false,
+      reproSteps: [], evidence: {}, stepCount: 0, durationMs: 0,
+    });
+    const local = this.active.get(targetId);
+    if (local) this.publish(local, { type: "case_skipped", caseId, title: row.testCase.title });
     return { skipped: true };
   }
 
@@ -300,7 +335,7 @@ export class RunService implements OnModuleInit {
   private spawn(runId: string, targetId: string, triggeredById: string, targetName: string, kind: TargetKind, total: number, concurrency?: number) {
     const record: ActiveRun = {
       runId, targetId, triggeredById, events: [], subscribers: new Set(),
-      abort: new AbortController(), skip: new Set(), projectId: null,
+      abort: new AbortController(), projectId: null, loginFailures: new Map(),
       llm: emptyUsage(), currentCaseId: null, concurrency, rotationLock: Promise.resolve(), fatal: null, finished: false,
     };
     this.active.set(targetId, record);
@@ -326,6 +361,15 @@ export class RunService implements OnModuleInit {
 
   private async execute(record: ActiveRun) {
     const startedAt = Date.now();
+    // A stop can be requested by another process (or this one after a restart),
+    // so the durable flag is polled as well as the in-process signal.
+    const abortPoll = setInterval(() => {
+      void this.prisma.testRun
+        .findUnique({ where: { id: record.runId }, select: { abortRequested: true } })
+        .then((r) => { if (r?.abortRequested && !record.abort.signal.aborted) record.abort.abort(); })
+        .catch(() => undefined);
+    }, ABORT_POLL_MS);
+    abortPoll.unref?.();
     const settings = await this.sandbox.settings();
     const target = await this.prisma.qaTarget.findUniqueOrThrow({ where: { id: record.targetId } });
     record.projectId = target.projectId;
@@ -453,12 +497,8 @@ export class RunService implements OnModuleInit {
             include: { testCase: { include: { feature: { select: { name: true } } } } },
           });
           if (!next) return null;
-          if (record.skip.has(next.testCaseId)) {
-            await this.prisma.runCaseQueue.updateMany({ where: { runId: record.runId, testCaseId: next.testCaseId, status: QueueStatus.queued }, data: { status: QueueStatus.skipped } });
-            await this.writeResult(record.runId, next.testCaseId, next.testCase.currentVersion, { verdict: Verdict.skipped, reasoning: "使用者在執行中跳過。", possiblyChanged: false, reproSteps: [], evidence: {}, stepCount: 0, durationMs: 0 });
-            this.publish(record, { type: "case_skipped", caseId: next.testCaseId, title: next.testCase.title });
-            continue;
-          }
+          // A skip is written straight to the queue row, so a skipped case is
+          // simply never returned by the query above.
           const claim = await this.prisma.runCaseQueue.updateMany({
             where: { runId: record.runId, testCaseId: next.testCaseId, status: QueueStatus.queued },
             data: { status: QueueStatus.running, caseVersion: next.testCase.currentVersion },
@@ -510,7 +550,7 @@ export class RunService implements OnModuleInit {
             identity: { name: identity.name, role: identity.role, isAnonymous: identity.isAnonymous },
           };
           if (needsSandbox && agentPort) {
-            const failure = await this.loginAs(identity, agentPort, target);
+            const failure = await this.loginAs(record, identity, agentPort, target);
             if (failure) {
               await this.writeResult(record.runId, next.testCaseId, next.testCase.currentVersion, { verdict: Verdict.blocked, reasoning: failure, possiblyChanged: false, reproSteps: [], evidence: {}, stepCount: 0, durationMs: 0 });
               this.publish(record, { type: "case_finished", caseId: next.testCaseId, verdict: Verdict.blocked, reasoning: failure, possiblyChanged: false, stepCount: 0, durationMs: 0 });
@@ -552,6 +592,7 @@ export class RunService implements OnModuleInit {
       }
       await this.finish(record, record.fatal ? RunStatus.interrupted : aborted ? RunStatus.aborted : RunStatus.succeeded, startedAt);
     } finally {
+      clearInterval(abortPoll);
       await this.releaseTarget(record.targetId, sandboxIds);
     }
   }
@@ -1094,7 +1135,10 @@ export class RunService implements OnModuleInit {
    * previous session, then log in through the real form (the same deterministic
    * path the explorer uses). Returns null on success, or the reason to block.
    */
-  private async loginAs(identity: CrawlIdentity, agentPort: number, target: { config: Prisma.JsonValue }): Promise<string | null> {
+  private async loginAs(record: ActiveRun, identity: CrawlIdentity, agentPort: number, target: { config: Prisma.JsonValue }): Promise<string | null> {
+    // Already known bad this run: block immediately without touching the target.
+    const prior = record.loginFailures.get(identity.id);
+    if (prior) return `${prior}（本次執行稍早已登入失敗，為避免反覆嘗試把帳號鎖住，這條直接標記受阻。）`;
     const url = String((target.config as Record<string, unknown>)?.url ?? "").trim();
     if (!url) return `這條 case 綁定身份「${identity.name}」，但 Target 沒有設定 url，無法登入。`;
     const baseUrl = toSandboxUrl(url);
@@ -1104,7 +1148,13 @@ export class RunService implements OnModuleInit {
       .login(identity, (e) => { if (e.type === "login") message = e.message; })
       .catch(() => false);
     if (ok) return null;
-    return `以身份「${identity.name}」(${identity.role}) 登入失敗，無法執行這條 case：${message || "未知原因"}。請確認該身份的憑證是否正確、帳號是否存在。`;
+    const rateLimited = /too many|rate limit|attempts|鎖定|稍後再試/i.test(message);
+    const reason = `以身份「${identity.name}」(${identity.role}) 登入失敗，無法執行這條 case：${message || "未知原因"}。`
+      + (rateLimited
+          ? "被測系統已對登入做速率限制，請稍後再試，並先確認這組憑證是否正確。"
+          : "請確認該身份的憑證是否正確、帳號是否存在。");
+    record.loginFailures.set(identity.id, reason);
+    return reason;
   }
 
   /** Serialise rotation commits so concurrent api cases never race the shared map. */

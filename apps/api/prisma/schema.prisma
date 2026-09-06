@@ -673,6 +673,9 @@ enum RunStatus {
 model TestRun {
   id       String    @id @default(uuid())
   targetId String    @map("target_id")
+  /// Set by an abort request. Durable so the stop reaches the run even when it is
+  /// executing in a different process than the one that served the request.
+  abortRequested Boolean @default(false) @map("abort_requested")
   status   RunStatus @default(queued)
 
   /// Container id while a sandbox is attached; null for api targets.

@@ -20,6 +20,7 @@ import { ChangesModule } from "./changes/changes.module";
 import { ExploreModule } from "./explore/explore.module";
 import { SkillsModule } from "./skills/skills.module";
 import { McpModule } from "./mcp/mcp.module";
+import { HealthModule } from "./health/health.module";
 
 @Module({
   imports: [MeModule, 
@@ -43,6 +44,7 @@ import { McpModule } from "./mcp/mcp.module";
     ExploreModule,
     SkillsModule,
     McpModule,
+    HealthModule,
   ],
 })
 export class AppModule {}

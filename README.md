@@ -351,4 +351,4 @@ Admin → Sandbox → 主控台可直接起容器、看畫面、下指令給 LLM
 
 ## 授權與貢獻
 
-尚未指定授權（預設保留所有權利）；若要開源請補一份 `LICENSE`。歡迎 issue / PR，送 PR 前請確認 `npm test` 與 `npm run test:e2e -w apps/api` 通過。
+以 [MIT License](./LICENSE) 授權。歡迎 issue / PR，送 PR 前請確認 `npm test` 與 `npm run test:e2e -w apps/api` 通過。

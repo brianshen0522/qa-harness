@@ -9,6 +9,9 @@ export interface PageProbe {
   links: { href: string; text: string; visible: boolean }[];
   forms: { action: string | null; method: string; fields: { name: string | null; type: string; required: boolean; label: string | null }[] }[];
   controls: { text: string; role: string; disabled: boolean }[];
+  /** Visible alerts / errors / toasts / validation text. Optional: an older
+   *  sandbox image does not report it. */
+  messages?: { text: string; kind: string }[];
   landmarks: string[];
   scrollWidth: number;
   clientWidth: number;

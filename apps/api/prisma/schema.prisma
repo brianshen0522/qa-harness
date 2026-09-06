@@ -296,7 +296,7 @@ model LlmCallLog {
 
 model SandboxSettings {
   id              Int     @id @default(1)
-  image           String  @default("qa-harness-sandbox:0.5")
+  image           String  @default("qa-harness-sandbox:0.6")
   cpu             Float   @default(2)
   memoryMb        Int     @default(4096) @map("memory_mb")
   resolution      String  @default("1280x800")

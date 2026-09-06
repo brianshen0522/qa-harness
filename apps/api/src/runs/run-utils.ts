@@ -64,6 +64,7 @@ export function summariseProbe(p: PageProbe): Record<string, unknown> {
       fields: cap(f.fields, 20).map((x) => ({ name: x.name, type: x.type, label: x.label, required: x.required })),
     })),
     controls: cap(p.controls.filter((c) => c.text.trim()), 30).map((c) => ({ text: c.text.trim().slice(0, 60), role: c.role, disabled: c.disabled })),
+    messages: (p.messages ?? []).slice(0, 10),
     dialogs: p.dialogs,
     overlay: p.overlay,
     horizontalOverflow: p.scrollWidth > p.clientWidth + 1,

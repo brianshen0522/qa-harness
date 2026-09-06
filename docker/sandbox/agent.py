@@ -394,6 +394,31 @@ PAGE_PROBE_JS = r"""
       if (r.width > window.innerWidth * 0.3 && r.height > window.innerHeight * 0.3) { overlay = true; break; }
     }
   }
+  // Visible alerts / errors / toasts / validation text. Without this the agent
+  // cannot read "Invalid credentials." and keeps retrying an action that already
+  // failed — the judge sees it in the screenshot, the agent never does.
+  const messages = [];
+  const mseen = new Set();
+  const pushMsg = (el, kind) => {
+    if (!visible(el)) return;
+    const t = txt(el);
+    if (!t || t.length > 300 || mseen.has(t)) return;
+    mseen.add(t);
+    messages.push({ text: t.slice(0, 200), kind });
+  };
+  for (const el of document.querySelectorAll('[role="alert"],[role="status"],[aria-live],output')) pushMsg(el, 'alert');
+  for (const el of document.querySelectorAll(
+    '[class*="error"],[class*="Error"],[class*="alert"],[class*="Alert"],[class*="toast"],[class*="Toast"],[class*="invalid"],[class*="danger"],[class*="warning"],[class*="Warning"],[class*="notice"]'
+  )) pushMsg(el, 'text');
+  // Native constraint validation ("Please fill out this field").
+  for (const el of document.querySelectorAll('input,select,textarea')) {
+    try {
+      if (el.willValidate && !el.validity.valid && el.validationMessage) {
+        const t = (el.name || el.id || el.type || 'field') + ': ' + el.validationMessage;
+        if (!mseen.has(t)) { mseen.add(t); messages.push({ text: t.slice(0, 200), kind: 'validation' }); }
+      }
+    } catch (e) { /* some elements throw on validity access */ }
+  }
   const headings = [...document.querySelectorAll('h1,h2,h3')].map((h) => txt(h)).filter(Boolean).slice(0, 30);
   const body = document.body;
   return {
@@ -404,6 +429,7 @@ PAGE_PROBE_JS = r"""
     links,
     forms,
     controls,
+    messages: messages.slice(0, 10),
     landmarks: [...new Set(landmarks)],
     // Cheap layout signals for the RWD scan (stage C).
     scrollWidth: body ? body.scrollWidth : 0,

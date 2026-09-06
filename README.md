@@ -193,14 +193,14 @@ npm run infra:up                # start postgres / redis / minio
 npm run build -w packages/schemas
 npm run db:migrate              # prisma migrate (apps/api)
 npm run db:seed                 # mark the ADMIN_EMAIL user as admin
-docker build -t qa-harness-sandbox:0.5 docker/sandbox   # sandbox desktop image (needed for web/desktop runs and exploration)
+docker build -t qa-harness-sandbox:0.6 docker/sandbox   # sandbox desktop image (needed for web/desktop runs and exploration)
 npm run dev:api                 # http://localhost:3001/api
 npm run dev:web                 # http://localhost:5173
 ```
 
 - **Login**: Google / GitHub OAuth (set `GOOGLE_*` / `GITHUB_*`), or email-only login when `DEV_LOGIN_ENABLED=true`.
 - **Encryption**: API keys and target credentials are AES-256-GCM encrypted (`CREDENTIAL_MASTER_KEY`, 32 bytes base64). **The app won't start without this key** — and don't commit it.
-- The **sandbox image tag** is configurable under Admin → Sandbox; the default is `qa-harness-sandbox:0.5`.
+- The **sandbox image tag** is configurable under Admin → Sandbox; the default is `qa-harness-sandbox:0.6`.
 
 ---
 

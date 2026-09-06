@@ -365,10 +365,12 @@ export const execution_stepSchema = {
             "navigate",
             "run_command",
             "mcp_call",
+            "rotate_credential",
             "report_finding",
+            "abort_run",
             "done"
           ],
-          "description": "要執行的動作。`report_finding` 用來記下與目前 case 無關的問題，記完會繼續原本的流程；`mcp_call` 呼叫外部 MCP 工具（params 給 server_id、tool、arguments）；`done` 結束這條 case。"
+          "description": "要執行的動作。`report_finding` 用來記下與目前 case 無關的問題，記完會繼續原本的流程；`mcp_call` 呼叫外部 MCP 工具（params 給 server_id、tool、arguments）；`rotate_credential` 用在「這條 case 要修改某個憑證的值（例如改密碼）」時，params 給 `{ credential: 憑證名稱 }`，系統會產生一組新值並讓你用 `{{憑證名稱__next}}` 代入，改成功後平台會自動把儲存的憑證同步成新值；`abort_run` 用在「整個被測系統根本連不上／沒啟動」這種系統性致命錯誤，params 給 `{ reason }`，會中止整趟執行（不要用在單一頁面或單一 API 的錯誤）；`done` 結束這條 case。"
         },
         "params": {
           "type": "object",

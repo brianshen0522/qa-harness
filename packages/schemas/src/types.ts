@@ -68,8 +68,12 @@ export type ActionType =
   | "move" | "wait" | "http_request" | "navigate" | "run_command"
   /** Call an external MCP tool (§6.2); params: server_id, tool, arguments. */
   | "mcp_call"
+  /** Rotate a credential the case is about to change; params: credential. */
+  | "rotate_credential"
   /** Note an issue unrelated to the current case, then carry on (§4.5). */
   | "report_finding"
+  /** The whole system is unreachable/dead — stop the entire run; params: reason. */
+  | "abort_run"
   | "done";
 
 export interface ExecutionStep {

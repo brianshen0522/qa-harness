@@ -64,7 +64,10 @@ export interface ChangeProposal {
 
 export type ExecutionPhase = "setup" | "executing" | "verifying" | "judging";
 export type ActionType =
-  | "screenshot" | "click" | "double_click" | "right_click" | "type" | "key" | "scroll"
+  | "screenshot"
+  /** DOM-aware actions (driver-neutral: CDP today, could be Playwright later). */
+  | "page_snapshot" | "click_text" | "fill_field" | "press_key" | "set_viewport"
+  | "click" | "double_click" | "right_click" | "type" | "key" | "scroll"
   | "move" | "wait" | "http_request" | "navigate" | "run_command"
   /** Call an external MCP tool (§6.2); params: server_id, tool, arguments. */
   | "mcp_call"

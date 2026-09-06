@@ -1,4 +1,4 @@
-import { buildMessages, maskSecrets, SCREENSHOT_WINDOW } from "./run-utils";
+import { buildMessages, maskSecrets, summariseProbe, SCREENSHOT_WINDOW } from "./run-utils";
 import type { ContentPart } from "../llm/providers";
 
 const img = (n: number): ContentPart[] => [
@@ -46,5 +46,41 @@ describe("maskSecrets", () => {
   it("returns the value untouched when there are no secrets", () => {
     const v = { keep: "SECRETLONGVALUE" };
     expect(maskSecrets(v, [])).toEqual(v);
+  });
+});
+
+describe("summariseProbe", () => {
+  const probe = (over: Partial<Parameters<typeof summariseProbe>[0]> = {}) => ({
+    url: "http://x/login", path: "/login", title: "Sign in",
+    headings: Array.from({ length: 30 }, (_, i) => `h${i}`),
+    links: [
+      { href: "/a", text: "Browse", visible: true },
+      { href: "/b", text: "hidden", visible: false },
+      { href: "/c", text: "   ", visible: true },
+      ...Array.from({ length: 80 }, (_, i) => ({ href: `/l${i}`, text: `link${i}`, visible: true })),
+    ],
+    forms: [{ action: "/login", method: "post", fields: [{ name: "login", type: "text", required: true, label: "Username" }] }],
+    controls: [{ text: "Sign In", role: "button", disabled: false }, { text: "  ", role: "button", disabled: false }],
+    landmarks: [], scrollWidth: 1400, clientWidth: 1280, textLength: 10, dialogs: 0, overlay: false,
+    ...over,
+  });
+
+  it("keeps what the agent needs to act: path, fields, clickable text", () => {
+    const s = summariseProbe(probe()) as Record<string, any>;
+    expect(s.path).toBe("/login");
+    expect(s.forms[0].fields[0]).toMatchObject({ name: "login", label: "Username", required: true });
+    expect(s.controls).toEqual([{ text: "Sign In", role: "button", disabled: false }]); // blank dropped
+  });
+
+  it("drops invisible/blank links and caps the list so context stays bounded", () => {
+    const s = summariseProbe(probe()) as Record<string, any>;
+    expect(s.links.length).toBe(40);
+    expect(s.links.map((l: any) => l.text)).not.toContain("hidden");
+    expect(s.headings.length).toBe(12);
+  });
+
+  it("flags horizontal overflow (the RWD signal)", () => {
+    expect((summariseProbe(probe()) as any).horizontalOverflow).toBe(true);
+    expect((summariseProbe(probe({ scrollWidth: 1280 })) as any).horizontalOverflow).toBe(false);
   });
 });

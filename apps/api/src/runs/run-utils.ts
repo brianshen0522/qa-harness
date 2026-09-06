@@ -1,4 +1,5 @@
 import type { ContentPart, LlmMessage } from "../llm/providers";
+import type { PageProbe } from "../sandbox/computer.service";
 
 /** Screenshots kept in the prompt; older steps keep their text only, to bound cost. */
 export const SCREENSHOT_WINDOW = 3;
@@ -44,4 +45,27 @@ export function maskSecrets<T>(value: T, secrets: string[]): T {
   } catch {
     return value;
   }
+}
+
+/**
+ * Trim a DOM probe to what the agent needs to choose its next action. The raw
+ * probe on a real page can be hundreds of links; feeding all of it back on every step
+ * would blow the context budget for no gain.
+ */
+export function summariseProbe(p: PageProbe): Record<string, unknown> {
+  const cap = <T>(xs: T[], n: number) => xs.slice(0, n);
+  return {
+    path: p.path,
+    title: p.title,
+    headings: cap(p.headings, 12),
+    links: cap(p.links.filter((l) => l.visible && l.text.trim()), 40).map((l) => ({ text: l.text.trim().slice(0, 80), href: l.href })),
+    forms: cap(p.forms, 6).map((f) => ({
+      action: f.action, method: f.method,
+      fields: cap(f.fields, 20).map((x) => ({ name: x.name, type: x.type, label: x.label, required: x.required })),
+    })),
+    controls: cap(p.controls.filter((c) => c.text.trim()), 30).map((c) => ({ text: c.text.trim().slice(0, 60), role: c.role, disabled: c.disabled })),
+    dialogs: p.dialogs,
+    overlay: p.overlay,
+    horizontalOverflow: p.scrollWidth > p.clientWidth + 1,
+  };
 }

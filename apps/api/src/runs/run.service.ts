@@ -26,7 +26,7 @@ import {
 } from "./credential-rotation";
 import { acquireTargetLock, busyMessage, targetLockHolder } from "../targets/target-lock";
 import { fenceUntrusted } from "../common/untrusted";
-import { SCREENSHOT_WINDOW, buildMessages, maskSecrets } from "./run-utils";
+import { SCREENSHOT_WINDOW, buildMessages, maskSecrets, summariseProbe } from "./run-utils";
 import {
   caseSystemPrompt, verdictSystemPrompt, verdictTranscript,
   type CaseForPrompt, type TargetForPrompt,
@@ -850,16 +850,58 @@ export class RunService implements OnModuleInit {
     if (!ctx.needsSandbox || !ctx.agentPort) {
       return { ok: false, durationMs: 0, error: `這個 Target 不支援「${type}」動作`, detail: {} };
     }
+    const port = ctx.agentPort;
 
-    // Credentials are filled in here so the real value never reaches the model,
-    // and a loopback URL is pointed at the host the sandbox actually runs on.
+    // DOM-aware actions. The names the model writes are driver-neutral; today they
+    // map onto the CDP-backed sandbox agent (the same machinery the explorer uses),
+    // so the agent acts on real elements instead of guessing screen coordinates.
+    if (type === "page_snapshot") {
+      const started = Date.now();
+      const probe = await this.computer.domSnapshot(port);
+      return probe
+        ? { ok: true, durationMs: Date.now() - started, detail: { page: summariseProbe(probe) } }
+        : { ok: false, durationMs: Date.now() - started, error: "讀不到頁面內容（頁面可能還在載入）", detail: {} };
+    }
+    if (type === "click_text") {
+      const text = String(args.text ?? "").trim();
+      if (!text) return { ok: false, durationMs: 0, error: "click_text 需要 params.text（要點的可見文字）", detail: {} };
+      const res = await this.computer.cdpClick(port, text, { exact: args.exact === true });
+      return { ok: res.ok, durationMs: res.durationMs, error: res.error, detail: res.detail };
+    }
+    if (type === "fill_field") {
+      const field = typeof args.field === "number" ? args.field : String(args.field ?? "").trim();
+      if (field === "") return { ok: false, durationMs: 0, error: "fill_field 需要 params.field（欄位名稱或 label）", detail: {} };
+      // Credentials are substituted here so the real value never reaches the model.
+      const value = fillCredentials(String(args.value ?? ""), ctx.credentials);
+      const res = await this.computer.cdpFill(port, field, value);
+      return { ok: res.ok, durationMs: res.durationMs, error: res.error, detail: res.detail };
+    }
+    if (type === "press_key") {
+      const res = await this.computer.cdpKey(port, String(args.key ?? "Escape"));
+      return { ok: res.ok, durationMs: res.durationMs, error: res.error, detail: res.detail };
+    }
+    if (type === "set_viewport") {
+      const width = Math.max(320, Math.min(Number(args.width) || 1280, 3840));
+      const height = Math.max(320, Math.min(Number(args.height) || 800, 2160));
+      const res = await this.computer.setViewport(port, width, height, args.mobile === true);
+      return { ok: res.ok, durationMs: res.durationMs, error: res.error, detail: { ...res.detail, viewport: `${width}x${height}` } };
+    }
+    // Navigation goes through CDP too: more reliable than driving the URL bar, and
+    // it hands back the page structure in one step.
+    if (type === "navigate" && typeof args.url === "string") {
+      const started = Date.now();
+      const probe = await this.computer.cdpNavigate(port, toSandboxUrl(args.url));
+      return probe
+        ? { ok: true, durationMs: Date.now() - started, detail: { page: summariseProbe(probe) } }
+        : { ok: false, durationMs: Date.now() - started, error: `打不開 ${args.url}`, detail: {} };
+    }
+
+    // Coordinate-based fallbacks. Credentials are filled in here for the same reason.
     const filled =
       type === "type" && typeof args.text === "string"
         ? { ...args, text: fillCredentials(args.text, ctx.credentials) }
-        : type === "navigate" && typeof args.url === "string"
-          ? { ...args, url: toSandboxUrl(args.url) }
-          : args;
-    const res = await this.computer.perform(ctx.agentPort, type, filled, timeoutMs);
+        : args;
+    const res = await this.computer.perform(port, type, filled, timeoutMs);
     return { ok: res.ok, durationMs: res.durationMs, error: res.error, detail: res.detail };
   }
 

@@ -144,12 +144,16 @@ describe("HttpExecutorService", () => {
   });
 
   it("only substitutes credentials for the target's own origin (no cross-origin exfil)", async () => {
-    // Same origin as base_url -> filled.
-    await svc.perform({ url: `${base}/same`, headers: { Authorization: "Bearer {{token}}" } }, { base_url: base }, { token: "abc123456" });
+    // Same origin as base_url -> filled, and reported as substituted.
+    const same = await svc.perform({ url: `${base}/same`, headers: { Authorization: "Bearer {{token}}" } }, { base_url: base }, { token: "abc123456" });
     expect(seen.at(-1)?.headers.authorization).toBe("Bearer abc123456");
-    // Different origin than base_url -> the placeholder is NOT filled, so the secret never leaves.
-    await svc.perform({ url: `${base}/other`, headers: { Authorization: "Bearer {{token}}" } }, { base_url: "http://example.com" }, { token: "abc123456" });
+    expect(same.substituted).toEqual(["token"]);
+    // Different origin than base_url -> the placeholder is NOT filled, the secret
+    // never leaves, and nothing is reported as substituted (so a rotation there
+    // can never be mistaken for having taken effect).
+    const cross = await svc.perform({ url: `${base}/other`, headers: { Authorization: "Bearer {{token}}" } }, { base_url: "http://example.com" }, { token: "abc123456" });
     expect(seen.at(-1)?.headers.authorization).toBe("Bearer {{token}}");
+    expect(cross.substituted).toEqual([]);
   });
 
   it("value-masks a credential in a custom-named request header (not just by name)", async () => {

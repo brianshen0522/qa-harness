@@ -14,12 +14,16 @@ import type { ContentPart, LlmMessage } from "../llm/providers";
 import { SandboxService, parseResolution, toSandboxUrl } from "../sandbox/sandbox.service";
 import { ComputerService } from "../sandbox/computer.service";
 import { TargetsService } from "../targets/targets.service";
+import { typeLabel as credentialTypeLabel } from "../targets/credentials";
 import { SkillsService } from "../skills/skills.service";
 import { McpService } from "../mcp/mcp.service";
 import type { McpToolForPrompt } from "./run-prompts";
 import { EvidenceService } from "./evidence.service";
 import { HttpExecutorService, fillCredentials, type HttpLog } from "./http-executor.service";
 import { ApiSetupService, type SetupStep } from "./api-setup.service";
+import {
+  generateSecret, rotationPlaceholderKey, isRotationPlaceholderKey, usedRotationKeys, httpStatusOf, isAppliedStatus,
+} from "./credential-rotation";
 import { acquireTargetLock, busyMessage, targetLockHolder } from "../targets/target-lock";
 import { fenceUntrusted } from "../common/untrusted";
 import { SCREENSHOT_WINDOW, buildMessages, maskSecrets } from "./run-utils";
@@ -42,6 +46,8 @@ export type RunEvent =
       model: string; screenshotKey: string | null;
     }
   | { type: "finding"; id: string; caseId: string | null; severity: Severity; title: string; description: string }
+  | { type: "credential_rotated"; caseId: string; credential: string; committed: boolean; verified: boolean | null; note: string }
+  | { type: "run_aborted_fatal"; caseId: string; reason: string }
   | {
       type: "case_finished"; caseId: string; verdict: Verdict; reasoning: string;
       possiblyChanged: boolean; stepCount: number; durationMs: number;
@@ -58,6 +64,8 @@ type Subscriber = (event: RunEvent) => void;
 interface ActiveRun {
   runId: string;
   targetId: string;
+  /** Who started the run — attributed on any credential the run rotates. */
+  triggeredById: string;
   events: RunEvent[];
   subscribers: Set<Subscriber>;
   abort: AbortController;
@@ -71,6 +79,12 @@ interface ActiveRun {
   currentCaseId: string | null;
   /** Per-run override for api parallelism; falls back to the global setting. */
   concurrency?: number;
+  /** Serialises credential-rotation commits so concurrent cases never race the
+   *  shared credential map or double-write the same key. */
+  rotationLock: Promise<void>;
+  /** Set when the agent hit a system-wide fatal error (target unreachable): the
+   *  run is aborted as failed rather than run to the end against a dead system. */
+  fatal: { reason: string; caseId: string } | null;
   finished: boolean;
 }
 
@@ -195,7 +209,7 @@ export class RunService implements OnModuleInit {
         },
       });
       await this.audit.log("user", userId, "run.start", run.id, { targetId, cases: cases.length });
-      this.spawn(run.id, targetId, target.name, target.kind, cases.length, concurrency);
+      this.spawn(run.id, targetId, userId, target.name, target.kind, cases.length, concurrency);
       return { runId: run.id, total: cases.length };
     } catch (err) {
       await this.releaseTarget(targetId, null);
@@ -264,11 +278,11 @@ export class RunService implements OnModuleInit {
 
   // ---------- execution ----------
 
-  private spawn(runId: string, targetId: string, targetName: string, kind: TargetKind, total: number, concurrency?: number) {
+  private spawn(runId: string, targetId: string, triggeredById: string, targetName: string, kind: TargetKind, total: number, concurrency?: number) {
     const record: ActiveRun = {
-      runId, targetId, events: [], subscribers: new Set(),
+      runId, targetId, triggeredById, events: [], subscribers: new Set(),
       abort: new AbortController(), skip: new Set(), projectId: null,
-      llm: emptyUsage(), currentCaseId: null, concurrency, finished: false,
+      llm: emptyUsage(), currentCaseId: null, concurrency, rotationLock: Promise.resolve(), fatal: null, finished: false,
     };
     this.active.set(targetId, record);
     this.publish(record, { type: "run_started", runId, target: targetName, kind, total });
@@ -297,6 +311,8 @@ export class RunService implements OnModuleInit {
     const target = await this.prisma.qaTarget.findUniqueOrThrow({ where: { id: record.targetId } });
     record.projectId = target.projectId;
     const credentials = await this.targets.decryptedCredentials(record.targetId);
+    const rotatableKeys = await this.targets.rotatableCredentialKeys(record.targetId);
+    const credMeta = await this.targets.credentialMeta(record.targetId);
     // §4.5: global + project house rules fold into every case's system prompt.
     const skillsBlock = await this.skills.promptBlock(target.projectId);
     // §6.2 MCP: tools from enabled global + project servers, offered to the agent.
@@ -363,6 +379,8 @@ export class RunService implements OnModuleInit {
         description: target.description,
         config: (target.config ?? {}) as Record<string, unknown>,
         credentialKeys: Object.keys(credentials),
+        credentials: credMeta.map((c) => ({ name: c.name, typeLabel: credentialTypeLabel(c.type), description: c.description, refs: c.refs, rotatableRef: c.rotatableRef })),
+        rotatableKeys: [...rotatableKeys],
         screen: { width: screen[0], height: screen[1] },
       };
 
@@ -445,7 +463,7 @@ export class RunService implements OnModuleInit {
           }
         }
 
-        await this.runCase(record, { target, targetPrompt: casePrompt, credentials: caseCreds, settings, agentPort, skillsBlock, mcpTools: mcpForPrompt, queueRow: next, needsSandbox });
+        await this.runCase(record, { target, targetPrompt: casePrompt, credentials: caseCreds, sharedCredentials: credentials, rotatableKeys, settings, agentPort, skillsBlock, mcpTools: mcpForPrompt, queueRow: next, needsSandbox });
         await this.prisma.runCaseQueue.update({ where: { runId_testCaseId: { runId: record.runId, testCaseId: next.testCaseId } }, data: { status: QueueStatus.done } });
         await this.saveUsage(record);
       };
@@ -467,7 +485,11 @@ export class RunService implements OnModuleInit {
           data: { status: QueueStatus.skipped },
         });
       }
-      await this.finish(record, aborted ? RunStatus.aborted : RunStatus.succeeded, startedAt);
+      // A fatal abort (system unreachable) is a failure, not a user stop; record why.
+      if (record.fatal) {
+        await this.prisma.testRun.update({ where: { id: record.runId }, data: { error: `系統無法連線，已中止整趟執行：${record.fatal.reason}`.slice(0, 2000) } }).catch(() => undefined);
+      }
+      await this.finish(record, record.fatal ? RunStatus.failed : aborted ? RunStatus.aborted : RunStatus.succeeded, startedAt);
     } finally {
       await this.releaseTarget(record.targetId, sandboxId);
     }
@@ -479,7 +501,13 @@ export class RunService implements OnModuleInit {
     ctx: {
       target: { id: string; kind: TargetKind; config: Prisma.JsonValue };
       targetPrompt: TargetForPrompt;
+      /** This case's credential map (may include feature captures). Mutated in
+       *  place when a rotation commits, so later actions here see the new value. */
       credentials: Record<string, string>;
+      /** The run-wide credential map, so a commit propagates to future cases too. */
+      sharedCredentials: Record<string, string>;
+      /** Which credentials this run is allowed to rotate. */
+      rotatableKeys: Set<string>;
       settings: { maxStepsPerCase: number; stepTimeoutSec: number; recordVideo: boolean };
       skillsBlock: string;
       mcpTools: McpToolForPrompt[];
@@ -517,12 +545,19 @@ export class RunService implements OnModuleInit {
     // agent's self-reported observations.
     const frames: string[] = [];
     const httpLogs: HttpLog[] = [];
+    // Rotations requested during this case: credential -> fresh value + whether we
+    // saw it take effect. Committed (synced to the store) at case end.
+    const caseRotations = new Map<string, { newValue: string; appliedByHttp: boolean; used: boolean }>();
     let seq = 0;
     let stopReason = `已達步數上限（${maxSteps}）`;
+    // Set when this case (or another, mid-flight) hit a system-wide fatal error;
+    // the case is recorded blocked and the judge is skipped (the system is dead).
+    let fatalReason: string | null = null;
 
     while (seq < maxSteps) {
       if (record.abort.signal.aborted) {
-        stopReason = "使用者中止執行";
+        if (record.fatal) { fatalReason = record.fatal.reason; stopReason = `系統性錯誤，已中止：${record.fatal.reason}`; }
+        else stopReason = "使用者中止執行";
         break;
       }
       seq++;
@@ -603,7 +638,35 @@ export class RunService implements OnModuleInit {
         continue;
       }
 
+      if (step.action.type === "abort_run") {
+        const reason = String((step.action.params as Record<string, unknown> | undefined)?.reason ?? step.observation ?? "整個系統無法連線").slice(0, 1000);
+        fatalReason = reason;
+        transcript.push({ seq, phase: step.phase, intent: step.intent, observation: step.observation, action: step.action });
+        await this.recordStep(record, ctx.queueRow.testCaseId, seq, step, { ok: true, durationMs: 0, detail: {} }, decided.model, 0, null);
+        // Fire once: flag the run fatal, raise a critical finding, abort so no more
+        // cases start. Other in-flight cases see the abort and skip their judge too.
+        if (!record.fatal) {
+          record.fatal = { reason, caseId: ctx.queueRow.testCaseId };
+          await this.createFinding(record, ctx.queueRow.testCaseId, Severity.critical, "系統無法連線，已中止整趟執行", reason);
+          this.publish(record, { type: "run_aborted_fatal", caseId: ctx.queueRow.testCaseId, reason });
+          record.abort.abort();
+        }
+        break;
+      }
+
+      if (step.action.type === "rotate_credential") {
+        const feedback = this.handleRotateCredential(step, ctx, caseRotations);
+        transcript.push({ seq, phase: step.phase, intent: step.intent, observation: step.observation, action: step.action, result: { text: feedback } });
+        turns.push({
+          assistant: JSON.stringify({ intent: step.intent, action: step.action }),
+          user: [{ type: "text", text: feedback }],
+        });
+        await this.recordStep(record, ctx.queueRow.testCaseId, seq, step, { ok: true, durationMs: 0, detail: {} }, decided.model, 0, null);
+        continue;
+      }
+
       const outcome = await this.performAction(step, ctx, stepTimeoutMs, httpLogs);
+      if (caseRotations.size) this.noteRotationUsage(step, outcome, caseRotations);
       const screenshotKey = screenshot
         ? (await this.evidence.putScreenshot(record.runId, ctx.queueRow.testCaseId, seq, screenshot))?.key ?? null
         : null;
@@ -628,16 +691,34 @@ export class RunService implements OnModuleInit {
     // screen during it, so recording through it would only pad the file.
     const videoKey = recording ? await this.storeRecording(record.runId, ctx.queueRow.testCaseId, ctx.agentPort!) : null;
 
+    // System is down — record this case blocked without spending a judge call, and
+    // let the run finish (as failed). The whole point is to stop burning tokens.
+    if (fatalReason) {
+      const durationMs = Date.now() - caseStarted;
+      await this.writeResult(record.runId, ctx.queueRow.testCaseId, testCase.currentVersion, {
+        verdict: Verdict.blocked, reasoning: `系統性錯誤，未能執行：${fatalReason}`, possiblyChanged: false,
+        reproSteps: [], evidence: { screenshots, video: videoKey, httpLogs }, stepCount: seq, durationMs,
+      });
+      this.publish(record, { type: "case_finished", caseId: ctx.queueRow.testCaseId, verdict: Verdict.blocked, reasoning: `系統性錯誤：${fatalReason}`, possiblyChanged: false, stepCount: seq, durationMs });
+      return;
+    }
+
     // ----- judge -----
     const verdict = await this.judge(record, forPrompt, transcript, stopReason, frames, ctx.needsSandbox);
     const durationMs = Date.now() - caseStarted;
+
+    // Sync any rotated credential to its new value before recording the result,
+    // so the outcome carries what changed and the next case sees the new value.
+    const rotations = caseRotations.size
+      ? await this.commitRotations(record, ctx, caseRotations, verdict?.verdict ?? null)
+      : [];
 
     await this.writeResult(record.runId, ctx.queueRow.testCaseId, testCase.currentVersion, {
       verdict: (verdict?.verdict ?? Verdict.blocked) as Verdict,
       reasoning: verdict?.reasoning ?? "無法取得判定（模型不可用）。",
       possiblyChanged: verdict?.possibly_changed ?? false,
       reproSteps: verdict?.repro_steps ?? [],
-      evidence: { screenshots, video: videoKey, httpLogs, evidenceRefs: verdict?.evidence_refs ?? [] },
+      evidence: { screenshots, video: videoKey, httpLogs, evidenceRefs: verdict?.evidence_refs ?? [], ...(rotations.length ? { rotations } : {}) },
       stepCount: seq,
       durationMs,
     });
@@ -713,7 +794,7 @@ export class RunService implements OnModuleInit {
     },
     timeoutMs: number,
     httpLogs: HttpLog[],
-  ): Promise<{ ok: boolean; durationMs: number; error?: string; detail: Record<string, unknown> }> {
+  ): Promise<{ ok: boolean; durationMs: number; error?: string; detail: Record<string, unknown>; substituted?: string[] }> {
     const { type, params } = step.action;
     const args = (params ?? {}) as Record<string, unknown>;
 
@@ -731,7 +812,7 @@ export class RunService implements OnModuleInit {
         timeoutMs,
       );
       httpLogs.push(result.log);
-      return { ok: result.ok, durationMs: result.durationMs, error: result.error, detail: result.detail };
+      return { ok: result.ok, durationMs: result.durationMs, error: result.error, detail: result.detail, substituted: result.substituted };
     }
 
     if (!ctx.needsSandbox || !ctx.agentPort) {
@@ -748,6 +829,158 @@ export class RunService implements OnModuleInit {
           : args;
     const res = await this.computer.perform(ctx.agentPort, type, filled, timeoutMs);
     return { ok: res.ok, durationMs: res.durationMs, error: res.error, detail: res.detail };
+  }
+
+  // ---------- credential rotation (§ keep stored credentials in sync) ----------
+
+  /**
+   * The agent declares it is about to change a credential's value. We generate a
+   * fresh strong value (never one the model chose or can read), expose it under a
+   * `{{cred__next}}` placeholder for the change request, and remember it so the
+   * store can be synced once the change actually lands.
+   */
+  private handleRotateCredential(
+    step: ExecutionStep,
+    ctx: { credentials: Record<string, string>; targetPrompt: TargetForPrompt; rotatableKeys: Set<string> },
+    caseRotations: Map<string, { newValue: string; appliedByHttp: boolean; used: boolean }>,
+  ): string {
+    const params = (step.action.params ?? {}) as Record<string, unknown>;
+    const credential = String(params.credential ?? params.name ?? params.key ?? "").trim();
+    if (!credential) return "rotate_credential 需要 params.credential（要輪替的憑證名稱）。";
+
+    if (!ctx.rotatableKeys.has(credential)) {
+      const exists = ctx.targetPrompt.credentialKeys.includes(credential);
+      return exists
+        ? `憑證「${credential}」沒有開啟「允許輪替」，這條 case 無法安全地修改它的值。請回傳 done 並說明此前置無法建立（會判為 blocked）。`
+        : `沒有叫「${credential}」的憑證。可輪替的憑證：${[...ctx.rotatableKeys].join("、") || "（無）"}。`;
+    }
+
+    const placeholder = rotationPlaceholderKey(credential);
+    const existing = caseRotations.get(credential);
+    if (existing) {
+      ctx.credentials[placeholder] = existing.newValue;
+      return `「${credential}」已經產生過新值，直接用 \`{{${placeholder}}}\` 代入即可。`;
+    }
+
+    const minLength = Number.isFinite(Number(params.min_length)) ? Number(params.min_length) : undefined;
+    const maxLength = Number.isFinite(Number(params.max_length)) ? Number(params.max_length) : undefined;
+    const newValue = generateSecret({ minLength, maxLength });
+    ctx.credentials[placeholder] = newValue;
+    caseRotations.set(credential, { newValue, appliedByHttp: false, used: false });
+    return [
+      `已為「${credential}」產生一組新值。要填入「新值」的地方（例如改密碼表單的新密碼欄位、或 API body）請寫 \`{{${placeholder}}}\`，`,
+      "系統會在送出前代入真值——你一樣看不到、也不要自己編。",
+      "改成功後平台會自動把儲存的憑證同步成這個新值，之後的 case 和下一趟執行就會用新值登入。",
+    ].join("");
+  }
+
+  /** After each action, note whether a pending rotation's placeholder was used
+   *  (and, for http, whether the change was accepted with a 2xx). For http we use
+   *  the keys the executor actually substituted — a cross-origin request never
+   *  substitutes, so its new value never left and must not count as applied. */
+  private noteRotationUsage(
+    step: ExecutionStep,
+    outcome: { detail: Record<string, unknown>; substituted?: string[] },
+    caseRotations: Map<string, { newValue: string; appliedByHttp: boolean; used: boolean }>,
+  ) {
+    const used = step.action.type === "http_request"
+      ? (outcome.substituted ?? []).filter(isRotationPlaceholderKey)
+      : usedRotationKeys(step.action.params, [...caseRotations.keys()].map(rotationPlaceholderKey));
+    if (!used.length) return;
+    const applied = step.action.type === "http_request" && isAppliedStatus(httpStatusOf(outcome.detail));
+    for (const [cred, st] of caseRotations) {
+      if (!used.includes(rotationPlaceholderKey(cred))) continue;
+      st.used = true;
+      if (applied) st.appliedByHttp = true;
+    }
+  }
+
+  /**
+   * Sync every rotated credential to its new value. The commit rule is "sync to
+   * what actually happened on the target": for an api target, the ground truth is
+   * a 2xx to a request that carried the new value; for a screen target we cannot
+   * read a status, so we require the placeholder to have been used AND the case
+   * to have passed. On an api target we then re-run the login flow with the new
+   * value to confirm it works, and flag a finding if it does not.
+   */
+  private async commitRotations(
+    record: ActiveRun,
+    ctx: {
+      target: { id: string; config: Prisma.JsonValue };
+      credentials: Record<string, string>;
+      sharedCredentials: Record<string, string>;
+      needsSandbox: boolean;
+      queueRow: { testCaseId: string };
+    },
+    caseRotations: Map<string, { newValue: string; appliedByHttp: boolean; used: boolean }>,
+    verdict: Verdict | null,
+  ): Promise<{ credential: string; committed: boolean; verified: boolean | null; note: string }[]> {
+    const results: { credential: string; committed: boolean; verified: boolean | null; note: string }[] = [];
+    for (const [cred, st] of caseRotations) {
+      const placeholder = rotationPlaceholderKey(cred);
+      const shouldCommit = ctx.needsSandbox ? st.used && verdict === Verdict.pass : st.appliedByHttp;
+
+      if (!shouldCommit) {
+        delete ctx.credentials[placeholder];
+        delete ctx.sharedCredentials[placeholder];
+        const note = !st.used
+          ? `要求輪替「${cred}」但沒有實際用到 {{${placeholder}}}，未變更儲存的憑證。`
+          : ctx.needsSandbox
+            ? `「${cred}」的輪替未同步：這條 case 沒有判為 pass，無法確認改動成功。`
+            : `「${cred}」的輪替未同步：修改請求沒有回傳 2xx，視為未成功。`;
+        this.publish(record, { type: "credential_rotated", caseId: ctx.queueRow.testCaseId, credential: cred, committed: false, verified: null, note });
+        results.push({ credential: cred, committed: false, verified: null, note });
+        continue;
+      }
+
+      await this.withRotationLock(record, async () => {
+        ctx.credentials[cred] = st.newValue;
+        ctx.sharedCredentials[cred] = st.newValue;
+        delete ctx.credentials[placeholder];
+        delete ctx.sharedCredentials[placeholder];
+        await this.targets.rotateCredentialValue(ctx.target.id, cred, st.newValue, record.triggeredById);
+      });
+
+      const verified = ctx.needsSandbox ? null : await this.verifyRotation(ctx, cred);
+      const note = verified === false
+        ? `「${cred}」已輪替並同步，但用新值重新登入驗證失敗，請人工確認。`
+        : `「${cred}」已輪替，儲存的憑證已同步成新值。`;
+      this.publish(record, { type: "credential_rotated", caseId: ctx.queueRow.testCaseId, credential: cred, committed: true, verified, note });
+      if (verified === false) {
+        await this.createFinding(record, ctx.queueRow.testCaseId, Severity.major, `憑證「${cred}」輪替後登入驗證失敗`, note);
+      }
+      results.push({ credential: cred, committed: true, verified, note });
+    }
+    return results;
+  }
+
+  /** Best-effort: re-run the target's login flow with the new value to confirm it
+   *  works. Returns null when there is no flow that uses this credential to test. */
+  private async verifyRotation(ctx: { target: { id: string; config: Prisma.JsonValue }; sharedCredentials: Record<string, string> }, cred: string): Promise<boolean | null> {
+    try {
+      const steps = await this.apiSetup.stepsFor(ctx.target.id);
+      if (!steps.length || !JSON.stringify(steps).includes(`{{${cred}}}`)) return null;
+      const cfg = (ctx.target.config ?? {}) as Record<string, unknown>;
+      const outcome = await this.apiSetup.run(steps, { base_url: String(cfg.base_url ?? ""), headers: (cfg.headers as Record<string, string>) ?? undefined }, ctx.sharedCredentials);
+      return outcome.ok;
+    } catch {
+      return null;
+    }
+  }
+
+  /** Serialise rotation commits so concurrent api cases never race the shared map. */
+  private withRotationLock<T>(record: ActiveRun, fn: () => Promise<T>): Promise<T> {
+    const run = record.rotationLock.then(fn, fn);
+    record.rotationLock = run.then(() => undefined, () => undefined);
+    return run;
+  }
+
+  /** Persist and broadcast a finding the engine itself raised (not the agent). */
+  private async createFinding(record: ActiveRun, caseId: string, severity: Severity, title: string, description: string) {
+    const finding = await this.prisma.runFinding.create({
+      data: { runId: record.runId, testCaseId: caseId, severity, title: title.slice(0, 300), description: description.slice(0, 5000) },
+    });
+    this.publish(record, { type: "finding", id: finding.id, caseId, severity, title: finding.title, description: finding.description });
   }
 
   /**

@@ -1,11 +1,36 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from "@nestjs/common";
-import { DescriptionSource, Prisma, Role, TargetKind } from "@prisma/client";
+import { CredentialType, DescriptionSource, Prisma, Role, TargetKind } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { PermissionsService } from "../permissions/permissions.service";
 import { effectiveTargetRole } from "../permissions/roles";
 import { CryptoService } from "../crypto/crypto.service";
 import { AuditService } from "../audit/audit.service";
 import { validateOverride } from "../permissions/roles";
+import { CREDENTIAL_NAME_RE, fieldNames, refKey, refKeys, rotatableRefKey } from "./credentials";
+
+/** What the model/UI sees about a credential — never a value. */
+export interface CredentialMeta {
+  name: string;
+  type: CredentialType;
+  description: string;
+  allowRotation: boolean;
+  /** Which fields are set (e.g. ["username","password"] or ["value"]). */
+  fields: string[];
+  /** The `{{...}}` references the agent may write for this credential. */
+  refs: string[];
+  /** The reference for the rotatable secret, if rotation is enabled. */
+  rotatableRef: string | null;
+}
+
+/** One credential's create/replace input (plaintext field values). */
+export interface CredentialInput {
+  name: string;
+  type?: CredentialType;
+  description?: string;
+  allowRotation?: boolean;
+  /** Plaintext field values keyed by field name (username/password, or value). */
+  fields: Record<string, string>;
+}
 
 /** Config keys accepted per kind (spec §3.3). Unknown keys are kept but flagged. */
 export const CONFIG_KEYS: Record<TargetKind, string[]> = {
@@ -62,11 +87,27 @@ export class TargetsService {
       where: { id: targetId },
       include: {
         project: { select: { id: true, name: true } },
-        credentials: { select: { key: true } },
+        credentials: { select: { name: true, type: true, description: true, allowRotation: true, fields: true }, orderBy: { name: "asc" } },
       },
     });
     if (!target) throw new NotFoundException();
-    return { ...target, myRole: role, credentialKeys: target.credentials.map((c) => c.key), credentials: undefined };
+    // Never expose values — only names, types, descriptions and the references.
+    const credentials: CredentialMeta[] = target.credentials.map((c) => ({
+      name: c.name,
+      type: c.type,
+      description: c.description,
+      allowRotation: c.allowRotation,
+      fields: fieldNames(c.type).filter((f) => (c.fields as Record<string, unknown>)?.[f] != null),
+      refs: refKeys(c.name, c.type),
+      rotatableRef: c.allowRotation ? rotatableRefKey(c.name, c.type) : null,
+    }));
+    return {
+      ...target,
+      myRole: role,
+      // Expanded reference keys — the identity picker and older callers use these.
+      credentialKeys: credentials.flatMap((c) => c.refs),
+      credentials,
+    };
   }
 
   async update(targetId: string, userId: string, input: { name?: string; config?: Record<string, unknown> }) {
@@ -99,32 +140,206 @@ export class TargetsService {
 
   // ----- credentials (owner only; values never returned) -----
 
-  async setCredential(targetId: string, userId: string, key: string, value: string) {
+  /** Create or fully replace a credential. Accepts the new typed shape; the
+   *  controller also maps the legacy {key,value} body into a single `other`. */
+  async setCredential(targetId: string, userId: string, input: CredentialInput) {
     await this.perms.requireTarget(targetId, userId, Role.owner);
     await this.assertNotRunning(targetId);
+    const name = input.name.trim();
+    if (!CREDENTIAL_NAME_RE.test(name)) throw new BadRequestException("憑證名稱只能包含文字、數字、底線與連字號（不含點與空白）。");
+    const type = input.type ?? CredentialType.other;
+    const encrypted = this.encryptFields(type, input.fields, true);
     await this.prisma.targetCredential.upsert({
-      where: { targetId_key: { targetId, key } },
-      create: { targetId, key, encryptedValue: this.crypto.encrypt(value) },
-      update: { encryptedValue: this.crypto.encrypt(value) },
+      where: { targetId_name: { targetId, name } },
+      create: { targetId, name, type, description: input.description ?? "", allowRotation: input.allowRotation ?? false, fields: encrypted },
+      update: { type, description: input.description ?? "", allowRotation: input.allowRotation ?? false, fields: encrypted },
     });
-    await this.audit.log("user", userId, "target.credential.set", targetId, { key });
-    return { key };
+    await this.audit.log("user", userId, "target.credential.set", targetId, { name, type });
+    return { name };
   }
 
-  async deleteCredential(targetId: string, userId: string, key: string) {
+  /**
+   * Partially edit a credential: description, type, rotation flag, individual
+   * field values, and/or a rename. A rename rewrites every `{{name}}` and
+   * `{{name.field}}` reference in this target's setup flows and identities.
+   */
+  async updateCredential(
+    targetId: string,
+    userId: string,
+    name: string,
+    input: { allowRotation?: boolean; description?: string; type?: CredentialType; fields?: Record<string, string>; newKey?: string },
+  ) {
     await this.perms.requireTarget(targetId, userId, Role.owner);
     await this.assertNotRunning(targetId);
-    await this.prisma.targetCredential.delete({ where: { targetId_key: { targetId, key } } }).catch(() => {
-      throw new NotFoundException("Credential not found");
+    const existing = await this.prisma.targetCredential.findUnique({ where: { targetId_name: { targetId, name } } });
+    if (!existing) throw new NotFoundException("Credential not found");
+
+    const newName = input.newKey?.trim();
+    const renaming = !!newName && newName !== name;
+    if (renaming) {
+      if (!CREDENTIAL_NAME_RE.test(newName!)) throw new BadRequestException("憑證名稱只能包含文字、數字、底線與連字號（不含點與空白）。");
+      const clash = await this.prisma.targetCredential.findUnique({ where: { targetId_name: { targetId, name: newName! } } });
+      if (clash) throw new ConflictException(`已經有一個叫「${newName}」的憑證了。`);
+    }
+
+    const type = input.type ?? existing.type;
+    const data: Prisma.TargetCredentialUpdateInput = {};
+    if (input.type !== undefined) data.type = type;
+    if (input.description !== undefined) data.description = input.description;
+    if (input.allowRotation !== undefined) data.allowRotation = input.allowRotation;
+    if (renaming) data.name = newName!;
+    if (input.fields && Object.keys(input.fields).length) {
+      // Merge encrypted field updates onto whatever is stored (so you can change
+      // just the password of a login without re-entering the username).
+      const merged = { ...(existing.fields as Record<string, string>), ...this.encryptFields(type, input.fields, false) };
+      data.fields = merged;
+    }
+    if (!Object.keys(data).length) return { name };
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.targetCredential.update({ where: { targetId_name: { targetId, name } }, data });
+      if (renaming) await this.rewriteCredentialRefs(tx, targetId, name, newName!);
     });
-    await this.audit.log("user", userId, "target.credential.delete", targetId, { key });
+    await this.audit.log("user", userId, "target.credential.update", targetId, {
+      name, ...(renaming ? { renamedTo: newName } : {}),
+      ...(input.allowRotation === undefined ? {} : { allowRotation: input.allowRotation }),
+      ...(input.fields ? { fieldsChanged: Object.keys(input.fields) } : {}),
+    });
+    return { name: renaming ? newName! : name };
+  }
+
+  /** Rewrite `{{old}}` and `{{old.field}}` -> the new name wherever a rename could dangle. */
+  private async rewriteCredentialRefs(tx: Prisma.TransactionClient, targetId: string, oldName: string, newName: string) {
+    const esc = oldName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    // Match {{old}} or {{old.field}} and swap only the name segment.
+    const ref = new RegExp(`(\\{\\{\\s*)${esc}(\\s*(?:\\.[\\p{L}\\p{N}_-]+)?\\s*\\}\\})`, "gu");
+    const swap = <T>(json: T): T => JSON.parse(JSON.stringify(json).replace(ref, `$1${newName}$2`)) as T;
+    const swapKey = (k: string) => (k === oldName ? newName : k.startsWith(`${oldName}.`) ? `${newName}${k.slice(oldName.length)}` : k);
+
+    const apiSetup = await tx.apiSetup.findUnique({ where: { targetId } });
+    if (apiSetup) await tx.apiSetup.update({ where: { targetId }, data: { steps: swap(apiSetup.steps) as Prisma.InputJsonValue } });
+
+    const featureSetups = await tx.featureSetup.findMany({ where: { feature: { targetId } } });
+    for (const fs of featureSetups) {
+      await tx.featureSetup.update({ where: { id: fs.id }, data: { steps: swap(fs.steps) as Prisma.InputJsonValue } });
+    }
+
+    const identities = await tx.targetIdentity.findMany({ where: { targetId } });
+    for (const idn of identities) {
+      // loginConfig.userKey/passKey hold a bare credential key (the crawler looks
+      // it up directly), so remap those too — not just any {{ref}} inside it.
+      const login = swap(idn.loginConfig) as Record<string, unknown>;
+      for (const f of ["userKey", "passKey"]) if (typeof login[f] === "string") login[f] = swapKey(login[f] as string);
+      await tx.targetIdentity.update({
+        where: { id: idn.id },
+        data: { credentialKeys: idn.credentialKeys.map(swapKey), loginConfig: login as Prisma.InputJsonValue },
+      });
+    }
+  }
+
+  /**
+   * Owner-only: reveal a credential's current values in plaintext, for editing.
+   * This is the one place a stored secret leaves the server; it is gated to the
+   * target owner and audited. Never call it from list/read paths.
+   */
+  async revealCredential(targetId: string, userId: string, name: string): Promise<{ name: string; type: CredentialType; fields: Record<string, string> }> {
+    await this.perms.requireTarget(targetId, userId, Role.owner);
+    const row = await this.prisma.targetCredential.findUnique({ where: { targetId_name: { targetId, name } } });
+    if (!row) throw new NotFoundException("Credential not found");
+    const stored = (row.fields ?? {}) as Record<string, string>;
+    const fields: Record<string, string> = {};
+    for (const f of fieldNames(row.type)) if (stored[f] != null) fields[f] = this.crypto.decrypt(stored[f]);
+    await this.audit.log("user", userId, "target.credential.reveal", targetId, { name });
+    return { name: row.name, type: row.type, fields };
+  }
+
+  async deleteCredential(targetId: string, userId: string, name: string) {
+    await this.perms.requireTarget(targetId, userId, Role.owner);
+    await this.assertNotRunning(targetId);
+    const existing = await this.prisma.targetCredential.findUnique({ where: { targetId_name: { targetId, name } } });
+    if (!existing) throw new NotFoundException("Credential not found");
+    const gone = new Set(refKeys(name, existing.type)); // {{name}} or {{name.username/password}}
+    await this.prisma.$transaction(async (tx) => {
+      await tx.targetCredential.delete({ where: { targetId_name: { targetId, name } } });
+      // Drop the now-dangling references from any identity that logged in with it.
+      const identities = await tx.targetIdentity.findMany({ where: { targetId } });
+      for (const idn of identities) {
+        const kept = idn.credentialKeys.filter((k) => !gone.has(k));
+        if (kept.length !== idn.credentialKeys.length) await tx.targetIdentity.update({ where: { id: idn.id }, data: { credentialKeys: kept } });
+      }
+    });
+    await this.audit.log("user", userId, "target.credential.delete", targetId, { name });
     return { ok: true };
   }
 
-  /** Internal: decrypt all credentials for the worker. Never exposed over HTTP. */
+  /** Encrypt the plaintext fields for a credential type. On create, require the
+   *  full set (a password needs both username and password); on a partial edit,
+   *  only the provided fields are encrypted. */
+  private encryptFields(type: CredentialType, fields: Record<string, string>, requireAll: boolean): Record<string, string> {
+    const allowed = fieldNames(type);
+    const out: Record<string, string> = {};
+    for (const f of allowed) {
+      const v = fields[f];
+      if (v === undefined || v === null || v === "") {
+        if (requireAll) throw new BadRequestException(`憑證缺少欄位「${f}」。`);
+        continue;
+      }
+      out[f] = this.crypto.encrypt(String(v));
+    }
+    return out;
+  }
+
+  /** Internal: decrypt every credential and expand it to the `{{...}}` reference
+   *  map the run/crawler use — `name` for a single secret, `name.username` /
+   *  `name.password` for a login. Never exposed over HTTP. */
   async decryptedCredentials(targetId: string): Promise<Record<string, string>> {
     const rows = await this.prisma.targetCredential.findMany({ where: { targetId } });
-    return Object.fromEntries(rows.map((r) => [r.key, this.crypto.decrypt(r.encryptedValue)]));
+    const out: Record<string, string> = {};
+    for (const row of rows) {
+      const stored = (row.fields ?? {}) as Record<string, string>;
+      for (const f of fieldNames(row.type)) {
+        const enc = stored[f];
+        if (enc == null) continue;
+        out[refKey(row.name, f)] = this.crypto.decrypt(enc);
+      }
+    }
+    return out;
+  }
+
+  /** Internal: metadata (no values) the run prompt needs to describe credentials. */
+  async credentialMeta(targetId: string): Promise<CredentialMeta[]> {
+    const rows = await this.prisma.targetCredential.findMany({ where: { targetId }, orderBy: { name: "asc" } });
+    return rows.map((r) => ({
+      name: r.name,
+      type: r.type,
+      description: r.description,
+      allowRotation: r.allowRotation,
+      fields: fieldNames(r.type).filter((f) => (r.fields as Record<string, unknown>)?.[f] != null),
+      refs: refKeys(r.name, r.type),
+      rotatableRef: r.allowRotation ? rotatableRefKey(r.name, r.type) : null,
+    }));
+  }
+
+  /** Internal: the rotatable secret's reference for each rotatable credential. */
+  async rotatableCredentialKeys(targetId: string): Promise<Set<string>> {
+    const rows = await this.prisma.targetCredential.findMany({ where: { targetId, allowRotation: true }, select: { name: true, type: true } });
+    return new Set(rows.map((r) => rotatableRefKey(r.name, r.type)));
+  }
+
+  /**
+   * Internal: sync a rotated secret to the value it now has on the target, after a
+   * run changed it. `ref` is the rotatable reference (`name` or `name.password`).
+   * Skips the owner check and running-lock — it is the run engine, already holding
+   * the target, writing reality back. Only called for an `allowRotation` credential.
+   */
+  async rotateCredentialValue(targetId: string, ref: string, value: string, actorId: string): Promise<void> {
+    const rows = await this.prisma.targetCredential.findMany({ where: { targetId, allowRotation: true } });
+    const row = rows.find((r) => rotatableRefKey(r.name, r.type) === ref);
+    if (!row) throw new NotFoundException(`找不到可輪替的憑證：${ref}`);
+    const field = row.type === CredentialType.password ? "password" : "value";
+    const fields = { ...(row.fields as Record<string, string>), [field]: this.crypto.encrypt(value) };
+    await this.prisma.targetCredential.update({ where: { targetId_name: { targetId, name: row.name } }, data: { fields } });
+    await this.audit.log("user", actorId, "target.credential.rotate", targetId, { name: row.name, field });
   }
 
   // ----- member overrides -----

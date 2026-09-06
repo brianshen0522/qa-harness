@@ -162,15 +162,36 @@ model QaTarget {
   @@map("qa_targets")
 }
 
+/// A credential the target authenticates with. A `password` credential is a
+/// bound login pair (username + password) referenced as {{name.username}} /
+/// {{name.password}}; every other type is a single secret referenced as {{name}}.
+/// The `description` is shown to the model so it picks the right one by meaning,
+/// not by guessing at the name.
 model TargetCredential {
-  targetId       String @map("target_id")
-  key            String
-  encryptedValue String @map("encrypted_value")
+  targetId       String         @map("target_id")
+  /// Logical name; the reference the model writes as {{name}} / {{name.field}}.
+  name           String         @map("key")
+  type           CredentialType @default(other)
+  description    String         @default("")
+  /// Encrypted field values. Paired login → { username, password }; single → { value }.
+  fields         Json           @default("{}")
+  /// When true, a run may rotate this credential: if a case changes its secret on
+  /// the target (e.g. a password change), the harness generates the new value and
+  /// syncs the stored credential to it. Off by default — opt in per credential.
+  allowRotation  Boolean        @default(false) @map("allow_rotation")
 
   target QaTarget @relation(fields: [targetId], references: [id], onDelete: Cascade)
 
-  @@id([targetId, key])
+  @@id([targetId, name])
   @@map("qa_target_credentials")
+}
+
+enum CredentialType {
+  password
+  api_key
+  bearer_token
+  cookie
+  other
 }
 
 /// Role override — only ever >= the member's project role (enforced in service layer).

@@ -24,6 +24,10 @@ export interface HttpActionResult {
   error?: string;
   detail: Record<string, unknown>;
   log: HttpLog;
+  /** Credential names actually substituted into this request (same-origin only).
+   *  The definitive signal that a value truly reached the target — used to decide
+   *  whether a credential rotation took effect. */
+  substituted: string[];
 }
 
 const MAX_BODY_CHARS = 20_000;
@@ -68,17 +72,19 @@ export class HttpExecutorService {
         creds = {};
       }
     }
+    const headerTemplate = { ...(config.headers ?? {}), ...(asRecord(params.headers) ?? {}) };
     const headers: Record<string, string> = {};
-    for (const [k, v] of Object.entries({ ...(config.headers ?? {}), ...(asRecord(params.headers) ?? {}) })) {
+    for (const [k, v] of Object.entries(headerTemplate)) {
       headers[k] = fillCredentials(String(v), creds);
     }
     const rawBody = params.body ?? params.json ?? null;
-    const body =
-      rawBody === null || rawBody === undefined
-        ? null
-        : typeof rawBody === "string"
-          ? fillCredentials(rawBody, creds)
-          : fillCredentials(JSON.stringify(rawBody), creds);
+    const bodyTemplate = rawBody === null || rawBody === undefined ? "" : typeof rawBody === "string" ? rawBody : JSON.stringify(rawBody);
+    const body = bodyTemplate ? fillCredentials(bodyTemplate, creds) : rawBody === null || rawBody === undefined ? null : "";
+    // Which credential names really went out (same-origin, so `creds` is populated).
+    const substituted = referencedCredentials(
+      [...Object.values(headerTemplate).map(String), bodyTemplate, JSON.stringify(asRecord(params.query ?? params.params) ?? {})],
+      creds,
+    );
     if (body !== null && !Object.keys(headers).some((h) => h.toLowerCase() === "content-type")) {
       headers["content-type"] = "application/json";
     }
@@ -122,11 +128,12 @@ export class HttpExecutorService {
           body: parseMaybeJson(redactBody(text, credentials)),
         },
         log,
+        substituted,
       };
     } catch (err) {
       const message = (err as Error).name === "AbortError" ? `逾時（${timeoutMs}ms）` : (err as Error).message;
       this.log.warn(`http ${method} ${url} failed: ${message}`);
-      return this.failure(method, url, message, started, redactHeaders(headers, credentials));
+      return this.failure(method, url, message, started, redactHeaders(headers, credentials), substituted);
     } finally {
       clearTimeout(timer);
     }
@@ -166,6 +173,7 @@ export class HttpExecutorService {
     message: string,
     started: number,
     requestHeaders: Record<string, string> = {},
+    substituted: string[] = [],
   ): HttpActionResult {
     const durationMs = Date.now() - started;
     return {
@@ -177,13 +185,27 @@ export class HttpExecutorService {
         method, url, requestHeaders, requestBody: null, status: null, statusText: "",
         responseHeaders: {}, responseBody: "", durationMs, error: message,
       },
+      substituted,
     };
   }
 }
 
-/** `{{key}}` is replaced with the decrypted credential of that name. */
+/** Credential names referenced as `{{name}}` across the given templates and
+ *  present in `creds` — i.e. the names whose real values were substituted. */
+function referencedCredentials(templates: string[], creds: Record<string, string>): string[] {
+  const names = new Set<string>();
+  for (const t of templates) {
+    for (const m of t.matchAll(/\{\{\s*([\p{L}\p{N}_.\-]+)\s*\}\}/gu)) {
+      if (m[1] in creds) names.add(m[1]);
+    }
+  }
+  return [...names];
+}
+
+/** `{{key}}` is replaced with the decrypted credential of that name. Names may be
+ *  unicode (e.g. a Chinese credential name) and use `.` to address a login field. */
 export function fillCredentials(text: string, credentials: Record<string, string>): string {
-  return text.replace(/\{\{\s*([A-Za-z0-9_.-]+)\s*\}\}/g, (whole, key: string) =>
+  return text.replace(/\{\{\s*([\p{L}\p{N}_.\-]+)\s*\}\}/gu, (whole, key: string) =>
     key in credentials ? credentials[key] : whole,
   );
 }

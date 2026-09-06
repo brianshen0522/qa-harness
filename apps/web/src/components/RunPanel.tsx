@@ -69,6 +69,7 @@ type CaseFinishedEvent = Extract<RunEvent, { type: "case_finished" }>;
 type PausedEvent = Extract<RunEvent, { type: "paused" }>;
 type SandboxEvent = Extract<RunEvent, { type: "sandbox" }>;
 type SetupStepEvent = Extract<RunEvent, { type: "setup_step" }>;
+type RotatedEvent = Extract<RunEvent, { type: "credential_rotated" }>;
 
 /** Evidence is served as raw bytes off the run, so it can be an `<img src>` directly. */
 function evidenceUrl(runId: string, key: string): string {
@@ -413,10 +414,12 @@ interface LiveState {
   stepsByCase: Map<string, StepEvent[]>;
   findings: FindingEvent[];
   findingCase: Map<string, string | null>;
+  rotations: RotatedEvent[];
   sandbox: SandboxEvent | null;
   setupSteps: SetupStepEvent[];
   setupCaptured: string[];
   setupFailed: string | null;
+  fatal: string | null;
   paused: PausedEvent | null;
   resumed: string | null;
   runFinished: Extract<RunEvent, { type: "run_finished" }> | null;
@@ -438,10 +441,12 @@ function digest(events: RunEvent[]): LiveState {
     stepsByCase: new Map(),
     findings: [],
     findingCase: new Map(),
+    rotations: [],
     sandbox: null,
     setupSteps: [],
     setupCaptured: [],
     setupFailed: null,
+    fatal: null,
     paused: null,
     resumed: null,
     runFinished: null,
@@ -482,6 +487,12 @@ function digest(events: RunEvent[]): LiveState {
       case "finding":
         state.findings.push(event);
         state.findingCase.set(event.id, event.caseId);
+        break;
+      case "credential_rotated":
+        state.rotations.push(event);
+        break;
+      case "run_aborted_fatal":
+        state.fatal = event.reason;
         break;
       case "case_finished":
         state.finished.set(event.caseId, event);
@@ -851,6 +862,13 @@ function LiveRun({
       <ErrorText error={skipError} />
       <ErrorText error={detail.error} />
 
+      {state.fatal && (
+        <div className="rounded-md border border-red-300 dark:border-red-900 bg-red-50 dark:bg-red-950/40 px-3 py-2 text-red-800 dark:text-red-300">
+          <p className="text-sm font-semibold">系統無法連線，已中止整趟執行</p>
+          <p className="mt-1 whitespace-pre-wrap text-sm">{state.fatal}</p>
+          <p className="mt-1 text-xs">LLM 判斷被測系統整體掛掉，剩餘 case 已跳過以免浪費。請確認系統啟動／可連線後再重跑。</p>
+        </div>
+      )}
       {state.paused && (
         <div className="rounded-md border border-amber-200 dark:border-amber-900 bg-amber-50 dark:bg-amber-950/40 px-3 py-2 text-amber-800 dark:text-amber-300">
           <p className="text-sm font-semibold">等待 LLM</p>
@@ -979,6 +997,25 @@ function LiveRun({
                 </ul>
               )}
             </LivePanel>
+
+            {state.rotations.length > 0 && (
+              <LivePanel title="憑證輪替" count={state.rotations.length} scroll>
+                <ul className="space-y-2">
+                  {state.rotations.map((r, i) => (
+                    <li key={`${r.credential}-${i}`} className="rounded-md border border-gray-200 dark:border-gray-700 p-2">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <code className="rounded bg-gray-100 dark:bg-gray-800 px-1.5 py-0.5 text-xs">{r.credential}</code>
+                        <Badge tone={r.committed ? (r.verified === false ? "amber" : "green") : "gray"}>
+                          {r.committed ? (r.verified === false ? "已同步（驗證失敗）" : "已同步") : "未同步"}
+                        </Badge>
+                      </div>
+                      <p className="mt-1 text-sm text-gray-600 dark:text-gray-300">{r.note}</p>
+                      <p className="mt-1 text-xs text-gray-400 dark:text-gray-500">於：{state.titles.get(r.caseId) ?? r.caseId}</p>
+                    </li>
+                  ))}
+                </ul>
+              </LivePanel>
+            )}
           </div>
         )}
       </div>

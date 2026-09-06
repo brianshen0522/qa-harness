@@ -1,9 +1,9 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Put, UseGuards } from "@nestjs/common";
+import { BadRequestException, Body, Controller, Delete, Get, Param, Patch, Post, Put, UseGuards } from "@nestjs/common";
 import { UserAuthGuard } from "../auth/guards/user-auth.guard";
 import { CurrentUser } from "../common/decorators";
 import type { UserPrincipal } from "../common/types";
 import { TargetsService } from "./targets.service";
-import { CreateTargetDto, SetCredentialDto, SetTargetMemberDto, UpdateTargetDescriptionDto, UpdateTargetDto } from "./dto";
+import { CreateTargetDto, SetCredentialDto, SetTargetMemberDto, UpdateCredentialDto, UpdateTargetDescriptionDto, UpdateTargetDto } from "./dto";
 
 @Controller()
 @UseGuards(UserAuthGuard)
@@ -42,7 +42,22 @@ export class TargetsController {
 
   @Put("targets/:id/credentials")
   setCredential(@CurrentUser() user: UserPrincipal, @Param("id") id: string, @Body() dto: SetCredentialDto) {
-    return this.targets.setCredential(id, user.id, dto.key, dto.value);
+    // Legacy { key, value } → a single-secret credential; new shape passes through.
+    const name = dto.name ?? dto.key;
+    if (!name) throw new BadRequestException("缺少憑證名稱。");
+    const fields = dto.fields ?? (dto.value !== undefined ? { value: dto.value } : {});
+    return this.targets.setCredential(id, user.id, { name, type: dto.type, description: dto.description, allowRotation: dto.allowRotation, fields });
+  }
+
+  @Get("targets/:id/credentials/:key/reveal")
+  revealCredential(@CurrentUser() user: UserPrincipal, @Param("id") id: string, @Param("key") key: string) {
+    return this.targets.revealCredential(id, user.id, key);
+  }
+
+  @Patch("targets/:id/credentials/:key")
+  updateCredential(@CurrentUser() user: UserPrincipal, @Param("id") id: string, @Param("key") key: string, @Body() dto: UpdateCredentialDto) {
+    const fields = dto.fields ?? (dto.value !== undefined ? { value: dto.value } : undefined);
+    return this.targets.updateCredential(id, user.id, key, { allowRotation: dto.allowRotation, description: dto.description, type: dto.type, fields, newKey: dto.newKey });
   }
 
   @Delete("targets/:id/credentials/:key")

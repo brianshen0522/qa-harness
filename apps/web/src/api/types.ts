@@ -106,9 +106,25 @@ export interface Target {
   _count?: { credentials: number; members: number };
 }
 
+export type CredentialType = "password" | "api_key" | "bearer_token" | "cookie" | "other";
+
+export interface TargetCredentialInfo {
+  name: string;
+  type: CredentialType;
+  description: string;
+  allowRotation: boolean;
+  /** Which fields are set (["username","password"] or ["value"]). */
+  fields: string[];
+  /** The {{...}} references this credential exposes. */
+  refs: string[];
+  /** The rotatable secret's reference, or null when rotation is off. */
+  rotatableRef: string | null;
+}
+
 export interface TargetDetail extends Target {
   project: { id: string; name: string };
   credentialKeys: string[];
+  credentials: TargetCredentialInfo[];
 }
 
 export interface TargetMember {
@@ -918,6 +934,8 @@ export type RunEvent =
       screenshotKey: string | null;
     }
   | { type: "finding"; id: string; caseId: string | null; severity: Severity; title: string; description: string }
+  | { type: "credential_rotated"; caseId: string; credential: string; committed: boolean; verified: boolean | null; note: string }
+  | { type: "run_aborted_fatal"; caseId: string; reason: string }
   | {
       type: "case_finished";
       caseId: string;

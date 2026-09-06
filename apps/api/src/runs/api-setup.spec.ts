@@ -37,7 +37,7 @@ describe("ApiSetupService.run", () => {
     return { svc, calls };
   }
   const ok = (detail: Record<string, unknown>): HttpActionResult => ({
-    ok: true, durationMs: 1, detail, log: {} as never,
+    ok: true, durationMs: 1, detail, log: {} as never, substituted: [],
   });
 
   it("captures a token from step 1 and exposes it to step 2", async () => {
@@ -70,7 +70,7 @@ describe("ApiSetupService.run", () => {
 
   it("stops at the first failing request", async () => {
     const { svc, calls } = svcWith([
-      { ok: false, durationMs: 1, error: "連線被拒", detail: {}, log: {} as never },
+      { ok: false, durationMs: 1, error: "連線被拒", detail: {}, log: {} as never, substituted: [] },
       ok({ status: 200, body: {} }),
     ]);
     const steps: SetupStep[] = [

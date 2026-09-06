@@ -34,9 +34,10 @@ export class IdentitiesService {
     await this.perms.requireTarget(targetId, userId, Role.viewer);
     const [identities, credentials] = await Promise.all([
       this.prisma.targetIdentity.findMany({ where: { targetId }, orderBy: { order: "asc" } }),
-      this.prisma.targetCredential.findMany({ where: { targetId }, select: { key: true } }),
+      this.targets.credentialMeta(targetId),
     ]);
-    return { identities, credentialKeys: credentials.map((c) => c.key) };
+    // Identities reference the expanded {{...}} keys (name, name.username, name.password).
+    return { identities, credentialKeys: credentials.flatMap((c) => c.refs), credentials };
   }
 
   async create(targetId: string, userId: string, input: IdentityInput) {
@@ -108,11 +109,10 @@ export class IdentitiesService {
 
   private async assertCredentials(targetId: string, input: IdentityInput) {
     if (input.isAnonymous || !input.credentialKeys?.length) return;
-    const owned = await this.prisma.targetCredential.findMany({
-      where: { targetId, key: { in: input.credentialKeys } },
-      select: { key: true },
-    });
-    const missing = input.credentialKeys.filter((k) => !owned.some((o) => o.key === k));
+    // Credentials are referenced by their expanded {{...}} keys now.
+    const meta = await this.targets.credentialMeta(targetId);
+    const known = new Set(meta.flatMap((c) => c.refs));
+    const missing = input.credentialKeys.filter((k) => !known.has(k));
     if (missing.length) throw new BadRequestException(`這些憑證不存在：${missing.join("、")}`);
   }
 

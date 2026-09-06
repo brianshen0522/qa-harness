@@ -88,8 +88,8 @@ describe("teams / projects / targets + permission rules (e2e)", () => {
     const t = await api(app).get(`/api/targets/${targetId}`).set("Cookie", viewer).expect(200);
     expect(t.body.credentialKeys).toEqual(["token"]);
     expect(JSON.stringify(t.body)).not.toContain("s3cret");
-    const row = await prisma.targetCredential.findUniqueOrThrow({ where: { targetId_key: { targetId, key: "token" } } });
-    expect(row.encryptedValue).not.toContain("s3cret");
+    const row = await prisma.targetCredential.findUniqueOrThrow({ where: { targetId_name: { targetId, name: "token" } } });
+    expect(JSON.stringify(row.fields)).not.toContain("s3cret");
   });
 
   it("rule 2: target override can raise a role but not lower it", async () => {

@@ -15,9 +15,26 @@ export interface TargetForPrompt {
   kind: TargetKind;
   description: string;
   config: Record<string, unknown>;
-  /** Names only; values are substituted server-side and never shown. */
+  /** Expanded reference keys ({{name}} / {{name.field}}); values never shown. */
   credentialKeys: string[];
+  /** Typed credentials with descriptions, so the model picks by meaning not by
+   *  guessing at names. Preferred over credentialKeys when present. */
+  credentials?: CredentialPromptInfo[];
+  /** Rotatable secret references (change + sync) via rotate_credential. */
+  rotatableKeys?: string[];
   screen?: { width: number; height: number };
+}
+
+/** One credential as the model should understand it. */
+export interface CredentialPromptInfo {
+  name: string;
+  /** Human label for the type, e.g. 「帳號密碼」/「API key」. */
+  typeLabel: string;
+  description: string;
+  /** The `{{...}}` references the agent writes (e.g. name.username / name.password). */
+  refs: string[];
+  /** The rotatable secret's reference, or null when rotation is off. */
+  rotatableRef: string | null;
 }
 
 /** The rules that hold for every executor, plus how to finish a case. */
@@ -30,6 +47,9 @@ const COMMON_RULES = [
   "  記完會自動回到原本的流程，不要因此偏離這條 case。",
   "- 收集到足夠證據判斷通過與否時，回傳 `done`，`params.summary` 簡述你觀察到的結果。",
   "- 卡住、做不到、或前置條件不成立時也回傳 `done`，在 summary 說明卡在哪裡。判定會另外做，你這裡不要下結論。",
+  "- 如果你發現「整個被測系統根本連不上／沒啟動」——例如連線一直被拒、首頁完全打不開、整站都是連線層級錯誤或 5xx——",
+  "  再測其他 case 也只是浪費，這時用 `abort_run` 動作，`params` 給 `{ reason }`（寫出你判斷系統掛掉的證據），會中止整趟執行。",
+  "  務必謹慎：只有「整個系統性掛掉」才用。單一頁面 404、單一 API 500、某個功能壞掉都不算——那些用 `report_finding` 記下、或 `done` 結束這條就好。",
 ];
 
 export interface McpToolForPrompt {
@@ -77,16 +97,66 @@ function apiActions(target: TargetForPrompt): string[] {
     "- `wait`：`{ ms }` 等待，例如非同步處理需要時間時。",
     "- `report_finding`、`done`：見上面的規則。",
   ];
-  if (target.credentialKeys.length) {
-    lines.push(
+  lines.push(...credentialsSection(target, "header 或 body"));
+  return lines;
+}
+
+/**
+ * Tell the model what each credential is, by meaning — so it stops guessing that
+ * `login`/`password` (the admin account) is "the" login when a case wants a
+ * regular user. Each credential shows its type, description and the exact
+ * `{{...}}` references to write.
+ */
+function credentialsSection(target: TargetForPrompt, where: string): string[] {
+  const creds = target.credentials;
+  // Preferred path: typed credentials with descriptions.
+  if (creds && creds.length) {
+    const lines = [
       "",
       "## 憑證",
-      `這個 Target 有這些憑證：${target.credentialKeys.join("、")}。`,
-      "需要用到時，在 header 或 body 裡寫 `{{憑證名稱}}`，系統會在送出前代入真值。",
-      "你看不到也不需要知道真正的值，不要自己編造。",
-    );
+      `以下是可用的憑證。請依這條 case 指定的身份、以及每個憑證的說明，挑「對的那一個」，不要憑名字猜。要用時在${where}寫下對應的 \`{{…}}\`，系統會在送出前代入真值——你看不到、也不要自己編。`,
+    ];
+    for (const c of creds) {
+      lines.push(`- 「${c.name}」（${c.typeLabel}）：${c.description.trim() || "（沒有說明）"}`);
+      lines.push(`    用 ${c.refs.map((r) => `\`{{${r}}}\``).join("、")} 代入`);
+    }
+    // Any {{ref}} not backed by a typed credential is a value the setup flow
+    // captured (login token, etc.) — still list it so it is usable.
+    const typedRefs = new Set(creds.flatMap((c) => c.refs));
+    const captured = target.credentialKeys.filter((k) => !typedRefs.has(k));
+    if (captured.length) lines.push(`- 前置流程擷取的變數：${captured.map((k) => `\`{{${k}}}\``).join("、")}`);
+    lines.push(...rotationSection(creds.filter((c) => c.rotatableRef).map((c) => ({ name: c.name, ref: c.rotatableRef! })), where));
+    return lines;
   }
+  // Fallback: a flat key list (older callers / tests without typed metadata).
+  if (!target.credentialKeys.length) return [];
+  const lines = [
+    "",
+    "## 憑證",
+    `這個 Target 有這些憑證：${target.credentialKeys.join("、")}。`,
+    `需要用到時，在${where}裡寫 \`{{憑證名稱}}\`，系統會在送出前代入真值。你看不到也不需要知道真正的值，不要自己編造。`,
+  ];
+  lines.push(...rotationSection((target.rotatableKeys ?? []).map((k) => ({ name: k, ref: k })), where));
   return lines;
+}
+
+/**
+ * How to change a credential's value safely. Without this an agent testing a
+ * password change would invent a literal password — leaking a live secret and
+ * leaving the stored credential stale so the next login fails. Only shown for
+ * credentials the owner marked rotatable.
+ */
+function rotationSection(rotatable: { name: string; ref: string }[], where: string): string[] {
+  if (!rotatable.length) return [];
+  return [
+    "",
+    "## 修改憑證（改密碼等）",
+    `如果這條 case 要「修改某個憑證的值」，可輪替的有：${rotatable.map((r) => `\`${r.ref}\``).join("、")}。`,
+    "不要自己編一個新值——先用 `rotate_credential` 動作，`params` 給 `{ credential: \"上面那個引用\" }`（例如 `member.password`）。",
+    `系統會產生一組新值，並讓你用 \`{{該引用__next}}\` 代入到${where}（就像一般憑證那樣，你一樣看不到真值）。`,
+    "改成功後，平台會自動把儲存的憑證同步成這個新值，之後的 case 與下一趟執行就會用新值登入。",
+    "只有真的要改它的值時才用；只是「拿來登入」用原本的引用就好。",
+  ];
 }
 
 function desktopActions(target: TargetForPrompt): string[] {
@@ -114,14 +184,7 @@ function desktopActions(target: TargetForPrompt): string[] {
     "- `run_command`：`{ command }` 在容器內執行 shell 指令。",
     "- `wait`：`{ ms }`",
     "- `report_finding`、`done`：見上面的規則。",
-    ...(target.credentialKeys.length
-      ? [
-          "",
-          "## 憑證",
-          `需要登入時可用的憑證欄位：${target.credentialKeys.join("、")}。`,
-          "在 `type` 的 `text` 裡寫 `{{憑證名稱}}`，系統會在輸入前代入真值。不要自己編造帳密。",
-        ]
-      : []),
+    ...credentialsSection(target, "`type` 的 `text`"),
   ];
 }
 

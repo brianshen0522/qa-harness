@@ -7,6 +7,7 @@ import { LlmGatewayService } from "../src/llm/llm-gateway.service";
 import { LlmHealthService } from "../src/llm/llm-health.service";
 import { LlmProviderError, type LlmProviderAdapter, type LlmRequest } from "../src/llm/providers";
 import { RunService } from "../src/runs/run.service";
+import { TargetsService } from "../src/targets/targets.service";
 import { RetentionService } from "../src/runs/retention.service";
 
 /** Spec §4.5 / §4.6: run a case list, judge each case, keep evidence, stay steerable. */
@@ -812,6 +813,81 @@ describe("test runs (e2e)", () => {
       const run = await waitForRun(["succeeded", "failed", "aborted"]);
       expect(run.status).toBe("succeeded");
       expect(maxInflight()).toBe(1);
+    }, 60_000);
+  });
+
+  // A dead system: the agent aborts the whole run instead of burning tokens on
+  // every case against something it cannot even connect to.
+  it("aborts the entire run when the agent reports a system-wide fatal error", async () => {
+    stubModel((call) => (call === 1 ? { type: "abort_run", params: { reason: "首頁連線被拒，整站打不開" } } : null));
+    await api(app).post(`/api/targets/${targetId}/runs`).set("Cookie", editor).send({ caseIds, concurrency: 1 }).expect(201);
+    const run = await waitForRun(["succeeded", "failed", "aborted"]);
+
+    // The run fails with the fatal reason, not a normal completion.
+    expect(run.status).toBe("failed");
+    expect(run.error).toMatch(/系統無法連線|連線被拒/);
+
+    const detail = await api(app).get(`/api/runs/${run.id}`).set("Cookie", viewer).expect(200);
+    const done = detail.body.cases.filter((c: { queueStatus: string }) => c.queueStatus === "done");
+    const skipped = detail.body.cases.filter((c: { queueStatus: string }) => c.queueStatus === "skipped");
+    // Only the first case ran (blocked); the rest were skipped, not executed.
+    expect(done).toHaveLength(1);
+    expect(done[0].result.verdict).toBe("blocked");
+    expect(skipped.length).toBeGreaterThanOrEqual(caseIds.length - 1);
+
+    // A critical finding records why everything stopped.
+    const finding = await prisma.runFinding.findFirst({ where: { runId: run.id, severity: "critical" } });
+    expect(finding?.title).toMatch(/系統無法連線/);
+  }, 60_000);
+
+  // A run can change the target's own state; a credential is part of that state.
+  // When a case changes one, the stored value must follow so the next login works.
+  describe("credential rotation keeps the stored value in sync", () => {
+    let rotCaseId: string;
+
+    beforeAll(async () => {
+      // A rotatable credential and a non-rotatable one to prove the guard.
+      await api(app).put(`/api/targets/${targetId}/credentials`).set("Cookie", owner)
+        .send({ key: "user_pw", value: "old-password-123", allowRotation: true }).expect(200);
+      const c = await api(app).post(`/api/targets/${targetId}/test-cases`).set("Cookie", editor)
+        .send({ title: "改 user 密碼", steps: ["以 admin 改掉 user 的密碼"], expected: "密碼變更成功", priority: "P1" }).expect(201);
+      rotCaseId = c.body.id;
+    });
+
+    it("syncs the stored credential to the new value after a 2xx change", async () => {
+      stubModel((call) => {
+        if (call === 1) return { type: "rotate_credential", params: { credential: "user_pw" } };
+        if (call === 2) return { type: "http_request", params: { method: "PUT", path: "/users/1/password", body: { password: "{{user_pw__next}}" } } };
+        return null;
+      });
+      await api(app).post(`/api/targets/${targetId}/runs`).set("Cookie", editor).send({ caseIds: [rotCaseId] }).expect(201);
+      const run = await waitForRun(["succeeded", "failed"]);
+      expect(run.status).toBe("succeeded");
+
+      // The stored value changed, and it is exactly what the target received —
+      // the harness-generated value, never one the model invented.
+      const stored = (await app.get(TargetsService).decryptedCredentials(targetId))["user_pw"];
+      expect(stored).not.toBe("old-password-123");
+      const put = requests.find((r) => r.method === "PUT" && r.url === "/users/1/password");
+      expect(put).toBeDefined();
+      expect(JSON.parse(put!.body)).toEqual({ password: stored });
+
+      const detail = await api(app).get(`/api/runs/${run.id}`).set("Cookie", viewer).expect(200);
+      const evidence = detail.body.cases[0].result.evidence;
+      expect(evidence.rotations?.[0]).toMatchObject({ credential: "user_pw", committed: true });
+      // The new secret is masked everywhere in the run detail — it never leaks.
+      expect(JSON.stringify(detail.body)).not.toContain(stored);
+    }, 60_000);
+
+    it("refuses to rotate a credential that is not marked rotatable, leaving it untouched", async () => {
+      stubModel((call) => (call === 1 ? { type: "rotate_credential", params: { credential: "token" } } : null));
+      await api(app).post(`/api/targets/${targetId}/runs`).set("Cookie", editor).send({ caseIds: [rotCaseId] }).expect(201);
+      const run = await waitForRun(["succeeded", "failed"]);
+      expect(run.status).toBe("succeeded");
+
+      expect((await app.get(TargetsService).decryptedCredentials(targetId))["token"]).toBe("super-secret-token");
+      const detail = await api(app).get(`/api/runs/${run.id}`).set("Cookie", viewer).expect(200);
+      expect(detail.body.cases[0].result.evidence.rotations).toBeUndefined();
     }, 60_000);
   });
 });

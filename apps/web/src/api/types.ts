@@ -1122,7 +1122,7 @@ export interface ExploreDetail {
 /** Live SSE payload from POST /targets/:id/explore. */
 export type ExploreEvent =
   | { type: "started"; runId: string; target: string; identities: string[] }
-  | { type: "phase"; phase: "crawl" | "rwd" | "synthesis"; message: string }
+  | { type: "phase"; phase: "crawl" | "access" | "rwd" | "synthesis"; message: string }
   | { type: "login"; identity: string; ok: boolean; message: string }
   | { type: "visit"; identity: string; routeKey: string; depth: number; denied: boolean; nodes: number }
   | { type: "rwd"; routeKey: string; breakpoint: string; issues: number }

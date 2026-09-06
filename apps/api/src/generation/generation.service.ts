@@ -663,7 +663,7 @@ function normalise(s: string): string {
  * word tokens do not work for Chinese, which has no spaces, and word-level
  * comparison in English weighs a single differing verb far too lightly.
  */
-function tokenise(s: string): Set<string> {
+export function tokenise(s: string): Set<string> {
   const compact = s.toLowerCase().replace(/[\p{P}\s]+/gu, "");
   if (compact.length < 2) return new Set([compact]);
   const grams = new Set<string>();
@@ -671,7 +671,7 @@ function tokenise(s: string): Set<string> {
   return grams;
 }
 
-function jaccard(a: Set<string>, b: Set<string>): number {
+export function jaccard(a: Set<string>, b: Set<string>): number {
   if (!a.size || !b.size) return 0;
   let shared = 0;
   for (const t of a) if (b.has(t)) shared++;

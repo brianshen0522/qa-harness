@@ -26,6 +26,7 @@ class ExploreDto {
   @IsOptional() @IsArray() @IsString({ each: true }) seeds?: string[];
   @IsOptional() @IsBoolean() doRwd?: boolean;
   @IsOptional() @IsBoolean() doSynthesis?: boolean;
+  @IsOptional() @IsBoolean() doAccessProbe?: boolean;
   @IsOptional() @IsInt() @Min(0) @Max(40) deepBudget?: number;
   @IsOptional() @IsArray() @IsString({ each: true }) avoid?: string[];
 }

@@ -174,6 +174,17 @@ export class Crawler {
   }
 
   /** A page that redirected to login, or shows an access-denied shell. */
+  /** Actively test whether the currently logged-in identity can reach a route.
+   *  Used for the cross-identity permission probe: navigate and classify the
+   *  landing as granted or denied (a redirect to /login or a 403 page = denied). */
+  async checkAccess(url: string, routeKey: string): Promise<{ denied: boolean; probe: PageProbe | null }> {
+    const probe = await this.computer.cdpNavigate(this.port, url, 700);
+    if (!probe) return { denied: false, probe: null };
+    const landed = normalizeRoute(probe.url, this.baseUrl);
+    const redirected = !!landed && landed.key !== routeKey;
+    return { denied: this.looksDenied(probe, landed?.key ?? routeKey) || redirected, probe };
+  }
+
   private looksDenied(probe: PageProbe, routeKey: string): boolean {
     const landedPath = safePath(probe.url);
     if (/\/login$/.test(landedPath) && !/\/login$/.test(routeKey)) return true;

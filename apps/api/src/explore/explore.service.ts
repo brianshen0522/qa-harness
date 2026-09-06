@@ -15,6 +15,7 @@ import { IdentitiesService } from "./identities.service";
 import { Crawler, type CrawlIdentity, type CrawlLimits, type VisitResult } from "./crawler";
 import { DEFAULT_BREAKPOINTS, rwdIssues, type Breakpoint } from "./rwd";
 import { buildMatrix, type PermissionMatrix } from "./permission-matrix";
+import { DUPLICATE_THRESHOLD, jaccard, tokenise } from "../generation/generation.service";
 import {
   deepContext, DEEP_SYSTEM, permissionContext, SYNTH_SYSTEM, synthesisContext, type NodeForSynthesis,
 } from "./explore-prompts";
@@ -22,7 +23,7 @@ import { normalizeRoute } from "./route-key";
 
 export type ExploreEvent =
   | { type: "started"; runId: string; target: string; identities: string[] }
-  | { type: "phase"; phase: "crawl" | "rwd" | "synthesis"; message: string }
+  | { type: "phase"; phase: "crawl" | "access" | "rwd" | "synthesis"; message: string }
   | { type: "login"; identity: string; ok: boolean; message: string }
   | { type: "visit"; identity: string; routeKey: string; depth: number; denied: boolean; nodes: number }
   | { type: "interact"; identity: string; routeKey: string; opener: string; found: string }
@@ -50,6 +51,9 @@ export interface ExploreConfig {
   /** Openers to click per page, and across the whole run. */
   interactPerPage: number;
   interactBudget: number;
+  /** Actively test each identity against routes it did not reach (fills the matrix / catches 越權). */
+  doAccessProbe: boolean;
+  accessProbeBudget: number;
 }
 
 export interface ExploreStats {
@@ -149,6 +153,8 @@ export class ExploreService implements OnModuleInit {
       doInteract: partial.doInteract ?? true,
       interactPerPage: partial.interactPerPage ?? 8,
       interactBudget: partial.interactBudget ?? 60,
+      doAccessProbe: partial.doAccessProbe ?? true,
+      accessProbeBudget: partial.accessProbeBudget ?? 150,
     };
 
     if (!(await acquireTargetLock(this.prisma, targetId))) {
@@ -261,6 +267,15 @@ export class ExploreService implements OnModuleInit {
         );
       }
 
+      // ---------- stage B\': active cross-identity access probing ----------
+      // Link-following only tests what each identity can already see. To fill the
+      // permission matrix (and actually catch 越權), each identity now actively tries
+      // the routes it did not reach; we record granted / denied.
+      if (config.doAccessProbe && !record.abort.signal.aborted) {
+        this.publish(record, { type: "phase", phase: "access", message: "主動測試各身份的越權存取" });
+        await this.probeAccess(record, crawler, port, baseUrl, identities, config.accessProbeBudget);
+      }
+
       // ---------- stage C: RWD ----------
       if (config.doRwd && !record.abort.signal.aborted) {
         this.publish(record, { type: "phase", phase: "rwd", message: "各斷點掃描 RWD" });
@@ -296,6 +311,48 @@ export class ExploreService implements OnModuleInit {
   }
 
   // ---------- crawl persistence ----------
+
+  /** Stage B': each identity actively visits routes it did not reach during its own
+   *  crawl, so the permission matrix has real granted/denied data instead of gaps. */
+  private async probeAccess(record: ActiveRun, crawler: Crawler, port: number, baseUrl: string, identities: CrawlIdentity[], budget: number) {
+    const nodes = await this.prisma.siteNode.findMany({
+      where: { runId: record.runId, kind: { in: ["page", "form"] } },
+      select: { id: true, routeKey: true, sampleUrl: true, reachableBy: true, deniedFor: true },
+    });
+    if (!nodes.length) return;
+    let left = budget;
+    for (const identity of identities) {
+      if (record.abort.signal.aborted || left <= 0) break;
+      await this.resetBrowser(port, baseUrl);
+      const ok = await crawler.login(identity, (e) => {
+        if (e.type === "login") this.publish(record, { type: "login", identity: identity.name, ok: e.ok, message: e.message });
+      });
+      if (!ok && !identity.isAnonymous) continue;
+      for (const node of nodes) {
+        if (record.abort.signal.aborted || left <= 0) break;
+        // Skip routes we already know this identity can / cannot reach.
+        if (node.reachableBy.includes(identity.role) || node.deniedFor.includes(identity.role)) continue;
+        left--;
+        const { denied, probe } = await crawler.checkAccess(node.sampleUrl, node.routeKey);
+        if (!probe) continue; // could not load; leave untested rather than guess
+        const reachable = new Set(node.reachableBy);
+        const den = new Set(node.deniedFor);
+        if (denied) den.add(identity.role); else reachable.add(identity.role);
+        node.reachableBy = [...reachable];
+        node.deniedFor = [...den];
+        await this.prisma.siteNode.update({ where: { id: node.id }, data: { reachableBy: node.reachableBy, deniedFor: node.deniedFor } });
+        await this.prisma.siteObservation.create({
+          data: {
+            runId: record.runId, nodeId: node.id, identityId: identity.id,
+            kind: denied ? ObservationKind.access_denied : ObservationKind.page_snapshot,
+            data: probeToJson(probe) as Prisma.InputJsonValue,
+            note: denied ? `${identity.name} 被擋在 ${node.routeKey}(主動測試)` : `${identity.name} 可存取 ${node.routeKey}(主動測試)`,
+          },
+        });
+        this.publish(record, { type: "visit", identity: identity.name, routeKey: node.routeKey, depth: 0, denied, nodes: await this.prisma.siteNode.count({ where: { runId: record.runId } }) });
+      }
+    }
+  }
 
   private async recordVisit(runId: string, identity: CrawlIdentity, visit: VisitResult) {
     const node = await this.upsertNode(runId, visit.routeKey, visit.sampleUrl, visit.probe.title, visit.depth);
@@ -636,6 +693,20 @@ export class ExploreService implements OnModuleInit {
     // Feed the system's own description (what it does + who the roles are, from the
     // handoff/discussion) into synthesis, so cases reflect purpose and per-role
     // behaviour — not just the page structure that was crawled.
+    // Cross-route de-dup: per-route synthesis tends to repeat the same case on
+    // sibling pages (user profile vs admin account). Fuzzy-match against everything
+    // kept so far (§#2).
+    const fingerprints: Set<string>[] = [];
+    const dedupe = (cases: GeneratedCase[]) => {
+      const out: GeneratedCase[] = [];
+      for (const c of cases) {
+        const t = tokenise(`${c.title} ${c.expected}`);
+        if (fingerprints.some((prev) => jaccard(prev, t) >= DUPLICATE_THRESHOLD)) continue;
+        fingerprints.push(t);
+        out.push(c);
+      }
+      return out;
+    };
     const desc = target.description?.trim();
     const sys = desc
       ? `${SYNTH_SYSTEM}\n\n## 這個系統在做什麼(依描述/交接,可能比掃描更懂它的目的與角色)\n${desc.slice(0, 5000)}\n\n出題時請「結合」系統的目的、各角色實際會做的事,與這個頁面掃到的真實結構——不要只看結構,也要想這個頁面對應到哪個角色的哪個任務。`
@@ -666,16 +737,18 @@ export class ExploreService implements OnModuleInit {
       };
       const cases = await this.callSynth(record, sys, synthesisContext(nodeForSynth, baseUrl));
       if (cases === null) return total; // cancelled while parked
-      total += await this.persistCases(targetId, userId, descriptionVersion, cases, node.routeKey);
-      this.publish(record, { type: "synth", routeKey: node.routeKey, cases: cases.length });
+      const kept = dedupe(cases);
+      total += await this.persistCases(targetId, userId, descriptionVersion, kept, node.routeKey);
+      this.publish(record, { type: "synth", routeKey: node.routeKey, cases: kept.length });
     }
 
     // One dedicated call for cross-identity access, from the matrix.
     if (matrix.rows.length && matrix.identities.length > 1 && !record.abort.signal.aborted) {
       const cases = await this.callSynth(record, sys, permissionContext(matrix, baseUrl));
       if (cases) {
-        total += await this.persistCases(targetId, userId, descriptionVersion, cases, "權限控制");
-        this.publish(record, { type: "synth", routeKey: "權限控制", cases: cases.length });
+        const kept = dedupe(cases);
+        total += await this.persistCases(targetId, userId, descriptionVersion, kept, "權限控制");
+        this.publish(record, { type: "synth", routeKey: "權限控制", cases: kept.length });
       }
     }
     return total;

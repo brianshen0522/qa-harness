@@ -139,6 +139,7 @@ function IdentitiesCard({ targetId, canEdit }: { targetId: string; canEdit: bool
   const qc = useQueryClient();
   const list = useQuery({ queryKey: identitiesKey(targetId), queryFn: () => api<IdentityList>(`/targets/${targetId}/identities`) });
   const [adding, setAdding] = useState(false);
+  const [editing, setEditing] = useState<TargetIdentity | null>(null);
 
   const remove = useMutation({
     mutationFn: (id: string) => api(`/identities/${id}`, { method: "DELETE" }),
@@ -165,50 +166,56 @@ function IdentitiesCard({ targetId, canEdit }: { targetId: string; canEdit: bool
                 {i.isAnonymous ? <span className="text-xs text-gray-400 dark:text-gray-500">未登入</span>
                   : <span className="text-xs text-gray-400 dark:text-gray-500">憑證：{i.credentialKeys.join("、") || "（未設定）"}</span>}
                 {canEdit && (
-                  <Button variant="ghost" size="sm" className="ml-auto" onClick={() => remove.mutate(i.id)} disabled={remove.isPending}>
-                    刪除
-                  </Button>
+                  <div className="ml-auto flex gap-1">
+                    <Button variant="ghost" size="sm" onClick={() => setEditing(i)}>編輯</Button>
+                    <Button variant="ghost" size="sm" onClick={() => remove.mutate(i.id)} disabled={remove.isPending}>刪除</Button>
+                  </div>
                 )}
               </li>
             ))}
           </ul>
         )
       )}
-      {adding && (
+      {(adding || editing) && (
         <IdentityDialog
           targetId={targetId}
+          identity={editing}
           credentialKeys={list.data?.credentialKeys ?? []}
-          onClose={() => setAdding(false)}
-          onSaved={() => { setAdding(false); void qc.invalidateQueries({ queryKey: identitiesKey(targetId) }); }}
+          onClose={() => { setAdding(false); setEditing(null); }}
+          onSaved={() => { setAdding(false); setEditing(null); void qc.invalidateQueries({ queryKey: identitiesKey(targetId) }); }}
         />
       )}
     </Card>
   );
 }
 
-function IdentityDialog({ targetId, credentialKeys, onClose, onSaved }: {
-  targetId: string; credentialKeys: string[]; onClose: () => void; onSaved: () => void;
+function IdentityDialog({ targetId, identity, credentialKeys, onClose, onSaved }: {
+  targetId: string; identity?: TargetIdentity | null; credentialKeys: string[]; onClose: () => void; onSaved: () => void;
 }) {
-  const [name, setName] = useState("");
-  const [role, setRole] = useState("user");
-  const [anon, setAnon] = useState(false);
-  const [userKey, setUserKey] = useState("");
-  const [passKey, setPassKey] = useState("");
-  const [loginPath, setLoginPath] = useState("/login");
-  const [submitText, setSubmitText] = useState("Sign In");
+  const editing = !!identity;
+  const cfg = (identity?.loginConfig ?? {}) as Record<string, string>;
+  const [name, setName] = useState(identity?.name ?? "");
+  const [role, setRole] = useState(identity?.role ?? "user");
+  const [anon, setAnon] = useState(identity?.isAnonymous ?? false);
+  const [userKey, setUserKey] = useState(cfg.userKey ?? identity?.credentialKeys?.[0] ?? "");
+  const [passKey, setPassKey] = useState(cfg.passKey ?? identity?.credentialKeys?.[1] ?? "");
+  const [loginPath, setLoginPath] = useState(cfg.loginPath ?? "/login");
+  const [submitText, setSubmitText] = useState(cfg.submitText ?? "Sign In");
 
   const save = useMutation({
-    mutationFn: () => api<TargetIdentity>(`/targets/${targetId}/identities`, {
-      method: "POST",
-      body: anon
-        ? { name, role, isAnonymous: true }
-        : { name, role, credentialKeys: [userKey, passKey].filter(Boolean), loginConfig: { loginPath, userKey, passKey, submitText } },
-    }),
+    mutationFn: () => {
+      const body = anon
+        ? { name, role, isAnonymous: true, credentialKeys: [] }
+        : { name, role, isAnonymous: false, credentialKeys: [userKey, passKey].filter(Boolean), loginConfig: { ...cfg, loginPath, userKey, passKey, submitText } };
+      return editing
+        ? api<TargetIdentity>(`/identities/${identity!.id}`, { method: "PATCH", body })
+        : api<TargetIdentity>(`/targets/${targetId}/identities`, { method: "POST", body });
+    },
     onSuccess: onSaved,
   });
 
   return (
-    <Dialog open title="新增身份" onClose={onClose}>
+    <Dialog open title={editing ? "編輯身份" : "新增身份"} onClose={onClose}>
       <div className="space-y-2">
         <Field label="名稱"><Input value={name} onChange={(e) => setName(e.target.value)} placeholder="例如 管理員 / 一般會員 / 訪客" /></Field>
         <Field label="角色標籤" hint="給權限矩陣比對用，例如 admin / member / guest">
@@ -243,7 +250,7 @@ function IdentityDialog({ targetId, credentialKeys, onClose, onSaved }: {
         )}
         <div className="flex items-center gap-2">
           <Button onClick={() => save.mutate()} disabled={save.isPending || !name.trim() || (!anon && (!userKey || !passKey))}>
-            {save.isPending ? "建立中…" : "建立"}
+            {save.isPending ? "儲存中…" : editing ? "儲存" : "建立"}
           </Button>
           <Button variant="ghost" onClick={onClose}>取消</Button>
         </div>
@@ -346,6 +353,13 @@ function Results({ detail, targetId }: { detail: ExploreDetail; targetId: string
         {detail.run.startedAt && <p className="mt-2 text-xs text-gray-400 dark:text-gray-500">{formatDate(detail.run.startedAt)}</p>}
         {detail.run.error && <p className="mt-1 text-xs text-red-600 dark:text-red-400">{detail.run.error}</p>}
       </Card>
+
+      {detail.identities.some((i) => i.loginFailed) && (
+        <Notice tone="red">
+          以下身份<b>登入失敗</b>，它們的覆蓋與權限結果並不可信（很可能是帳密不對或帳號不存在，請到「總覽」確認憑證）：
+          {" "}{detail.identities.filter((i) => i.loginFailed).map((i) => `${i.name}（${i.role}）`).join("、")}
+        </Notice>
+      )}
 
       <PermissionMatrix detail={detail} />
 

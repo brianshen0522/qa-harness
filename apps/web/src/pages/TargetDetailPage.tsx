@@ -169,6 +169,7 @@ export default function TargetDetailPage() {
               onSave={(content) => saveDescription.mutate(content)}
               saving={saveDescription.isPending}
               error={saveDescription.error}
+              historyHref={`/targets/${t.id}?tab=changes`}
             />
           </Card>
         </div>

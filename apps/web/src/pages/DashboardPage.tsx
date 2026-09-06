@@ -1,27 +1,40 @@
-import { Link } from "react-router-dom";
+import { useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../api/client";
 import type { Overview, OverviewTarget, Verdicts } from "../api/types";
 import { Badge, Card, Empty, ErrorText, KindBadge, Spinner } from "../components/ui";
+
+type DashFilter = "active" | "failing" | "outdated" | "findings" | null;
 
 function passRate(v: Verdicts): number | null {
   const judged = v.pass + v.fail + v.blocked;
   return judged ? Math.round((v.pass / judged) * 100) : null;
 }
 
-function StatTile({ label, value, tone }: { label: string; value: number; tone: "gray" | "amber" | "red" | "blue" }) {
+function StatTile({ label, value, tone, active, onClick }: { label: string; value: number; tone: "gray" | "amber" | "red" | "blue"; active?: boolean; onClick?: () => void }) {
   const color =
     tone === "red" ? "text-red-600 dark:text-red-400" : tone === "amber" ? "text-amber-700 dark:text-amber-300" : tone === "blue" ? "text-blue-600 dark:text-blue-400" : "text-gray-800 dark:text-gray-100";
+  const clickable = !!onClick && value > 0;
   return (
-    <div className="rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-700 dark:bg-gray-900">
+    <button
+      type="button"
+      onClick={clickable ? onClick : undefined}
+      aria-pressed={active}
+      className={`rounded-lg border bg-white p-4 text-left transition-colors dark:bg-gray-900 ${
+        active ? "border-blue-500 dark:border-blue-400" : "border-gray-200 dark:border-gray-700"
+      } ${clickable ? "cursor-pointer hover:border-gray-400 dark:hover:border-gray-500" : "cursor-default"}`}
+    >
       <div className={`text-2xl font-bold ${color}`}>{value}</div>
-      <div className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">{label}</div>
-    </div>
+      <div className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">{label}{clickable && <span className="ml-1 opacity-60">{active ? "✕" : "→"}</span>}</div>
+    </button>
   );
 }
 
 function TargetRow({ t }: { t: OverviewTarget }) {
   const rate = t.lastRun ? passRate(t.lastRun.verdicts) : null;
+  const navigate = useNavigate();
+  const go = (e: React.MouseEvent, tab: string) => { e.preventDefault(); e.stopPropagation(); navigate(`/targets/${t.id}?tab=${tab}`); };
   return (
     <Link
       to={`/targets/${t.id}?tab=runs`}
@@ -36,8 +49,8 @@ function TargetRow({ t }: { t: OverviewTarget }) {
             執行中 {t.activeRun.done}/{t.activeRun.total}
           </Badge>
         )}
-        {t.outdatedCases > 0 && <Badge tone="amber">待處理 {t.outdatedCases}</Badge>}
-        {t.openFindings > 0 && <Badge tone="purple">Finding {t.openFindings}</Badge>}
+        {t.outdatedCases > 0 && <button type="button" onClick={(e) => go(e, "cases")} title="看測試清單"><Badge tone="amber">待處理 {t.outdatedCases}</Badge></button>}
+        {t.openFindings > 0 && <button type="button" onClick={(e) => go(e, "findings")} title="看 Finding"><Badge tone="purple">Finding {t.openFindings}</Badge></button>}
         {t.lastRun ? (
           <span className="flex items-center gap-1.5 text-xs">
             <span className={rate !== null && rate < 100 ? "text-red-600 dark:text-red-400" : "text-green-600 dark:text-green-400"}>
@@ -56,8 +69,24 @@ function TargetRow({ t }: { t: OverviewTarget }) {
   );
 }
 
+const FILTER_LABEL: Record<Exclude<DashFilter, null>, string> = {
+  active: "執行中", failing: "有失敗的", outdated: "有待處理案例的", findings: "有未處理 Finding 的",
+};
+
+function matchesFilter(t: OverviewTarget, f: DashFilter): boolean {
+  switch (f) {
+    case "active": return !!t.activeRun;
+    case "failing": return !!t.lastRun && t.lastRun.verdicts.fail > 0;
+    case "outdated": return t.outdatedCases > 0;
+    case "findings": return t.openFindings > 0;
+    default: return true;
+  }
+}
+
 export default function DashboardPage() {
   const q = useQuery({ queryKey: ["me", "overview"], queryFn: () => api<Overview>("/me/overview"), refetchInterval: 15000 });
+  const [filter, setFilter] = useState<DashFilter>(null);
+  const toggle = (f: Exclude<DashFilter, null>) => setFilter((cur) => (cur === f ? null : f));
 
   return (
     <div className="space-y-4">
@@ -66,28 +95,33 @@ export default function DashboardPage() {
       {q.isPending && <Spinner />}
       <ErrorText error={q.error} />
 
-      {q.data && (
-        <>
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-            <StatTile label="執行中" value={q.data.totals.activeRuns} tone="amber" />
-            <StatTile label="有失敗的 Target" value={q.data.totals.failingTargets} tone="red" />
-            <StatTile label="待處理案例" value={q.data.totals.outdatedCases} tone="amber" />
-            <StatTile label="未處理 Finding" value={q.data.totals.openFindings} tone="blue" />
-          </div>
+      {q.data && (() => {
+        const shown = q.data.targets.filter((t) => matchesFilter(t, filter));
+        return (
+          <>
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+              <StatTile label="執行中" value={q.data.totals.activeRuns} tone="amber" active={filter === "active"} onClick={() => toggle("active")} />
+              <StatTile label="有失敗的 Target" value={q.data.totals.failingTargets} tone="red" active={filter === "failing"} onClick={() => toggle("failing")} />
+              <StatTile label="待處理案例" value={q.data.totals.outdatedCases} tone="amber" active={filter === "outdated"} onClick={() => toggle("outdated")} />
+              <StatTile label="未處理 Finding" value={q.data.totals.openFindings} tone="blue" active={filter === "findings"} onClick={() => toggle("findings")} />
+            </div>
 
-          <Card title="我的 Targets">
-            {q.data.targets.length === 0 ? (
-              <Empty>你還沒有任何 Target。到 Projects 建一個開始。</Empty>
-            ) : (
-              <div className="-mx-4 -mb-4">
-                {q.data.targets.map((t) => (
-                  <TargetRow key={t.id} t={t} />
-                ))}
-              </div>
-            )}
-          </Card>
-        </>
-      )}
+            <Card title={filter ? `${FILTER_LABEL[filter]} Targets（${shown.length}）` : "我的 Targets"}>
+              {q.data.targets.length === 0 ? (
+                <Empty>你還沒有任何 Target。到 Projects 建一個開始。</Empty>
+              ) : shown.length === 0 ? (
+                <Empty>沒有符合「{FILTER_LABEL[filter!]}」的 Target。</Empty>
+              ) : (
+                <div className="-mx-4 -mb-4">
+                  {shown.map((t) => (
+                    <TargetRow key={t.id} t={t} />
+                  ))}
+                </div>
+              )}
+            </Card>
+          </>
+        );
+      })()}
     </div>
   );
 }

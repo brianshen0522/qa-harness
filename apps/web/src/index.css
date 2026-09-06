@@ -44,3 +44,24 @@ body {
 .toast-in {
   animation: toast-in 0.2s ease;
 }
+
+/* Rendered markdown (description preview, handoff). Scoped to .md-body. */
+.md-body { @apply text-sm leading-relaxed text-gray-700 dark:text-gray-200; }
+.md-body h1 { @apply mt-4 mb-2 text-lg font-bold text-gray-900 dark:text-gray-100; }
+.md-body h2 { @apply mt-4 mb-2 text-base font-bold text-gray-900 dark:text-gray-100; }
+.md-body h3 { @apply mt-3 mb-1 text-sm font-semibold text-gray-900 dark:text-gray-100; }
+.md-body h4, .md-body h5, .md-body h6 { @apply mt-3 mb-1 text-sm font-semibold; }
+.md-body p { @apply my-2; }
+.md-body ul { @apply my-2 list-disc pl-5; }
+.md-body ol { @apply my-2 list-decimal pl-5; }
+.md-body li { @apply my-0.5; }
+.md-body a { @apply text-blue-600 underline dark:text-blue-400; }
+.md-body code { @apply rounded bg-gray-100 px-1 py-0.5 font-mono text-[0.85em] dark:bg-gray-800; }
+.md-body pre { @apply my-2 overflow-x-auto rounded-md bg-gray-100 p-3 dark:bg-gray-800; }
+.md-body pre code { @apply bg-transparent p-0; }
+.md-body blockquote { @apply my-2 border-l-4 border-gray-300 pl-3 text-gray-600 dark:border-gray-600 dark:text-gray-400; }
+.md-body hr { @apply my-3 border-gray-200 dark:border-gray-700; }
+.md-body table { @apply my-2 block w-max max-w-full border-collapse overflow-x-auto text-xs; }
+.md-body th, .md-body td { @apply border border-gray-200 px-2 py-1 text-left align-top dark:border-gray-700; }
+.md-body th { @apply bg-gray-50 font-semibold dark:bg-gray-800/60; }
+.md-body strong { @apply font-semibold text-gray-900 dark:text-gray-100; }

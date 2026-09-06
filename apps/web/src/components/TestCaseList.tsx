@@ -66,6 +66,11 @@ const UNASSIGNED = "__unassigned__";
  * whole panel keys off `target.myRole` / `target.locked` from the list payload.
  */
 export function TestCaseList({ targetId }: { targetId: string }) {
+  // Identities a case can be bound to (so the run logs in as the right user).
+  const identities = useQuery({
+    queryKey: ["target", targetId, "identities"],
+    queryFn: () => api<{ identities: { id: string; name: string; role: string }[] }>(`/targets/${targetId}/identities`),
+  });
   const qc = useQueryClient();
   const list = useQuery({
     queryKey: listKey(targetId),
@@ -391,6 +396,7 @@ export function TestCaseList({ targetId }: { targetId: string }) {
                           key={c.id}
                           targetId={targetId}
                           testCase={c}
+                          identityName={identities.data?.identities.find((i) => i.id === c.identityId)?.name}
                           open={openCases.has(c.id)}
                           selected={selected.has(c.id)}
                           canEdit={canEdit}
@@ -416,6 +422,7 @@ export function TestCaseList({ targetId }: { targetId: string }) {
           mode={editing.mode}
           initial={editing.testCase}
           features={features}
+          identities={identities.data?.identities ?? []}
           pending={saveCase.isPending}
           error={saveCase.error}
           onClose={() => setEditing(null)}
@@ -504,6 +511,7 @@ function PriorityBadge({ priority }: { priority: Priority }) {
 function CaseRow({
   targetId,
   testCase,
+  identityName,
   open,
   selected,
   canEdit,
@@ -515,6 +523,7 @@ function CaseRow({
 }: {
   targetId: string;
   testCase: TestCase;
+  identityName?: string;
   open: boolean;
   selected: boolean;
   canEdit: boolean;
@@ -543,6 +552,7 @@ function CaseRow({
             <Badge tone={CASE_TYPE_TONE[c.type]}>{CASE_TYPE_LABEL[c.type]}</Badge>
             <Badge tone={CASE_STATUS_TONE[c.status]}>{CASE_STATUS_LABEL[c.status]}</Badge>
             <span className="text-sm font-medium text-gray-800 dark:text-gray-100">{c.title}</span>
+            {c.identityId && identityName && <Badge tone="purple">{identityName}</Badge>}
             {c.setupNote?.trim() && <Badge tone="amber">需前置</Badge>}
             <span className="text-xs text-gray-400 dark:text-gray-500">{CASE_SOURCE_LABEL[c.source]}</span>
           </span>
@@ -1027,6 +1037,7 @@ function CaseDialog({
   mode,
   initial,
   features,
+  identities,
   pending,
   error,
   onClose,
@@ -1035,6 +1046,7 @@ function CaseDialog({
   mode: "create" | "edit";
   initial: TestCase | null;
   features: Feature[];
+  identities: { id: string; name: string; role: string }[];
   pending: boolean;
   error: unknown;
   onClose: () => void;
@@ -1046,6 +1058,7 @@ function CaseDialog({
   const [type, setType] = useState<CaseType>(initial?.type ?? "happy");
   const [precondition, setPrecondition] = useState(initial?.precondition ?? "");
   const [setupNote, setSetupNote] = useState(initial?.setupNote ?? "");
+  const [identityId, setIdentityId] = useState(initial?.identityId ?? "");
   const [steps, setSteps] = useState<string[]>(initial?.steps.length ? [...initial.steps] : [""]);
   const [expected, setExpected] = useState(initial?.expected ?? "");
   const [localError, setLocalError] = useState<string | null>(null);
@@ -1073,6 +1086,7 @@ function CaseDialog({
     setLocalError(null);
     onSubmit({
       title: title.trim(),
+      identityId: identityId || null,
       precondition: precondition.trim(),
       setupNote: setupNote.trim(),
       steps: cleanSteps,
@@ -1121,6 +1135,13 @@ function CaseDialog({
               </Select>
             </Field>
           </div>
+
+          <Field label="執行身份" hint="選填。綁定後，執行時會自動以這個身份登入，而且只會拿到該身份的憑證——避免拿錯帳號。">
+            <Select value={identityId} onChange={(e) => setIdentityId(e.target.value)}>
+              <option value="">（不指定，沿用整包憑證）</option>
+              {identities.map((i) => <option key={i.id} value={i.id}>{i.name}（{i.role}）</option>)}
+            </Select>
+          </Field>
 
           <Field label="前置條件" hint="選填。執行這條案例前必須成立的狀態。">
             <Textarea rows={2} value={precondition} onChange={(e) => setPrecondition(e.target.value)} />

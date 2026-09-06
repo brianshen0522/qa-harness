@@ -527,6 +527,10 @@ model TestCase {
   targetId                  String     @map("target_id")
   featureId                 String?    @map("feature_id")
   title                     String
+  /// Which identity this case runs as. When set, the run logs in as that identity
+  /// before the case and only exposes that identity's credentials — so a
+  /// role-specific case can't silently be executed with the wrong account.
+  identityId                String?    @map("identity_id")
   precondition              String     @default("")
   /// Data/state the case needs set up beforehand that a single automated run
   /// cannot create (e.g. "a DISABLED account must exist"). Shown to the agent and
@@ -548,6 +552,7 @@ model TestCase {
 
   target    QaTarget          @relation(fields: [targetId], references: [id], onDelete: Cascade)
   feature   Feature?          @relation(fields: [featureId], references: [id], onDelete: SetNull)
+  identity  TargetIdentity?   @relation(fields: [identityId], references: [id], onDelete: SetNull)
   versions  TestCaseVersion[]
   queueRows RunCaseQueue[]
   results   TestResult[]
@@ -926,6 +931,7 @@ model TargetIdentity {
 
   target       QaTarget          @relation(fields: [targetId], references: [id], onDelete: Cascade)
   observations SiteObservation[]
+  testCases    TestCase[]
 
   @@unique([targetId, name])
   @@map("target_identities")

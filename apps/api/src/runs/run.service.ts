@@ -24,6 +24,7 @@ import { ApiSetupService, type SetupStep } from "./api-setup.service";
 import {
   generateSecret, rotationPlaceholderKey, isRotationPlaceholderKey, usedRotationKeys, httpStatusOf, isAppliedStatus,
 } from "./credential-rotation";
+import { Crawler, type CrawlIdentity } from "../explore/crawler";
 import { acquireTargetLock, busyMessage, targetLockHolder } from "../targets/target-lock";
 import { fenceUntrusted } from "../common/untrusted";
 import { SCREENSHOT_WINDOW, buildMessages, maskSecrets, summariseProbe } from "./run-utils";
@@ -331,6 +332,9 @@ export class RunService implements OnModuleInit {
     const credentials = await this.targets.decryptedCredentials(record.targetId);
     const rotatableKeys = await this.targets.rotatableCredentialKeys(record.targetId);
     const credMeta = await this.targets.credentialMeta(record.targetId);
+    // Identities a case can be bound to, with their credentials resolved.
+    const identityById = await this.resolveIdentities(record.targetId, credentials);
+    const allCredentialRefs = new Set(credMeta.flatMap((c) => c.refs));
     // §4.5: global + project house rules fold into every case's system prompt.
     const skillsBlock = await this.skills.promptBlock(target.projectId);
     // §6.2 MCP: tools from enabled global + project servers, offered to the agent.
@@ -487,6 +491,32 @@ export class RunService implements OnModuleInit {
           if (extra && Object.keys(extra).length) {
             caseCreds = { ...credentials, ...extra };
             casePrompt = { ...targetPrompt, credentialKeys: Object.keys(caseCreds) };
+          }
+        }
+
+        // A case bound to an identity runs *as* that identity: only that
+        // identity's credentials are exposed (so it cannot grab the admin
+        // account), and on a screen target we log in first, deterministically.
+        const identity = next.testCase.identityId ? identityById.get(next.testCase.identityId) ?? null : null;
+        if (identity) {
+          const setupVars = Object.fromEntries(Object.entries(caseCreds).filter(([k]) => !allCredentialRefs.has(k)));
+          caseCreds = { ...setupVars, ...identity.credentials };
+          casePrompt = {
+            ...casePrompt,
+            credentialKeys: Object.keys(caseCreds),
+            credentials: credMeta
+              .filter((c) => c.refs.some((r) => r in identity.credentials))
+              .map((c) => ({ name: c.name, typeLabel: credentialTypeLabel(c.type), description: c.description, refs: c.refs, rotatableRef: c.rotatableRef })),
+            identity: { name: identity.name, role: identity.role, isAnonymous: identity.isAnonymous },
+          };
+          if (needsSandbox && agentPort) {
+            const failure = await this.loginAs(identity, agentPort, target);
+            if (failure) {
+              await this.writeResult(record.runId, next.testCaseId, next.testCase.currentVersion, { verdict: Verdict.blocked, reasoning: failure, possiblyChanged: false, reproSteps: [], evidence: {}, stepCount: 0, durationMs: 0 });
+              this.publish(record, { type: "case_finished", caseId: next.testCaseId, verdict: Verdict.blocked, reasoning: failure, possiblyChanged: false, stepCount: 0, durationMs: 0 });
+              await this.prisma.runCaseQueue.update({ where: { runId_testCaseId: { runId: record.runId, testCaseId: next.testCaseId } }, data: { status: QueueStatus.done } });
+              return;
+            }
           }
         }
 
@@ -1040,6 +1070,41 @@ export class RunService implements OnModuleInit {
     } catch {
       return null;
     }
+  }
+
+  /**
+   * Identities a case can be bound to, with their credential refs resolved to
+   * values. Mirrors IdentitiesService.resolved — inlined because ExploreModule
+   * already imports RunsModule, so importing it back would be a cycle.
+   */
+  private async resolveIdentities(targetId: string, credentials: Record<string, string>): Promise<Map<string, CrawlIdentity>> {
+    const rows = await this.prisma.targetIdentity.findMany({ where: { targetId }, orderBy: { order: "asc" } });
+    return new Map(rows.map((i) => [i.id, {
+      id: i.id,
+      name: i.name,
+      role: i.role,
+      isAnonymous: i.isAnonymous,
+      credentials: Object.fromEntries(i.credentialKeys.map((k) => [k, credentials[k]]).filter(([, v]) => v !== undefined)) as Record<string, string>,
+      login: (i.loginConfig ?? {}) as CrawlIdentity["login"],
+    }]));
+  }
+
+  /**
+   * Put the browser in this identity's session before the case runs: clear the
+   * previous session, then log in through the real form (the same deterministic
+   * path the explorer uses). Returns null on success, or the reason to block.
+   */
+  private async loginAs(identity: CrawlIdentity, agentPort: number, target: { config: Prisma.JsonValue }): Promise<string | null> {
+    const url = String((target.config as Record<string, unknown>)?.url ?? "").trim();
+    if (!url) return `這條 case 綁定身份「${identity.name}」，但 Target 沒有設定 url，無法登入。`;
+    const baseUrl = toSandboxUrl(url);
+    await this.computer.cdpReset(agentPort).catch(() => undefined); // don't inherit the previous identity's session
+    let message = "";
+    const ok = await new Crawler(this.computer, agentPort, baseUrl)
+      .login(identity, (e) => { if (e.type === "login") message = e.message; })
+      .catch(() => false);
+    if (ok) return null;
+    return `以身份「${identity.name}」(${identity.role}) 登入失敗，無法執行這條 case：${message || "未知原因"}。請確認該身份的憑證是否正確、帳號是否存在。`;
   }
 
   /** Serialise rotation commits so concurrent api cases never race the shared map. */

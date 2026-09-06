@@ -597,6 +597,7 @@ export interface TestCase {
   targetId: string;
   featureId: string | null;
   title: string;
+  identityId?: string | null;
   precondition: string;
   setupNote?: string;
   steps: string[];
@@ -664,6 +665,7 @@ export interface TestCaseVersion {
 
 export interface TestCaseInput {
   title: string;
+  identityId?: string | null;
   precondition?: string;
   setupNote?: string;
   steps: string[];

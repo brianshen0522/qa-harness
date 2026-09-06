@@ -23,6 +23,8 @@ export interface TargetForPrompt {
   credentials?: CredentialPromptInfo[];
   /** Rotatable secret references (change + sync) via rotate_credential. */
   rotatableKeys?: string[];
+  /** The identity this case runs as, when it is bound to one. */
+  identity?: { name: string; role: string; isAnonymous: boolean } | null;
   screen?: { width: number; height: number };
 }
 
@@ -75,6 +77,11 @@ export function caseSystemPrompt(target: TargetForPrompt, testCase: CaseForPromp
     `標題：${testCase.title}`,
     testCase.featureName ? `所屬功能：${testCase.featureName}` : "",
     `優先級：${testCase.priority}　類型：${testCase.type}`,
+    target.identity
+      ? (target.identity.isAnonymous
+          ? `執行身份：「${target.identity.name}」(${target.identity.role}) —— 未登入的訪客，不要登入。`
+          : `執行身份：「${target.identity.name}」(${target.identity.role}) —— 系統已經幫你用這個身份登入好了，直接從步驟開始做，不要再登入一次、也不要換成別的帳號。下面的憑證只會給你這個身份的。`)
+      : "",
     `前置條件：${testCase.precondition || "（無）"}`,
     testCase.setupNote?.trim() ? `需要先準備的資料/狀態：${testCase.setupNote.trim()}（若這些前置在環境裡不存在、你也無法建立，就回傳 done 說明前置未滿足）` : "",
     "步驟：",

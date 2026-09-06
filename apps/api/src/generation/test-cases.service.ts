@@ -12,6 +12,7 @@ export interface CaseInput {
   title: string;
   precondition?: string;
   setupNote?: string;
+  identityId?: string | null;
   steps: string[];
   expected: string;
   priority?: Priority;
@@ -113,6 +114,7 @@ export class TestCasesService {
           title: input.title.trim(),
           precondition: input.precondition?.trim() ?? "",
           setupNote: input.setupNote?.trim() ?? "",
+          identityId: input.identityId ?? null,
           steps: input.steps as Prisma.InputJsonValue,
           expected: input.expected.trim(),
           priority: input.priority ?? Priority.P2,
@@ -152,6 +154,7 @@ export class TestCasesService {
           ...(input.title !== undefined ? { title: input.title.trim() } : {}),
 ...(input.precondition !== undefined ? { precondition: input.precondition.trim() } : {}),
           ...(input.setupNote !== undefined ? { setupNote: input.setupNote.trim() } : {}),
+          ...(input.identityId !== undefined ? { identityId: input.identityId } : {}),
           ...(input.steps !== undefined ? { steps: input.steps as Prisma.InputJsonValue } : {}),
           ...(input.expected !== undefined ? { expected: input.expected.trim() } : {}),
           ...(input.priority !== undefined ? { priority: input.priority } : {}),

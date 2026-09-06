@@ -42,6 +42,7 @@ export class ExploreQueryService {
       }),
     ]);
 
+    const loginFailed = new Set<string>(((run.stats as Record<string, unknown>)?.loginFailedIdentities as string[]) ?? []);
     const roles = [...new Set(identities.map((i) => i.role))];
     const privileged = identities.find((i) => /admin|owner|root|super/i.test(i.role))?.role ?? roles[0] ?? null;
     const matrix = buildMatrix(
@@ -65,7 +66,7 @@ export class ExploreQueryService {
         startedAt: run.startedAt, endedAt: run.endedAt,
         target: run.target, myRole: role,
       },
-      identities: identities.map((i) => ({ id: i.id, name: i.name, role: i.role, isAnonymous: i.isAnonymous })),
+      identities: identities.map((i) => ({ id: i.id, name: i.name, role: i.role, isAnonymous: i.isAnonymous, loginFailed: loginFailed.has(i.name) })),
       nodes: nodes.map((n) => ({
         id: n.id, routeKey: n.routeKey, sampleUrl: n.sampleUrl, title: n.title,
         kind: n.kind, depth: n.depth, reachableBy: n.reachableBy, deniedFor: n.deniedFor,

@@ -75,6 +75,8 @@ interface ActiveRun {
   abort: AbortController;
   /** Remaining run-wide interaction-probe clicks (interaction probing). */
   interactLeft: number;
+  /** Identity names whose login failed — surfaced so it is not silently untested. */
+  loginFailed: Set<string>;
   /** Project the exploration belongs to, for usage attribution (§4.8). */
   projectId: string | null;
   finished: boolean;
@@ -195,7 +197,7 @@ export class ExploreService implements OnModuleInit {
   }
 
   private spawn(runId: string, targetId: string, url: string, config: ExploreConfig, identities: CrawlIdentity[], userId: string) {
-    const record: ActiveRun = { runId, targetId, events: [], subscribers: new Set(), abort: new AbortController(), interactLeft: 0, projectId: null, finished: false };
+    const record: ActiveRun = { runId, targetId, events: [], subscribers: new Set(), abort: new AbortController(), interactLeft: 0, loginFailed: new Set(), projectId: null, finished: false };
     this.active.set(targetId, record);
     void this.execute(record, url, config, identities, userId)
       .catch(async (err) => {
@@ -245,7 +247,10 @@ export class ExploreService implements OnModuleInit {
         const loggedIn = await crawler.login(identity, (e) => {
           if (e.type === "login") this.publish(record, { type: "login", identity: identity.name, ok: e.ok, message: e.message });
         });
-        if (!loggedIn && !identity.isAnonymous) continue; // credentials wrong; matrix will show it as untested
+        if (!loggedIn && !identity.isAnonymous) {
+          record.loginFailed.add(identity.name); // surfaced on the identity, not silently untested
+          continue; // credentials wrong; matrix will show it as untested
+        }
 
         await crawler.crawl(
           identity, limits,
@@ -298,7 +303,7 @@ export class ExploreService implements OnModuleInit {
         casesGenerated = await this.synthesize(record, baseUrl, matrix, userId, config);
       }
 
-      const stats = await this.computeStats(record.runId, matrix, casesGenerated);
+      const stats = { ...(await this.computeStats(record.runId, matrix, casesGenerated)), loginFailedIdentities: [...record.loginFailed] };
       await this.prisma.explorationRun.update({
         where: { id: record.runId },
         data: { status: ExplorationStatus.succeeded, stats: stats as unknown as Prisma.InputJsonValue, endedAt: new Date() },

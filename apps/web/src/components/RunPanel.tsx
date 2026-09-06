@@ -16,10 +16,12 @@ import type {
   FindingCaseDraft,
   RunFindingRow,
   RunLlmUsage,
+  RunComparison,
   RunListItem,
   RunStepRow,
   SkipCaseResult,
   StartRunResult,
+  TargetStability,
   CaseType,
   Priority,
   TargetKind,
@@ -1357,6 +1359,17 @@ function ResultsView({
     queryFn: () => api<RunStepRow[]>(`/runs/${runId}/steps`),
     enabled: !!runId,
   });
+  // "What changed since last time" and "is the harness itself steady" — the two
+  // questions a verdict list on its own can't answer.
+  const compare = useQuery({
+    queryKey: ["run", runId, "compare"],
+    queryFn: () => api<RunComparison>(`/runs/${runId}/compare`),
+    enabled: !!runId,
+  });
+  const stability = useQuery({
+    queryKey: ["target", targetId, "stability"],
+    queryFn: () => api<TargetStability>(`/targets/${targetId}/stability?runs=5`),
+  });
 
   const invalidate = () => {
     if (!runId) return;
@@ -1434,6 +1447,68 @@ function ResultsView({
         {d && (
           <>
             <RunSummary run={d} models={models} />
+
+            {compare.data?.previous && (
+              <div className="rounded-md border border-gray-200 p-3 dark:border-gray-700">
+                <p className="mb-2 text-xs font-medium text-gray-500 dark:text-gray-400">
+                  與上次執行比較（{formatDate(compare.data.previous.startedAt)}）
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  <Badge tone={compare.data.summary.regressed ? "red" : "gray"}>退步 {compare.data.summary.regressed}</Badge>
+                  <Badge tone={compare.data.summary.fixed ? "green" : "gray"}>修好 {compare.data.summary.fixed}</Badge>
+                  <Badge tone="gray">仍失敗 {compare.data.summary.stillFailing}</Badge>
+                  <Badge tone="gray">沒變 {compare.data.summary.unchanged}</Badge>
+                  {compare.data.summary.added > 0 && <Badge tone="blue">新增 {compare.data.summary.added}</Badge>}
+                </div>
+                {compare.data.cases.filter((c) => c.change === "regressed" || c.change === "fixed").length > 0 && (
+                  <ul className="mt-2 space-y-1">
+                    {compare.data.cases.filter((c) => c.change === "regressed" || c.change === "fixed").map((c) => (
+                      <li key={c.caseId} className="flex flex-wrap items-center gap-2 text-xs">
+                        <Badge tone={c.change === "regressed" ? "red" : "green"}>{c.change === "regressed" ? "退步" : "修好"}</Badge>
+                        <span className="text-gray-700 dark:text-gray-200">{c.title}</span>
+                        <span className="text-gray-400 dark:text-gray-500">
+                          {c.from ? VERDICT_LABEL[c.from] : "—"} → {VERDICT_LABEL[c.to]}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            )}
+
+            {stability.data && stability.data.runs.length > 0 && (
+              <div className="rounded-md border border-gray-200 p-3 dark:border-gray-700">
+                <p className="mb-2 text-xs font-medium text-gray-500 dark:text-gray-400">
+                  近 {stability.data.runs.length} 趟的穩定度
+                </p>
+                <div className="flex flex-wrap items-center gap-2">
+                  {stability.data.blockedRate !== null && (
+                    <Badge tone={stability.data.blockedRate > 10 ? "red" : "green"}>
+                      最新一趟受阻率 {stability.data.blockedRate}%
+                    </Badge>
+                  )}
+                  <Badge tone={stability.data.flaky.length ? "amber" : "gray"}>不穩定案例 {stability.data.flaky.length}</Badge>
+                </div>
+                {stability.data.blockedRate !== null && stability.data.blockedRate > 10 && (
+                  <p className="mt-1 text-xs text-amber-700 dark:text-amber-300">
+                    受阻率偏高代表很多案例「根本沒能執行」，通常是環境、前置資料或身份設定的問題，不是被測系統的缺陷。
+                  </p>
+                )}
+                {stability.data.flaky.length > 0 && (
+                  <ul className="mt-2 space-y-1">
+                    {stability.data.flaky.slice(0, 8).map((c) => (
+                      <li key={c.caseId} className="flex flex-wrap items-center gap-2 text-xs">
+                        <span className="text-gray-700 dark:text-gray-200">{c.title}</span>
+                        <span className="font-mono text-gray-400 dark:text-gray-500">
+                          {c.history.map((v) => (v ? VERDICT_LABEL[v][0] : "·")).join(" ")}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                <p className="mt-1 text-[11px] text-gray-400 dark:text-gray-500">序列由新到舊；同一條案例時好時壞代表判定不穩定，值得人工確認。</p>
+              </div>
+            )}
 
             <div>
               <p className="mb-2 text-xs font-medium text-gray-500 dark:text-gray-400">依 feature 的通過率</p>

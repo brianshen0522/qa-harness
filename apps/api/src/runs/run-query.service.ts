@@ -1,5 +1,5 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
-import { FindingStatus, Role, Severity, Verdict } from "@prisma/client";
+import { FindingStatus, Role, RunStatus, Severity, Verdict } from "@prisma/client";
 import { LlmGatewayService } from "../llm/llm-gateway.service";
 import type { LlmMessage } from "../llm/providers";
 import { PrismaService } from "../prisma/prisma.service";
@@ -50,6 +50,95 @@ export class RunQueryService {
     }));
   }
 
+  /**
+   * This run against the one before it. A QA tool is only useful if it can say
+   * "this broke since last time" — a standalone verdict list can't.
+   */
+  async compare(runId: string, userId: string) {
+    const run = await this.prisma.testRun.findUnique({ where: { id: runId } });
+    if (!run) throw new NotFoundException("執行不存在");
+    await this.perms.requireTarget(run.targetId, userId, Role.viewer);
+
+    const previous = await this.prisma.testRun.findFirst({
+      where: { targetId: run.targetId, startedAt: { lt: run.startedAt }, status: { in: FINISHED_RUN_STATUSES } },
+      orderBy: { startedAt: "desc" },
+      select: { id: true, startedAt: true, status: true },
+    });
+
+    const [current, prior] = await Promise.all([
+      this.prisma.testResult.findMany({ where: { runId }, include: { testCase: { select: { title: true } } } }),
+      previous ? this.prisma.testResult.findMany({ where: { runId: previous.id } }) : Promise.resolve([]),
+    ]);
+    const before = new Map(prior.map((r) => [r.testCaseId, r.verdict]));
+
+    const cases = current.map((r) => {
+      const from = before.get(r.testCaseId) ?? null;
+      return {
+        caseId: r.testCaseId,
+        title: r.testCase.title,
+        from,
+        to: r.verdict,
+        change: classifyChange(from, r.verdict),
+      };
+    });
+    const count = (c: ChangeKind) => cases.filter((x) => x.change === c).length;
+    return {
+      previous,
+      summary: {
+        regressed: count("regressed"), fixed: count("fixed"),
+        stillFailing: count("still_failing"), unchanged: count("unchanged"), added: count("new"),
+      },
+      cases,
+    };
+  }
+
+  /**
+   * Verdict history over the last N runs. Answers the two questions that decide
+   * whether the harness itself is trustworthy: how much are we failing to even
+   * execute (blocked rate), and which cases flip verdict without the code
+   * changing (flaky)?
+   */
+  async stability(targetId: string, userId: string, limit = 5) {
+    await this.assertViewer(targetId, userId);
+    const runs = await this.prisma.testRun.findMany({
+      where: { targetId, status: { in: FINISHED_RUN_STATUSES } },
+      orderBy: { startedAt: "desc" },
+      take: Math.max(2, Math.min(limit, 20)),
+      select: { id: true, startedAt: true, status: true },
+    });
+    if (!runs.length) return { runs: [], cases: [], flaky: [], blockedRate: null };
+
+    const results = await this.prisma.testResult.findMany({
+      where: { runId: { in: runs.map((r) => r.id) } },
+      include: { testCase: { select: { title: true } } },
+    });
+    const order = new Map(runs.map((r, i) => [r.id, i])); // 0 = newest
+
+    const byCase = new Map<string, { title: string; history: (Verdict | null)[] }>();
+    for (const r of results) {
+      const entry = byCase.get(r.testCaseId) ?? { title: r.testCase.title, history: Array(runs.length).fill(null) };
+      entry.history[order.get(r.runId)!] = r.verdict;
+      byCase.set(r.testCaseId, entry);
+    }
+
+    const cases = [...byCase.entries()].map(([caseId, v]) => {
+      const seen = v.history.filter((x): x is Verdict => x !== null);
+      // Flaky = the same case both passed and did not pass across these runs.
+      const flaky = seen.includes(Verdict.pass) && seen.some((x) => x === Verdict.fail || x === Verdict.blocked);
+      return { caseId, title: v.title, history: v.history, flaky };
+    });
+
+    // Blocked rate of the newest run — the number that says whether the harness
+    // is actually able to execute what it was asked to.
+    const newest = runs[0];
+    const newestResults = results.filter((r) => r.runId === newest.id);
+    const blockedRate = newestResults.length
+      ? Math.round((newestResults.filter((r) => r.verdict === Verdict.blocked).length / newestResults.length) * 100)
+      : null;
+
+    return { runs, cases, flaky: cases.filter((c) => c.flaky), blockedRate };
+  }
+
   /** One run in full: queue, results per case, findings, and per-feature rates. */
   async getRun(runId: string, userId: string) {
     const run = await this.prisma.testRun.findUnique({
@@ -67,8 +156,9 @@ export class RunQueryService {
           testCase: {
             select: {
               id: true, title: true, priority: true, type: true, currentVersion: true,
-              precondition: true, steps: true, expected: true,
+              precondition: true, setupNote: true, identityId: true, steps: true, expected: true,
               feature: { select: { id: true, name: true } },
+              identity: { select: { id: true, name: true, role: true } },
             },
           },
         },
@@ -332,4 +422,19 @@ function tally(rows: { verdict: Verdict; _count: { _all: number } }[]): Record<s
   const counts: Record<string, number> = { pass: 0, fail: 0, blocked: 0, skipped: 0 };
   for (const r of rows) counts[r.verdict] = r._count._all;
   return counts;
+}
+
+/** Runs that actually produced results and can be compared against. */
+const FINISHED_RUN_STATUSES = [RunStatus.succeeded, RunStatus.failed, RunStatus.aborted, RunStatus.interrupted];
+
+type ChangeKind = "regressed" | "fixed" | "still_failing" | "unchanged" | "new";
+
+/** How a case's verdict moved between two runs. */
+function classifyChange(from: Verdict | null, to: Verdict): ChangeKind {
+  if (from === null) return "new";
+  const ok = (v: Verdict) => v === Verdict.pass;
+  if (ok(from) && !ok(to)) return "regressed";
+  if (!ok(from) && ok(to)) return "fixed";
+  if (!ok(from) && !ok(to)) return from === to ? "still_failing" : "still_failing";
+  return "unchanged";
 }

@@ -174,6 +174,18 @@ export class RunsController {
     return this.runs.continueRun(runId, user.id);
   }
 
+  /** This run vs the previous one: what regressed, what got fixed. */
+  @Get("runs/:runId/compare")
+  compare(@CurrentUser() user: UserPrincipal, @Param("runId") runId: string) {
+    return this.query.compare(runId, user.id);
+  }
+
+  /** Verdict history over recent runs: blocked rate and flaky cases. */
+  @Get("targets/:id/stability")
+  stability(@CurrentUser() user: UserPrincipal, @Param("id") id: string, @Query("runs") runs?: string) {
+    return this.query.stability(id, user.id, runs ? Number(runs) : undefined);
+  }
+
   @Get("runs/:runId/findings")
   findings(@CurrentUser() user: UserPrincipal, @Param("runId") runId: string) {
     return this.query.getFindings(runId, user.id);

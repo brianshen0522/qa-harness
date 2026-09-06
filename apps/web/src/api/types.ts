@@ -768,6 +768,22 @@ export interface TestResultRow {
 }
 
 /** `GET /targets/:id/runs` — newest first. */
+export type VerdictChange = "regressed" | "fixed" | "still_failing" | "unchanged" | "new";
+
+export interface RunComparison {
+  previous: { id: string; startedAt: string; status: RunStatus } | null;
+  summary: { regressed: number; fixed: number; stillFailing: number; unchanged: number; added: number };
+  cases: { caseId: string; title: string; from: Verdict | null; to: Verdict; change: VerdictChange }[];
+}
+
+export interface TargetStability {
+  runs: { id: string; startedAt: string; status: RunStatus }[];
+  cases: { caseId: string; title: string; history: (Verdict | null)[]; flaky: boolean }[];
+  flaky: { caseId: string; title: string; history: (Verdict | null)[]; flaky: boolean }[];
+  /** Blocked % of the newest run — how much the harness failed to even execute. */
+  blockedRate: number | null;
+}
+
 export interface RunListItem {
   id: string;
   status: RunStatus;
@@ -834,9 +850,11 @@ export interface RunCase {
     currentVersion: number;
     precondition: string;
     setupNote?: string;
+    identityId?: string | null;
     steps: string[];
     expected: string;
     feature: { id: string; name: string } | null;
+    identity?: { id: string; name: string; role: string } | null;
   };
   result: TestResultRow | null;
 }

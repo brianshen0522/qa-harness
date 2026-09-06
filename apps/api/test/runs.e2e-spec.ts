@@ -816,6 +816,32 @@ describe("test runs (e2e)", () => {
     }, 60_000);
   });
 
+  // Regression across runs: a verdict list on its own can't say "this broke".
+  describe("cross-run comparison and stability", () => {
+    it("reports what regressed / got fixed against the previous run, and flags flaky cases", async () => {
+      const only = [caseIds[0]];
+      // Run 1: the case passes.
+      stubModel((call) => (call <= 1 ? { type: "http_request", params: { method: "GET", path: "/ok" } } : null));
+      await api(app).post(`/api/targets/${targetId}/runs`).set("Cookie", editor).send({ caseIds: only }).expect(201);
+      await waitForRun(["succeeded", "failed"]);
+
+      // Run 2: the same case now fails — that is a regression, not just a fail.
+      stubModel((call) => (call <= 1 ? { type: "http_request", params: { method: "GET", path: "/ok" } } : null), { verdict: "fail", repro_steps: ["x"] });
+      await api(app).post(`/api/targets/${targetId}/runs`).set("Cookie", editor).send({ caseIds: only }).expect(201);
+      const second = await waitForRun(["succeeded", "failed"]);
+
+      const cmp = await api(app).get(`/api/runs/${second.id}/compare`).set("Cookie", viewer).expect(200);
+      expect(cmp.body.previous).not.toBeNull();
+      expect(cmp.body.summary.regressed).toBe(1);
+      expect(cmp.body.cases[0]).toMatchObject({ from: "pass", to: "fail", change: "regressed" });
+
+      // Passing then failing the same case is exactly what "flaky" means.
+      const stab = await api(app).get(`/api/targets/${targetId}/stability?runs=5`).set("Cookie", viewer).expect(200);
+      expect(stab.body.blockedRate).toBe(0);
+      expect(stab.body.flaky.map((c: { caseId: string }) => c.caseId)).toContain(only[0]);
+    }, 90_000);
+  });
+
   // A dead system: the agent aborts the whole run instead of burning tokens on
   // every case against something it cannot even connect to.
   it("aborts the entire run when the agent reports a system-wide fatal error", async () => {

@@ -1,6 +1,9 @@
 import { lookup } from "node:dns/promises";
 import net from "node:net";
 
+/** Metadata endpoints outside link-local: Azure wireserver, Alibaba, Oracle. */
+const METADATA_IPS = new Set(["168.63.129.16", "100.100.100.200", "192.0.0.192"]);
+
 /**
  * SSRF guard for fetching attacker-influenced URLs (discussion links). Blocks
  * loopback, link-local (incl. cloud metadata 169.254.169.254), private and ULA
@@ -11,6 +14,7 @@ import net from "node:net";
 export function isBlockedIp(ip: string): boolean {
   const v4 = embeddedIpv4(ip);
   if (v4) {
+    if (METADATA_IPS.has(v4)) return true;
     const [a, b, c] = v4.split(".").map(Number);
     if (a === 127) return true; // loopback
     if (a === 10) return true; // private
@@ -28,6 +32,8 @@ export function isBlockedIp(ip: string): boolean {
   if (v6 === "::1" || v6 === "::") return true; // loopback / unspecified
   if (v6.startsWith("fe80") || v6.startsWith("fe9") || v6.startsWith("fea") || v6.startsWith("feb")) return true; // link-local fe80::/10
   if (v6.startsWith("fc") || v6.startsWith("fd")) return true; // unique-local fc00::/7
+  if (/^fe[c-f]/.test(v6)) return true; // deprecated site-local fec0::/10
+  if (v6.startsWith("ff")) return true; // multicast ff00::/8
   return false;
 }
 
@@ -90,7 +96,7 @@ export async function assertNotLinkLocal(rawUrl: string, allowPrivate = false): 
   const addrs = net.isIP(host) ? [host] : (await lookup(host, { all: true })).map((a) => a.address);
   for (const addr of addrs) {
     const v4 = embeddedIpv4(addr);
-    if (v4 ? v4.startsWith("169.254.") : /^fe[89ab]/i.test(addr)) {
+    if (v4 ? v4.startsWith("169.254.") || METADATA_IPS.has(v4) : /^fe[89ab]/i.test(addr)) {
       throw new Error("拒絕連線到 link-local 位址(SSRF 防護)");
     }
   }

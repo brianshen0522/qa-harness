@@ -1,6 +1,20 @@
-import { isBlockedIp } from "./net-guard";
+import { assertNotLinkLocal, isBlockedIp } from "./net-guard";
+
+describe("metadata addresses outside link-local", () => {
+  it.each(["168.63.129.16", "100.100.100.200", "192.0.0.192"])("refuses %s everywhere", async (ip) => {
+    expect(isBlockedIp(ip)).toBe(true);
+    expect(isBlockedIp(`::ffff:${ip}`)).toBe(true);
+    await expect(assertNotLinkLocal(`http://${ip}/`)).rejects.toThrow();
+  });
+  it("keeps allowing an ordinary private Target", async () => {
+    await expect(assertNotLinkLocal("http://10.0.0.5/")).resolves.toBeUndefined();
+  });
+});
 
 describe("isBlockedIp", () => {
+  it("blocks IPv6 multicast and site-local", () => {
+    for (const ip of ["ff02::1", "fec0::1", "feff::1"]) expect(isBlockedIp(ip)).toBe(true);
+  });
   it("blocks loopback / private / link-local / metadata / ULA", () => {
     for (const ip of ["127.0.0.1", "10.1.2.3", "172.16.0.1", "172.31.255.255", "192.168.1.1", "169.254.169.254", "0.0.0.0", "100.64.0.1", "::1", "::", "fe80::1", "fd00::1", "::ffff:10.0.0.1"]) {
       expect(isBlockedIp(ip)).toBe(true);

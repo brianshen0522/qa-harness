@@ -1,5 +1,7 @@
 import { Logger } from "@nestjs/common";
 import type { ComputerService, PageProbe } from "../sandbox/computer.service";
+import { sameCredentialSite } from "../runs/run-utils";
+import { toSandboxUrl } from "../sandbox/sandbox.service";
 import { normalizeRoute } from "./route-key";
 
 export interface CrawlIdentity {
@@ -10,6 +12,8 @@ export interface CrawlIdentity {
   /** Resolved credential values (decrypted), keyed by name. */
   credentials: Record<string, string>;
   login: LoginConfig;
+  /** Sites besides the Target's own where its credentials may go (SSO). */
+  credentialOrigins?: string[];
 }
 
 export interface LoginConfig {
@@ -77,6 +81,13 @@ export class Crawler {
     }
     const cfg = identity.login;
     const loginUrl = new URL(cfg.loginPath ?? "/login", this.baseUrl).toString();
+    // Editors set loginPath but only owners set credentials, so it must not lead
+    // the browser, and the credentials typed into it, off the Target.
+    const allowed = [this.baseUrl, ...(identity.credentialOrigins ?? [])].map(toSandboxUrl);
+    if (!allowed.some((site) => sameCredentialSite(toSandboxUrl(loginUrl), site))) {
+      emit({ type: "login", ok: false, message: `${identity.name}：登入頁不在這個 Target 的網址範圍內，平台拒絕代入憑證。` });
+      return false;
+    }
     const probe = await this.computer.cdpNavigate(this.port, loginUrl, 800);
     if (!probe) {
       emit({ type: "login", ok: false, message: `${identity.name}：登入頁打不開` });

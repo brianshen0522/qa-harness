@@ -27,7 +27,7 @@ import {
 import { Crawler, type CrawlIdentity } from "../explore/crawler";
 import { acquireTargetLock, busyMessage, targetLockHolder } from "../targets/target-lock";
 import { fenceUntrusted } from "../common/untrusted";
-import { SCREENSHOT_WINDOW, buildMessages, maskSecrets, sameCredentialSite, summariseProbe } from "./run-utils";
+import { SCREENSHOT_WINDOW, buildMessages, maskSecrets, sameCredentialSite, stringList, summariseProbe } from "./run-utils";
 import {
   caseSystemPrompt, verdictSystemPrompt, verdictTranscript,
   type CaseForPrompt, type TargetForPrompt,
@@ -1565,10 +1565,6 @@ export class RunService implements OnModuleInit {
   }
 }
 
-
-function stringList(value: unknown): string[] {
-  return Array.isArray(value) ? value.filter((v): v is string => typeof v === "string") : [];
-}
 
 function describeOutcome(
   step: ExecutionStep,

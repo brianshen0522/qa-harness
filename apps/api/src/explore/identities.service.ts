@@ -4,6 +4,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { PermissionsService } from "../permissions/permissions.service";
 import { TargetsService } from "../targets/targets.service";
 import { AuditService } from "../audit/audit.service";
+import { stringList } from "../runs/run-utils";
 import type { LoginConfig } from "./crawler";
 
 export interface IdentityInput {
@@ -93,10 +94,12 @@ export class IdentitiesService {
 
   /** Internal: identities with their credentials decrypted, for the crawler. */
   async resolved(targetId: string) {
-    const [identities, creds] = await Promise.all([
+    const [identities, creds, target] = await Promise.all([
       this.prisma.targetIdentity.findMany({ where: { targetId }, orderBy: { order: "asc" } }),
       this.targets.decryptedCredentials(targetId),
+      this.prisma.qaTarget.findUnique({ where: { id: targetId }, select: { config: true } }),
     ]);
+    const credentialOrigins = stringList((target?.config as Record<string, unknown> | null)?.credential_origins);
     return identities.map((i) => ({
       id: i.id,
       name: i.name,
@@ -104,6 +107,7 @@ export class IdentitiesService {
       isAnonymous: i.isAnonymous,
       credentials: Object.fromEntries(i.credentialKeys.map((k) => [k, creds[k]]).filter(([, v]) => v !== undefined)) as Record<string, string>,
       login: (i.loginConfig ?? {}) as LoginConfig,
+      credentialOrigins,
     }));
   }
 

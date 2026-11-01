@@ -33,6 +33,10 @@ export function buildMessages(
 
 /** Replace each secret string with **** anywhere in a serializable value, matching
  *  its JSON-escaped form so secrets containing quotes/newlines are still caught. */
+export function stringList(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((v): v is string => typeof v === "string") : [];
+}
+
 export function sameCredentialSite(pageUrl: string, targetUrl: string): boolean {
   let page: URL;
   let target: URL;

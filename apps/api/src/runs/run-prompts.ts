@@ -1,4 +1,5 @@
 import type { TargetKind } from "@prisma/client";
+import { fenceUntrusted } from "../common/untrusted";
 
 export interface CaseForPrompt {
   title: string;
@@ -240,9 +241,9 @@ function mcpToolsSection(tools: McpToolForPrompt[]): string[] {
     "除了上面的動作，你還可以呼叫下列外部工具。用 `mcp_call` 動作，`params` 給 `{ server_id, tool, arguments }`（arguments 是這個工具需要的參數物件）。",
     "呼叫後你會拿到工具的回傳內容，再決定下一步。只有在對這條 case 真的有幫助時才用，不要為了用而用。",
   ];
-  for (const t of tools) {
-    lines.push(`- server_id=${t.serverId}｜tool=\`${t.name}\`${t.description ? `：${t.description.slice(0, 200)}` : ""}`);
-  }
+  // Names and descriptions come from the MCP server, which any project editor can add.
+  const listed = tools.map((t) => `- server_id=${t.serverId}｜tool=\`${t.name}\`${t.description ? `：${t.description.slice(0, 200)}` : ""}`);
+  lines.push(fenceUntrusted("MCP 工具清單", listed.join("\n")));
   return lines;
 }
 

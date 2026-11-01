@@ -1,3 +1,4 @@
+import { fenceUntrusted } from "../common/untrusted";
 import type { PermissionMatrix } from "./permission-matrix";
 
 export interface NodeForSynthesis {
@@ -47,7 +48,7 @@ export function synthesisContext(node: NodeForSynthesis, baseUrl: string): strin
   }
   if (node.controls.length) lines.push("", `## 控制項\n${node.controls.slice(0, 20).join("、")}`);
   if (node.rwdIssues.length) lines.push("", `## 已偵測到的 RWD 問題\n${node.rwdIssues.join("\n")}`);
-  return lines.filter(Boolean).join("\n").slice(0, 12_000);
+  return fenceUntrusted("被測頁面內容", lines.filter(Boolean).join("\n").slice(0, 12_000));
 }
 
 /** A single synthesis call dedicated to cross-identity access, from the matrix. */
@@ -85,14 +86,13 @@ export const DEEP_SYSTEM = [
 ].join("\n");
 
 export function deepContext(node: { routeKey: string; title: string; forms: unknown; controls: string[] }): string {
-  return [
+  const page = [
     `# 頁面\nroute：${node.routeKey}`,
     node.title ? `標題：${node.title}` : "",
     "",
     "## 結構",
     "表單：" + JSON.stringify(node.forms).slice(0, 3000),
     node.controls.length ? `控制項：${node.controls.slice(0, 20).join("、")}` : "",
-    "",
-    "截圖如附。請盤點情境與當下可見的問題。",
   ].filter(Boolean).join("\n");
+  return `${fenceUntrusted("被測頁面內容", page)}\n\n截圖如附。請盤點情境與當下可見的問題。`;
 }

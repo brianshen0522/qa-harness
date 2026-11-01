@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, NotFoundException } from "@nestjs/comm
 import { CaseSource, CaseStatus, FindingStatus, Prisma, Priority, Role, type CaseType } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { PermissionsService } from "../permissions/permissions.service";
+import { fenceUntrusted } from "../common/untrusted";
 import { LlmGatewayService } from "../llm/llm-gateway.service";
 import { AuditService } from "../audit/audit.service";
 
@@ -74,8 +75,10 @@ export class FindingConversionService {
             "",
             "## 這次的 finding",
             `嚴重程度：${finding.severity}`,
-            `標題：${finding.title}`,
-            finding.description.trim() ? `說明：${finding.description.trim().slice(0, 4000)}` : "",
+            fenceUntrusted("finding 內容", [
+              `標題：${finding.title}`,
+              finding.description.trim() ? `說明：${finding.description.trim().slice(0, 4000)}` : "",
+            ].filter(Boolean).join("\n")),
             sourceCase
               ? `\n代理是在跑「${sourceCase.title}」時注意到的，那條案例的步驟是：\n${((sourceCase.steps as string[]) ?? []).map((s, i) => `  ${i + 1}. ${s}`).join("\n")}`
               : "",

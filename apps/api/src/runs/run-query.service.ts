@@ -1,5 +1,6 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
 import { FindingStatus, Role, RunStatus, Severity, Verdict } from "@prisma/client";
+import { fenceUntrusted } from "../common/untrusted";
 import { LlmGatewayService } from "../llm/llm-gateway.service";
 import type { LlmMessage } from "../llm/providers";
 import { PrismaService } from "../prisma/prisma.service";
@@ -343,13 +344,16 @@ export class RunQueryService {
     if (!question?.trim()) throw new BadRequestException("問題不能是空的");
 
     const context = await this.buildAskContext(run, opts.resultId);
-    const history = (opts.history ?? []).slice(-8).map((m): LlmMessage => ({ role: m.role, content: m.content }));
+    const history = (opts.history ?? [])
+      .filter((m) => (m?.role === "user" || m?.role === "assistant") && typeof m.content === "string")
+      .slice(-8)
+      .map((m): LlmMessage => ({ role: m.role, content: m.content }));
     const res = await this.gateway.complete(
       "discuss",
       {
         system: ASK_SYSTEM,
         messages: [
-          { role: "user", content: context },
+          { role: "user", content: fenceUntrusted("這次執行的證據", context) },
           ...history,
           { role: "user", content: question.trim() },
         ],

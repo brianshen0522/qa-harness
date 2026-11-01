@@ -22,8 +22,9 @@ export class HealthController {
     try {
       await this.prisma.$queryRaw`SELECT 1`;
       return { status: "ready", database: "up" };
-    } catch (err) {
-      throw new ServiceUnavailableException({ status: "not_ready", database: "down", error: (err as Error).message });
+    } catch {
+      // Unauthenticated, and a driver error names the database host.
+      throw new ServiceUnavailableException({ status: "not_ready", database: "down" });
     }
   }
 

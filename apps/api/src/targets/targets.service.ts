@@ -2,7 +2,8 @@ import { BadRequestException, ConflictException, Injectable, NotFoundException }
 import { CredentialType, DescriptionSource, Prisma, Role, TargetKind } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { PermissionsService } from "../permissions/permissions.service";
-import { effectiveTargetRole } from "../permissions/roles";
+import { atLeast, effectiveTargetRole } from "../permissions/roles";
+import { redactConfig } from "../common/redact-config";
 import { CryptoService } from "../crypto/crypto.service";
 import { AuditService } from "../audit/audit.service";
 import { validateOverride } from "../permissions/roles";
@@ -39,6 +40,11 @@ export const CONFIG_KEYS: Record<TargetKind, string[]> = {
   desktop: ["install_command", "image", "launch_command"],
 };
 
+/** Config can hold literal secrets (default headers), which are owner-only like credentials. */
+function configFor(role: Role | null, config: Prisma.JsonValue): Prisma.JsonValue {
+  return atLeast(role, Role.owner) ? config : (redactConfig((config ?? {}) as Record<string, unknown>) as Prisma.JsonObject);
+}
+
 @Injectable()
 export class TargetsService {
   constructor(
@@ -62,7 +68,10 @@ export class TargetsService {
       select: { targetId: true, role: true },
     });
     const overrideBy = new Map(overrides.map((o) => [o.targetId, o.role]));
-    return targets.map((t) => ({ ...t, myRole: effectiveTargetRole(projectRole, overrideBy.get(t.id) ?? null) }));
+    return targets.map((t) => {
+      const myRole = effectiveTargetRole(projectRole, overrideBy.get(t.id) ?? null);
+      return { ...t, config: configFor(myRole, t.config), myRole };
+    });
   }
 
   async create(projectId: string, userId: string, input: { name: string; kind: TargetKind; config?: Record<string, unknown>; description?: string }) {
@@ -103,6 +112,7 @@ export class TargetsService {
     }));
     return {
       ...target,
+      config: configFor(role, target.config),
       myRole: role,
       // Expanded reference keys — the identity picker and older callers use these.
       credentialKeys: credentials.flatMap((c) => c.refs),

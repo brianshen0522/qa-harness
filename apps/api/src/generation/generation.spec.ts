@@ -136,6 +136,9 @@ describe("dedupeCases", () => {
 });
 
 describe("redactConfig", () => {
+  it("masks cookies too", () => {
+    expect(redactConfig({ headers: { Cookie: "s=1" } })).toEqual({ headers: { Cookie: "****（已遮蔽）" } });
+  });
   it("masks credential-looking values wherever they sit", () => {
     const out = redactConfig({
       base_url: "http://localhost:8080",

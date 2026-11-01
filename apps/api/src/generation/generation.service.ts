@@ -9,6 +9,8 @@ import { PermissionsService } from "../permissions/permissions.service";
 import { LlmExhaustedError, LlmGatewayService } from "../llm/llm-gateway.service";
 import { LlmHealthService } from "../llm/llm-health.service";
 import { AuditService } from "../audit/audit.service";
+import { fenceUntrusted } from "../common/untrusted";
+import { redactConfig } from "../common/redact-config";
 import { DiscoveryService, type DiscoveryResult } from "./discovery.service";
 import { DesktopDiscoveryService } from "./desktop-discovery.service";
 import { SkillsService } from "../skills/skills.service";
@@ -58,6 +60,8 @@ interface ActiveRun {
  * over before the browser's stream attaches, and its events would be lost.
  */
 const RETAIN_FINISHED_MS = 120_000;
+
+export { redactConfig };
 
 @Injectable()
 export class GenerationService implements OnModuleInit {
@@ -728,21 +732,8 @@ function featurePrompt(feature: { name: string; description: string }, all: { na
   ].filter(Boolean).join("\n");
 }
 
-const SECRET_KEY = /(pass(word|wd)?|token|api[_-]?key|apikey|secret|credential|authorization|bearer)/i;
 
 /** Config can hold an Authorization header; never let it reach the model. */
-export function redactConfig(config: Record<string, unknown>): Record<string, unknown> {
-  const walk = (v: unknown, key = ""): unknown => {
-    if (Array.isArray(v)) return v.map((x) => walk(x));
-    if (v && typeof v === "object") {
-      return Object.fromEntries(Object.entries(v as Record<string, unknown>).map(([k, val]) => [k, walk(val, k)]));
-    }
-    if (typeof v === "string" && SECRET_KEY.test(key) && v.length > 0) return "****（已遮蔽）";
-    return v;
-  };
-  return walk(config) as Record<string, unknown>;
-}
-
 function collectSuggestedCases(
   handoffs: { parsed: Prisma.JsonValue; scope: string }[],
 ): { title: string; steps?: string[]; expected?: string }[] {
@@ -783,7 +774,7 @@ function buildContext(input: {
     parts.push("", "## 專案描述", input.projectDescription.trim().slice(0, 8000));
   }
   if (input.discovery.summary) {
-    parts.push("", input.discovery.summary);
+    parts.push("", fenceUntrusted("從被測目標讀到的結構", input.discovery.summary));
   }
   if (input.suggested.length) {
     parts.push("", "## coding agent 交接文件建議的測試案例（可以參考，但要自己判斷是否合理）");

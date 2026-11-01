@@ -318,6 +318,19 @@ describe("change management (e2e)", () => {
       .send({ items: { [caseOutdated]: true } }).expect(400);
   });
 
+  it("applies a proposal only once when two requests race", async () => {
+    nextProposal = proposalFor({ description_after: "race once", feature_changes: [], test_case_changes: [] });
+    const res = await api(app).post(`/api/targets/${targetId}/changes/from-discussion`).set("Cookie", editor)
+      .send({ note: "race" }).expect(201);
+    const before = await prisma.qaTarget.findUniqueOrThrow({ where: { id: targetId } });
+    const results = await Promise.all([1, 2, 3].map(() =>
+      api(app).post(`/api/changes/${res.body.id}/apply`).set("Cookie", editor).send({ description: true })));
+    expect(results.filter((r) => r.status < 300)).toHaveLength(1);
+    const after = await prisma.qaTarget.findUniqueOrThrow({ where: { id: targetId } });
+    expect(after.descriptionVersion).toBe(before.descriptionVersion + 1);
+    expect(await prisma.changeLog.count({ where: { proposalId: res.body.id } })).toBe(1);
+  });
+
   it("deprecates a removed feature's cases rather than deleting them", async () => {
     nextProposal = proposalFor({
       description_after: "",

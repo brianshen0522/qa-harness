@@ -2,6 +2,7 @@ import {
   BadRequestException, ConflictException, ForbiddenException, Injectable, Logger, NotFoundException,
 } from "@nestjs/common";
 import { randomUUID } from "node:crypto";
+import { fenceUntrusted } from "../common/untrusted";
 import {
   CaseSource, CaseStatus, ChangeSource, DescriptionSource, FeatureStatus, FindingStatus,
   Prisma, Priority, ProposalState, Role, Scope, type CaseType,
@@ -175,13 +176,13 @@ export class ChangesService {
 
     return this.analyze(Scope.target, run.targetId, userId, {
       source: ChangeSource.run_detection,
-      note: detectionNote(
+      note: fenceUntrusted("這次執行的結果", detectionNote(
         results.map((r) => ({
           title: r.testCase.title,
           reasoning: r.llmReasoning,
           featureName: r.testCase.feature?.name ?? null,
         })),
-      ),
+      )),
       originNote: `run:${runId}`,
     });
   }
@@ -197,7 +198,7 @@ export class ChangesService {
 
     const proposal = await this.analyze(Scope.target, finding.run.targetId, userId, {
       source: ChangeSource.finding,
-      note: findingNote(finding),
+      note: fenceUntrusted("代理回報的 finding", findingNote(finding)),
       originNote: `finding:${findingId}`,
     });
     await this.prisma.runFinding.update({
@@ -336,6 +337,13 @@ export class ChangesService {
     let descriptionVersionAfter: number | null = null;
 
     await this.prisma.$transaction(async (tx) => {
+      // The state check above is outside this transaction; only one apply may pass.
+      const claimed = await tx.changeProposal.updateMany({
+        where: { id: proposal.id, state: ProposalState.pending },
+        data: { state: ProposalState.applied },
+      });
+      if (claimed.count !== 1) throw new ConflictException("提案已經被處理了。");
+
       // ----- description -----
       if (takeDescription) {
         if (proposal.scope === Scope.project) {

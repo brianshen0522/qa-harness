@@ -1,4 +1,6 @@
 import { Injectable, Logger } from "@nestjs/common";
+import { readBounded } from "../common/bounded-body";
+import { elements, removeElement, replaceTags } from "../common/html-scan";
 import { assertPublicUrl } from "../common/net-guard";
 
 export interface FetchedPage {
@@ -38,17 +40,15 @@ export function extractUrls(text: string): string[] {
 
 /** Minimal HTML -> text. Good enough to give the LLM page context. */
 export function htmlToText(html: string): { title: string | null; text: string } {
-  const titleMatch = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
-  const title = titleMatch ? decodeEntities(titleMatch[1]).trim().slice(0, 200) : null;
+  const titleElement = elements(html, "title").next().value;
+  const title = titleElement ? decodeEntities(titleElement.inner).trim().slice(0, 200) : null;
+  const withoutBlocks = ["script", "style", "noscript", "svg"].reduce(removeElement, html);
   const text = decodeEntities(
-    html
-      .replace(/<script[\s\S]*?<\/script>/gi, " ")
-      .replace(/<style[\s\S]*?<\/style>/gi, " ")
-      .replace(/<noscript[\s\S]*?<\/noscript>/gi, " ")
-      .replace(/<svg[\s\S]*?<\/svg>/gi, " ")
-      .replace(/<\/(p|div|li|tr|h[1-6]|section|article)>/gi, "\n")
-      .replace(/<br\s*\/?>/gi, "\n")
-      .replace(/<[^>]+>/g, " "),
+    replaceTags(
+      withoutBlocks
+        .replace(/<\/(p|div|li|tr|h[1-6]|section|article)>/gi, "\n")
+        .replace(/<br\s*\/?>/gi, "\n"),
+    ),
   )
     .replace(/[^\S\n]+/g, " ")
     .replace(/\n\s*\n\s*\n+/g, "\n\n")
@@ -120,8 +120,8 @@ export class UrlFetchService {
       if (!res.ok) return { url, title: null, text: "", chars: 0, error: `HTTP ${res.status}` };
 
       const ctype = res.headers.get("content-type") ?? "";
-      const buf = Buffer.from(await res.arrayBuffer());
-      if (buf.byteLength > MAX_BYTES) {
+      const { body: buf, truncated: oversized } = await readBounded(res, MAX_BYTES);
+      if (oversized) {
         return { url, title: null, text: "", chars: 0, error: "內容過大（>2MB）" };
       }
       const body = buf.toString("utf8");

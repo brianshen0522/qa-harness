@@ -1,3 +1,4 @@
+import { readBounded } from "../common/bounded-body";
 import { assertPublicUrl } from "../common/net-guard";
 
 /**
@@ -23,6 +24,7 @@ export interface McpToolResult {
 }
 
 const PROTOCOL_VERSION = "2025-06-18";
+const MAX_RESPONSE_BYTES = 5_000_000;
 
 export class McpError extends Error {}
 
@@ -116,7 +118,9 @@ export class McpClient {
         ...(await this.transport()),
       });
       const sessionId = res.headers.get("mcp-session-id");
-      const body = await res.text();
+      const { body: raw, truncated } = await readBounded(res, MAX_RESPONSE_BYTES);
+      if (truncated) throw new McpError("MCP 回應過大");
+      const body = raw.toString("utf8");
       if (!res.ok && !body.trim()) throw new McpError(`MCP HTTP ${res.status}`);
       return { json: parseRpc(body), sessionId };
     } catch (err) {

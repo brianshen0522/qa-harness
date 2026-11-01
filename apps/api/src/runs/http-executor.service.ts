@@ -1,4 +1,5 @@
 import { Injectable, Logger } from "@nestjs/common";
+import { readBounded } from "../common/bounded-body";
 import { assertNotLinkLocal, assertPublicUrl } from "../common/net-guard";
 
 export interface HttpTargetConfig {
@@ -32,6 +33,7 @@ export interface HttpActionResult {
 }
 
 const MAX_BODY_CHARS = 20_000;
+const MAX_RESPONSE_BYTES = 5_000_000;
 const DEFAULT_TIMEOUT_MS = 30_000;
 /** Header names whose values are never echoed back into the transcript. */
 const SECRET_HEADER = /(authorization|cookie|api[-_]?key|token|secret)/i;
@@ -104,7 +106,7 @@ export class HttpExecutorService {
         signal: controller.signal,
         redirect: "manual",
       });
-      const text = await res.text();
+      const text = (await readBounded(res, MAX_RESPONSE_BYTES)).body.toString("utf8");
       const responseHeaders: Record<string, string> = {};
       res.headers.forEach((v, k) => {
         responseHeaders[k] = SECRET_HEADER.test(k) ? "****" : maskValues(v, credentials);

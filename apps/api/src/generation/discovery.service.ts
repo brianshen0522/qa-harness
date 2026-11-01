@@ -1,5 +1,6 @@
 import { Injectable, Logger } from "@nestjs/common";
 import type { TargetKind } from "@prisma/client";
+import { elements, openTags, replaceTags } from "../common/html-scan";
 import { UrlFetchService } from "../discussion/url-fetch.service";
 
 export interface DiscoveredEndpoint {
@@ -188,14 +189,18 @@ export function summariseEndpoints(endpoints: DiscoveredEndpoint[]): string {
 // ---------- Web page ----------
 
 export function extractPageStructure(html: string, baseUrl: string) {
-  const headings = [...html.matchAll(/<h([1-3])[^>]*>([\s\S]*?)<\/h\1>/gi)]
-    .map((m) => stripTags(m[2]))
+  const headings = ["h1", "h2", "h3"]
+    .flatMap((tag) => [...elements(html, tag)])
+    .sort((a, b) => a.index - b.index)
+    .map((h) => stripTags(h.inner))
     .filter(Boolean)
     .slice(0, 40);
 
   const seen = new Set<string>();
-  const links = [...html.matchAll(/<a\b[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi)]
-    .map((m) => ({ href: resolve(m[1], baseUrl), text: stripTags(m[2]) }))
+  const links = [...elements(html, "a")]
+    .map((a) => ({ href: attr(a.attrs, "href"), inner: a.inner }))
+    .filter((a): a is { href: string; inner: string } => !!a.href)
+    .map((a) => ({ href: resolve(a.href, baseUrl), text: stripTags(a.inner) }))
     .filter((l) => {
       if (!l.href || l.href.startsWith("javascript:") || seen.has(l.href)) return false;
       seen.add(l.href);
@@ -203,16 +208,17 @@ export function extractPageStructure(html: string, baseUrl: string) {
     })
     .slice(0, 60);
 
-  const forms = [...html.matchAll(/<form\b([^>]*)>([\s\S]*?)<\/form>/gi)].map((m) => {
-    const attrs = m[1];
-    const body = m[2];
-    const fields = [...body.matchAll(/<(input|select|textarea)\b([^>]*)>/gi)].map((f) => ({
-      name: attr(f[2], "name") ?? attr(f[2], "id") ?? "",
-      type: f[1].toLowerCase() === "input" ? (attr(f[2], "type") ?? "text") : f[1].toLowerCase(),
-      required: /\brequired\b/i.test(f[2]),
+  const forms = [...elements(html, "form")].slice(0, 20).map(({ attrs, inner }) => {
+    const controls = ["input", "select", "textarea"]
+      .flatMap((tag) => [...openTags(inner, tag)].map((t) => ({ ...t, tag })))
+      .sort((a, b) => a.index - b.index);
+    const fields = controls.map((c) => ({
+      name: attr(c.attrs, "name") ?? attr(c.attrs, "id") ?? "",
+      type: c.tag === "input" ? (attr(c.attrs, "type") ?? "text") : c.tag,
+      required: /\brequired\b/i.test(c.attrs),
     })).filter((f) => f.name && f.type !== "hidden");
     return { action: attr(attrs, "action"), method: (attr(attrs, "method") ?? "get").toUpperCase(), fields };
-  }).slice(0, 20);
+  });
 
   return { headings, links, forms };
 }
@@ -223,7 +229,7 @@ function attr(attrs: string, name: string): string | null {
 }
 
 function stripTags(html: string): string {
-  return html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().slice(0, 200);
+  return replaceTags(html).replace(/\s+/g, " ").trim().slice(0, 200);
 }
 
 function resolve(href: string, base: string): string {

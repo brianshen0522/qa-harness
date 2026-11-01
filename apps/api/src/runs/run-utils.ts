@@ -33,6 +33,21 @@ export function buildMessages(
 
 /** Replace each secret string with **** anywhere in a serializable value, matching
  *  its JSON-escaped form so secrets containing quotes/newlines are still caught. */
+export function sameCredentialSite(pageUrl: string, targetUrl: string): boolean {
+  let page: URL;
+  let target: URL;
+  try {
+    page = new URL(pageUrl);
+    target = new URL(targetUrl);
+  } catch {
+    return false;
+  }
+  if (page.protocol !== "http:" && page.protocol !== "https:") return false;
+  if (page.port !== target.port) return false;
+  const host = (u: URL) => u.hostname.replace(/^www\./i, "").toLowerCase();
+  return host(page) === host(target) || host(page).endsWith(`.${host(target)}`);
+}
+
 export function maskSecrets<T>(value: T, secrets: string[]): T {
   if (!secrets.length) return value;
   try {

@@ -1,4 +1,5 @@
 import { Injectable, Logger } from "@nestjs/common";
+import { assertNotLinkLocal, assertPublicUrl } from "../common/net-guard";
 
 export interface HttpTargetConfig {
   base_url?: string;
@@ -60,19 +61,23 @@ export class HttpExecutorService {
       return this.failure(method, String(params.url ?? params.path ?? ""), (err as Error).message, started);
     }
 
+    // The URL comes from the model or an editor and this runs on the API host, not
+    // in a sandbox. The Target's own origin may well be private; anything else may
+    // not, or a response body could steer the model at internal services.
+    const onTarget = isTargetOrigin(url, config.base_url);
+    const allowPrivate = process.env.ALLOW_PRIVATE_FETCH === "true";
+    try {
+      await (onTarget ? assertNotLinkLocal(url, allowPrivate) : assertPublicUrl(url, allowPrivate));
+    } catch (err) {
+      return this.failure(method, url, (err as Error).message, started);
+    }
+
     // Credentials are only substituted when the request targets the Target's own
     // origin, so an editor can't author a step that ships {{secret}} to an external
-    // host (privilege escalation — credentials are owner-only to set).
-    const base = (config.base_url ?? "").trim();
-    let creds = credentials;
-    if (base) {
-      try {
-        if (new URL(url).origin !== new URL(base).origin) creds = {};
-      } catch {
-        creds = {};
-      }
-    }
-    const headerTemplate = { ...(config.headers ?? {}), ...(asRecord(params.headers) ?? {}) };
+    // host (privilege escalation — credentials are owner-only to set). The Target's
+    // default headers may hold a literal secret, so they stay home too.
+    const creds = onTarget ? credentials : {};
+    const headerTemplate = { ...(onTarget ? config.headers ?? {} : {}), ...(asRecord(params.headers) ?? {}) };
     const headers: Record<string, string> = {};
     for (const [k, v] of Object.entries(headerTemplate)) {
       headers[k] = fillCredentials(String(v), creds);
@@ -187,6 +192,16 @@ export class HttpExecutorService {
       },
       substituted,
     };
+  }
+}
+
+function isTargetOrigin(url: string, baseUrl: string | undefined): boolean {
+  const base = (baseUrl ?? "").trim();
+  if (!base) return false;
+  try {
+    return new URL(url).origin === new URL(base).origin;
+  } catch {
+    return false;
   }
 }
 

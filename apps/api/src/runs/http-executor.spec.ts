@@ -39,6 +39,10 @@ describe("redaction", () => {
 });
 
 describe("HttpExecutorService", () => {
+  afterEach(() => {
+    delete process.env.ALLOW_PRIVATE_FETCH;
+  });
+
   let server: Server;
   let base: string;
   const seen: { method: string; url: string; headers: Record<string, string>; body: string }[] = [];
@@ -144,6 +148,7 @@ describe("HttpExecutorService", () => {
   });
 
   it("only substitutes credentials for the target's own origin (no cross-origin exfil)", async () => {
+    process.env.ALLOW_PRIVATE_FETCH = "true";
     // Same origin as base_url -> filled, and reported as substituted.
     const same = await svc.perform({ url: `${base}/same`, headers: { Authorization: "Bearer {{token}}" } }, { base_url: base }, { token: "abc123456" });
     expect(seen.at(-1)?.headers.authorization).toBe("Bearer abc123456");
@@ -175,7 +180,38 @@ describe("HttpExecutorService", () => {
     expect((await svc.perform({ path: "/todos" }, {}, {})).error).toMatch(/沒有設定 base_url/);
   });
 
+  it("keeps the target's default headers off other origins", async () => {
+    process.env.ALLOW_PRIVATE_FETCH = "true";
+    await svc.perform({ url: `${base}/other` }, { base_url: "http://example.com", headers: { "X-Api-Key": "literal-secret" } }, {});
+    expect(seen.at(-1)?.headers["x-api-key"]).toBeUndefined();
+  });
+
+  it("does not substitute credentials when the target has no base_url", async () => {
+    process.env.ALLOW_PRIVATE_FETCH = "true";
+    const r = await svc.perform({ url: `${base}/x`, headers: { "X-Session": "{{token}}" } }, {}, { token: "abc123456" });
+    expect(r.substituted).toEqual([]);
+    expect(seen.at(-1)?.headers["x-session"]).toBe("{{token}}");
+  });
+
+  it("refuses internal addresses off the target's origin, but not the target itself", async () => {
+    const count = seen.length;
+    for (const url of [`${base}/internal`, "http://169.254.169.254/latest/meta-data/", "http://[::ffff:127.0.0.1]:1/"]) {
+      const r = await svc.perform({ url }, { base_url: "http://example.com" }, {});
+      expect(r.ok).toBe(false);
+      expect(r.error).toMatch(/SSRF/);
+    }
+    expect(seen).toHaveLength(count);
+    expect((await svc.perform({ path: "/own" }, { base_url: base }, {})).ok).toBe(true);
+  });
+
+  it("refuses a target whose own origin is link-local", async () => {
+    const r = await svc.perform({ path: "/latest/meta-data/" }, { base_url: "http://169.254.169.254" }, {});
+    expect(r.ok).toBe(false);
+    expect(r.error).toMatch(/SSRF/);
+  });
+
   it("accepts an absolute url that ignores base_url", async () => {
+    process.env.ALLOW_PRIVATE_FETCH = "true";
     const r = await svc.perform({ url: `${base}/absolute` }, { base_url: "http://unused.test" }, {});
     expect(r.ok).toBe(true);
     expect(seen[0].url).toBe("/absolute");

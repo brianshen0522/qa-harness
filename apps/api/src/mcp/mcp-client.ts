@@ -1,3 +1,5 @@
+import { assertPublicUrl } from "../common/net-guard";
+
 /**
  * A minimal Model Context Protocol client over the Streamable HTTP transport.
  * MCP is JSON-RPC 2.0: `initialize` (handshake, may return a session id header),
@@ -24,15 +26,34 @@ const PROTOCOL_VERSION = "2025-06-18";
 
 export class McpError extends Error {}
 
+export interface McpClientOptions {
+  timeoutMs?: number;
+  /** Refuse private addresses, re-checked per request; set for user-supplied URLs. */
+  publicOnly?: boolean;
+}
+
 export class McpClient {
   private sessionId: string | null = null;
   private id = 0;
 
+  private readonly timeoutMs: number;
+  private readonly publicOnly: boolean;
+
   constructor(
     private readonly url: string,
     private readonly auth: string | null,
-    private readonly timeoutMs = 20_000,
-  ) {}
+    options: McpClientOptions = {},
+  ) {
+    this.timeoutMs = options.timeoutMs ?? 20_000;
+    this.publicOnly = options.publicOnly ?? false;
+  }
+
+  /** A redirect would skip the address check. */
+  private async transport(): Promise<{ redirect?: RequestRedirect }> {
+    if (!this.publicOnly) return {};
+    await assertPublicUrl(this.url, process.env.ALLOW_PRIVATE_FETCH === "true");
+    return { redirect: "error" };
+  }
 
   /** Handshake. Captures a session id if the server issues one. */
   async initialize(): Promise<void> {
@@ -92,6 +113,7 @@ export class McpClient {
         headers: this.headers(),
         body: JSON.stringify({ jsonrpc: "2.0", id: ++this.id, method, params }),
         signal: controller.signal,
+        ...(await this.transport()),
       });
       const sessionId = res.headers.get("mcp-session-id");
       const body = await res.text();
@@ -110,6 +132,7 @@ export class McpClient {
       method: "POST",
       headers: this.headers(),
       body: JSON.stringify({ jsonrpc: "2.0", method, params: {} }),
+      ...(await this.transport()),
     });
   }
 }

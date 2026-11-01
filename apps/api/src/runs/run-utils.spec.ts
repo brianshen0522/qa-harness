@@ -1,10 +1,30 @@
-import { buildMessages, maskSecrets, summariseProbe, SCREENSHOT_WINDOW } from "./run-utils";
+import { buildMessages, maskSecrets, sameCredentialSite, summariseProbe, SCREENSHOT_WINDOW } from "./run-utils";
 import type { ContentPart } from "../llm/providers";
 
 const img = (n: number): ContentPart[] => [
   { type: "image", mediaType: "image/png", base64: `frame-${n}` },
   { type: "text", text: `obs-${n}` },
 ];
+
+describe("sameCredentialSite", () => {
+  it("accepts the target itself, an https upgrade, www and subdomains", () => {
+    expect(sameCredentialSite("https://shop.test/login", "https://shop.test")).toBe(true);
+    expect(sameCredentialSite("https://shop.test/login", "http://shop.test")).toBe(true);
+    expect(sameCredentialSite("https://www.shop.test/", "https://shop.test")).toBe(true);
+    expect(sameCredentialSite("https://auth.shop.test/", "https://shop.test")).toBe(true);
+    expect(sameCredentialSite("http://host.docker.internal:3000/a", "http://host.docker.internal:3000")).toBe(true);
+  });
+
+  it("refuses other sites, lookalikes, other ports and non-web pages", () => {
+    expect(sameCredentialSite("https://evil.test/", "https://shop.test")).toBe(false);
+    expect(sameCredentialSite("https://shop.test.evil.test/", "https://shop.test")).toBe(false);
+    expect(sameCredentialSite("https://evilshop.test/", "https://shop.test")).toBe(false);
+    expect(sameCredentialSite("http://host.docker.internal:4000/", "http://host.docker.internal:3000")).toBe(false);
+    expect(sameCredentialSite("about:blank", "https://shop.test")).toBe(false);
+    expect(sameCredentialSite("file:///tmp/x.html", "https://shop.test")).toBe(false);
+    expect(sameCredentialSite("not a url", "https://shop.test")).toBe(false);
+  });
+});
 
 describe("buildMessages", () => {
   it("keeps images only on the last SCREENSHOT_WINDOW turns; older turns go text-only", () => {

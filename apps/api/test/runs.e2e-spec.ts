@@ -247,6 +247,23 @@ describe("test runs (e2e)", () => {
       .send({ question: "為什麼失敗？", resultId: result.id }).expect(201);
     expect(res.body.answer).toContain("endpoint 不存在");
     await api(app).post(`/api/runs/${run.id}/ask`).set("Cookie", viewer).send({ question: " " }).expect(400);
+
+    // A result from some other run contributes nothing to this run's context.
+    const otherTarget = await prisma.qaTarget.create({ data: { projectId: (await prisma.qaTarget.findUniqueOrThrow({ where: { id: targetId } })).projectId, name: "other", kind: "api" } });
+    const otherRun = await prisma.testRun.create({ data: { targetId: otherTarget.id, status: "failed", triggeredById: run.triggeredById, endedAt: new Date() } });
+    const foreign = await prisma.testResult.create({ data: { runId: otherRun.id, testCaseId: caseIds[1], caseVersion: 1, verdict: "fail", llmReasoning: "foreign-result-marker", reproSteps: [] } });
+    let context = "";
+    const capture: LlmProviderAdapter = {
+      async complete(_c, req) {
+        context = req.messages.map((m) => String(m.content)).join("\n");
+        return { text: "ok", model: "stub-ask", usage: { inputTokens: 1, outputTokens: 1 }, nativeJson: false };
+      },
+    };
+    app.get(LlmGatewayService).setProviders({ anthropic: capture, openai: capture, ollama: capture });
+    await api(app).post(`/api/runs/${run.id}/ask`).set("Cookie", viewer).send({ question: "為什麼", resultId: foreign.id }).expect(201);
+    expect(context).not.toContain("foreign-result-marker");
+    await prisma.testRun.delete({ where: { id: otherRun.id } });
+    await prisma.qaTarget.delete({ where: { id: otherTarget.id } });
   }, 60_000);
 
   it("records a finding without letting it become the verdict", async () => {

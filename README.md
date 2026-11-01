@@ -323,6 +323,8 @@ Admin → Sandbox → Console lets you spin up a container, watch the screen, an
 - **Credential encryption**: AES-256-GCM, master key via the `CREDENTIAL_MASTER_KEY` env var, with `.env` out of version control.
 - **Credentials don't leak**: they don't enter prompts, don't appear in lists, and are masked in run transcripts; the only plaintext exit is an owner's explicit "reveal current value", which is audited.
 - **SSRF / injection defense**: outbound requests are checked and internal addresses blocked before sending; credential substitution is limited to the target's own origin; external content (web pages, MCP output, HTTP response bodies) is wrapped as "untrusted data" before going into a prompt.
+- **Sandbox boundary**: each sandbox has its own agent token and VNC password, drops all capabilities, and sits on a bridge with inter-container traffic off. A rebuilt image is needed for the token and VNC password to take effect. `run_command` is still available to the model, so treat anything a sandbox can reach as reachable by a hostile page; keep host services on loopback (`HOST=127.0.0.1`).
+- **Credentials on web targets**: `fill_field` / `type` only substitute a credential on the target's own site. If login happens elsewhere (SSO), list that origin in the target's `credential_origins`.
 - **Read-only exploration**: a blacklist blocks destructive operations, and the deep-dive stage isn't even given a click.
 - **Audit**: key actions (login, credential set / rotate / reveal, execution, change apply) are written to `audit_logs`.
 

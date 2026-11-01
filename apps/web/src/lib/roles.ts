@@ -108,6 +108,7 @@ export const CONFIG_FIELDS: Record<TargetKind, { key: string; label: string; jso
   web: [
     { key: "url", label: "URL", placeholder: "https://example.com" },
     { key: "viewport", label: "Viewport", placeholder: "1280x800" },
+    { key: "credential_origins", label: "憑證允許網域（JSON，SSO 用）", json: true, placeholder: '["https://sso.example.com"]' },
   ],
   desktop: [
     { key: "image", label: "Image", placeholder: "ghcr.io/org/app:latest" },

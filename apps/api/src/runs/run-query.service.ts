@@ -372,8 +372,8 @@ export class RunQueryService {
     ];
 
     if (resultId) {
-      const result = await this.prisma.testResult.findUnique({
-        where: { id: resultId },
+      const result = await this.prisma.testResult.findFirst({
+        where: { id: resultId, runId: run.id },
         include: { testCase: { select: { id: true, title: true, precondition: true, steps: true, expected: true } } },
       });
       if (result) {

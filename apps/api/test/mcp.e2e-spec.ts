@@ -87,10 +87,35 @@ describe("MCP servers (e2e)", () => {
     expect(tools.map((t) => t.tool.name)).toContain("echo");
 
     const server = (await api(app).get("/api/admin/mcp").set("Cookie", admin).expect(200)).body[0];
-    const result = await mcp.callTool(server.id, "echo", { msg: "hi" });
+    const result = await mcp.callTool(projectId, server.id, "echo", { msg: "hi" });
     expect(result.isError).toBe(false);
     expect(result.text).toBe("echoed: hi");
     expect(mock.calls).toContain("tools/call");
+  });
+
+  it("does not let a run call another project's MCP server", async () => {
+    const mcp = app.get(McpService);
+    const { teamId } = (await api(app).get(`/api/projects/${projectId}`).set("Cookie", owner).expect(200)).body;
+    const other = await api(app).post("/api/projects").set("Cookie", owner).send({ teamId, name: "別的專案" }).expect(201);
+    const server = await api(app).post(`/api/projects/${other.body.id}/mcp`).set("Cookie", owner).send({ name: "別人的", url: mock.url }).expect(201);
+    await expect(mcp.callTool(projectId, server.body.id, "echo", { msg: "hi" })).rejects.toThrow(/不存在/);
+    await expect(mcp.callTool(other.body.id, server.body.id, "echo", { msg: "hi" })).resolves.toMatchObject({ text: "echoed: hi" });
+  });
+
+  it("refuses internal addresses for project servers, but not global ones", async () => {
+    process.env.ALLOW_PRIVATE_FETCH = "false";
+    try {
+      const created = await api(app).post(`/api/projects/${projectId}/mcp`).set("Cookie", owner).send({ name: "內網", url: mock.url }).expect(201);
+      const probed = await api(app).post(`/api/mcp/${created.body.id}/test`).set("Cookie", owner).expect(201);
+      expect(probed.body.ok).toBe(false);
+      expect(probed.body.error).toMatch(/SSRF/);
+      await api(app).delete(`/api/mcp/${created.body.id}`).set("Cookie", owner).expect(200);
+
+      const global = (await api(app).get("/api/admin/mcp").set("Cookie", admin).expect(200)).body[0];
+      expect((await api(app).post(`/api/admin/mcp/${global.id}/test`).set("Cookie", admin).expect(201)).body.ok).toBe(true);
+    } finally {
+      process.env.ALLOW_PRIVATE_FETCH = "true";
+    }
   });
 
   it("scopes project MCP servers to editors", async () => {

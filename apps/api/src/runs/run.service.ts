@@ -27,7 +27,7 @@ import {
 import { Crawler, type CrawlIdentity } from "../explore/crawler";
 import { acquireTargetLock, busyMessage, targetLockHolder } from "../targets/target-lock";
 import { fenceUntrusted } from "../common/untrusted";
-import { SCREENSHOT_WINDOW, buildMessages, maskSecrets, summariseProbe } from "./run-utils";
+import { SCREENSHOT_WINDOW, buildMessages, maskSecrets, sameCredentialSite, summariseProbe } from "./run-utils";
 import {
   caseSystemPrompt, verdictSystemPrompt, verdictTranscript,
   type CaseForPrompt, type TargetForPrompt,
@@ -718,7 +718,7 @@ export class RunService implements OnModuleInit {
         let feedback: string;
         let ok = true;
         try {
-          const result = await this.mcp.callTool(String(p.server_id ?? ""), String(p.tool ?? ""), (p.arguments ?? {}) as Record<string, unknown>);
+          const result = await this.mcp.callTool(record.projectId ?? "", String(p.server_id ?? ""), String(p.tool ?? ""), (p.arguments ?? {}) as Record<string, unknown>);
           ok = !result.isError;
           feedback = `MCP 工具「${p.tool}」回傳：\n${fenceUntrusted("MCP 工具回傳", result.text.slice(0, 4000))}`;
         } catch (err) {
@@ -955,7 +955,10 @@ export class RunService implements OnModuleInit {
       const field = typeof args.field === "number" ? args.field : String(args.field ?? "").trim();
       if (field === "") return { ok: false, durationMs: 0, error: "fill_field 需要 params.field（欄位名稱或 label）", detail: {} };
       // Credentials are substituted here so the real value never reaches the model.
-      const value = fillCredentials(String(args.value ?? ""), ctx.credentials);
+      const raw = String(args.value ?? "");
+      const refused = await this.refuseCredentialsOffTarget(raw, ctx, port);
+      if (refused) return refused;
+      const value = fillCredentials(raw, ctx.credentials);
       const res = await this.computer.cdpFill(port, field, value);
       return { ok: res.ok, durationMs: res.durationMs, error: res.error, detail: res.detail };
     }
@@ -980,12 +983,41 @@ export class RunService implements OnModuleInit {
     }
 
     // Coordinate-based fallbacks. Credentials are filled in here for the same reason.
+    if (type === "type" && typeof args.text === "string") {
+      const refused = await this.refuseCredentialsOffTarget(args.text, ctx, port);
+      if (refused) return refused;
+    }
     const filled =
       type === "type" && typeof args.text === "string"
         ? { ...args, text: fillCredentials(args.text, ctx.credentials) }
         : args;
     const res = await this.computer.perform(port, type, filled, timeoutMs);
     return { ok: res.ok, durationMs: res.durationMs, error: res.error, detail: res.detail };
+  }
+
+  /**
+   * The screen-side twin of the http executor's origin rule: a real secret only
+   * goes into the Target's own pages. The model is driven by page content, so a
+   * page that talks it into navigating elsewhere must not receive the password.
+   */
+  private async refuseCredentialsOffTarget(
+    text: string,
+    ctx: { target: { config: Prisma.JsonValue }; credentials: Record<string, string> },
+    port: number,
+  ): Promise<{ ok: false; durationMs: number; error: string; detail: Record<string, unknown> } | null> {
+    if (fillCredentials(text, ctx.credentials) === text) return null;
+    const config = (ctx.target.config ?? {}) as Record<string, unknown>;
+    const url = typeof config.url === "string" ? config.url.trim() : "";
+    if (!url) return null; // a desktop Target has no web origin to compare against
+    const current = await this.computer.cdpCurrent(port);
+    const allowed = [url, ...stringList(config.credential_origins)].map(toSandboxUrl);
+    if (current && allowed.some((origin) => sameCredentialSite(current.url, origin))) return null;
+    return {
+      ok: false,
+      durationMs: 0,
+      error: "目前頁面不在這個 Target 的網址範圍內，平台拒絕代入憑證。若登入確實要在別的網域完成（例如 SSO），請 Target 擁有者把它加進 config.credential_origins。",
+      detail: {},
+    };
   }
 
   // ---------- credential rotation (§ keep stored credentials in sync) ----------
@@ -1533,6 +1565,10 @@ export class RunService implements OnModuleInit {
   }
 }
 
+
+function stringList(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((v): v is string => typeof v === "string") : [];
+}
 
 function describeOutcome(
   step: ExecutionStep,

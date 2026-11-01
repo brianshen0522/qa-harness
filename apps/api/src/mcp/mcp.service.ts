@@ -127,10 +127,15 @@ export class McpService {
     return out;
   }
 
-  /** Call one tool by server id + tool name. Used when the agent emits mcp_call. */
-  async callTool(serverId: string, tool: string, args: Record<string, unknown>) {
-    const server = await this.prisma.mcpServer.findUnique({ where: { id: serverId } });
-    if (!server || !server.enabled) throw new BadRequestException("MCP 伺服器不存在或已停用");
+  /**
+   * Call one tool by server id + tool name. Used when the agent emits mcp_call, so
+   * the id is model output: it only reaches servers this project may use.
+   */
+  async callTool(projectId: string, serverId: string, tool: string, args: Record<string, unknown>) {
+    const server = await this.prisma.mcpServer.findFirst({
+      where: { id: serverId, enabled: true, OR: [{ scope: McpScope.global }, { scope: McpScope.project, projectId }] },
+    });
+    if (!server) throw new BadRequestException("MCP 伺服器不存在或已停用");
     const client = this.client(server);
     await client.initialize();
     return client.callTool(tool, args);
@@ -153,8 +158,11 @@ export class McpService {
     }
   }
 
-  private client(server: { url: string; authEncrypted: string | null }): McpClient {
-    return new McpClient(server.url, server.authEncrypted ? this.crypto.decrypt(server.authEncrypted) : null);
+  private client(server: { url: string; authEncrypted: string | null; scope: McpScope }): McpClient {
+    // Any project editor sets a project server's URL, and this runs on the API host.
+    return new McpClient(server.url, server.authEncrypted ? this.crypto.decrypt(server.authEncrypted) : null, {
+      publicOnly: server.scope === McpScope.project,
+    });
   }
 
   private patch(input: Partial<McpInput>): Prisma.McpServerUpdateInput {

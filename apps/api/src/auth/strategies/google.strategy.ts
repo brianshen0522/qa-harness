@@ -5,6 +5,12 @@ import { env } from "../../config/env";
 import type { OAuthProfile } from "../auth.service";
 import { CookieStateStore } from "./oauth-state.store";
 
+/** Accounts match by email, so an unverified one could claim someone else's. */
+export function verifiedGoogleEmail(profile: Pick<Profile, "emails">): string | undefined {
+  const primary = profile.emails?.[0] as { value: string; verified?: boolean | string } | undefined;
+  return primary?.verified === true || primary?.verified === "true" ? primary.value : undefined;
+}
+
 @Injectable()
 export class GoogleStrategy extends PassportStrategy(Strategy, "google") {
   constructor() {
@@ -18,13 +24,8 @@ export class GoogleStrategy extends PassportStrategy(Strategy, "google") {
   }
 
   validate(_at: string, _rt: string, profile: Profile): OAuthProfile {
-    const primary = profile.emails?.[0] as { value: string; verified?: boolean | string } | undefined;
-    const email = primary?.value;
-    if (!email) throw new UnauthorizedException("Google profile has no email");
-    // Accounts match by email, so an unverified one could claim someone else's.
-    if (primary.verified === false || primary.verified === "false") {
-      throw new UnauthorizedException("Google account email is not verified");
-    }
+    const email = verifiedGoogleEmail(profile);
+    if (!email) throw new UnauthorizedException("Google account has no verified email");
     return { provider: "google", email, name: profile.displayName ?? email };
   }
 }

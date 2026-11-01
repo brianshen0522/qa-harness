@@ -158,6 +158,46 @@ describe("teams / projects / targets + permission rules (e2e)", () => {
     await prisma.qaTarget.update({ where: { id: targetId }, data: { status: "idle" } });
   });
 
+  it("shows secret config values to owners only", async () => {
+    // An earlier rule test removed the viewer from the project.
+    await prisma.projectMember.upsert({
+      where: { projectId_userId: { projectId, userId: viewerId } },
+      create: { projectId, userId: viewerId, role: "viewer" }, update: {},
+    });
+    const t = await api(app).post(`/api/projects/${projectId}/targets`).set("Cookie", owner).send({
+      name: "Secret headers", kind: "api",
+      config: { base_url: "https://api.test", headers: { Authorization: "literal-value", "X-Plain": "ok" } },
+    }).expect(201);
+    const seen = async (cookie: string) => (await api(app).get(`/api/targets/${t.body.id}`).set("Cookie", cookie).expect(200)).body.config;
+    expect((await seen(owner)).headers.Authorization).toBe("literal-value");
+    for (const cookie of [editor, viewer]) {
+      const config = await seen(cookie);
+      expect(JSON.stringify(config)).not.toContain("literal-value");
+      expect(config.base_url).toBe("https://api.test");
+      expect(config.headers["X-Plain"]).toBe("ok");
+    }
+    const list = await api(app).get(`/api/projects/${projectId}/targets`).set("Cookie", viewer).expect(200);
+    expect(JSON.stringify(list.body)).not.toContain("literal-value");
+  });
+
+  it("keeps test cases to identities of their own target and validates identity edits", async () => {
+    const other = await api(app).post(`/api/projects/${projectId}/targets`).set("Cookie", owner).send({ name: "Other", kind: "web" }).expect(201);
+    const foreign = await api(app).post(`/api/targets/${other.body.id}/identities`).set("Cookie", owner).send({ name: "Admin" }).expect(201);
+    const body = { title: "t", steps: ["s"], expected: "e" };
+    await api(app).post(`/api/targets/${targetId}/test-cases`).set("Cookie", owner)
+      .send({ ...body, identityId: foreign.body.id }).expect(400);
+    const own = await api(app).post(`/api/targets/${other.body.id}/test-cases`).set("Cookie", owner)
+      .send({ ...body, identityId: foreign.body.id }).expect(201);
+    expect(own.body.identityId).toBe(foreign.body.id);
+
+    await api(app).patch(`/api/identities/${foreign.body.id}`).set("Cookie", owner).send({ name: 5 }).expect(400);
+    await api(app).patch(`/api/identities/${foreign.body.id}`).set("Cookie", owner).send({ loginConfig: "x" }).expect(400);
+    const renamed = await api(app).patch(`/api/identities/${foreign.body.id}`).set("Cookie", owner)
+      .send({ name: "Root", targetId: "ignored" }).expect(200);
+    expect(renamed.body).toMatchObject({ name: "Root", targetId: other.body.id });
+    await api(app).delete(`/api/targets/${other.body.id}`).set("Cookie", owner).expect(200);
+  });
+
   it("only owners delete targets and projects; deletes cascade", async () => {
     await api(app).delete(`/api/targets/${targetId}`).set("Cookie", editor).expect(403);
     await api(app).delete(`/api/targets/${targetId}`).set("Cookie", owner).expect(200);

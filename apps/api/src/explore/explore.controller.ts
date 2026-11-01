@@ -2,7 +2,7 @@ import {
   Body, Controller, Delete, Get, Param, Patch, Post, Req, Res, UseGuards,
 } from "@nestjs/common";
 import {
-  ArrayNotEmpty, IsArray, IsBoolean, IsInt, IsOptional, IsString, Max, MaxLength, Min, MinLength,
+  ArrayNotEmpty, IsArray, IsBoolean, IsInt, IsObject, IsOptional, IsString, Max, MaxLength, Min, MinLength,
 } from "class-validator";
 import type { Request, Response } from "express";
 import { UserAuthGuard } from "../auth/guards/user-auth.guard";
@@ -16,7 +16,15 @@ class IdentityDto implements IdentityInput {
   @IsString() @MinLength(1) @MaxLength(80) name!: string;
   @IsOptional() @IsString() @MaxLength(40) role?: string;
   @IsOptional() @IsArray() @IsString({ each: true }) credentialKeys?: string[];
-  @IsOptional() loginConfig?: Record<string, unknown>;
+  @IsOptional() @IsObject() loginConfig?: Record<string, unknown>;
+  @IsOptional() @IsBoolean() isAnonymous?: boolean;
+}
+
+class UpdateIdentityDto {
+  @IsOptional() @IsString() @MinLength(1) @MaxLength(80) name?: string;
+  @IsOptional() @IsString() @MaxLength(40) role?: string;
+  @IsOptional() @IsArray() @IsString({ each: true }) credentialKeys?: string[];
+  @IsOptional() @IsObject() loginConfig?: Record<string, unknown>;
   @IsOptional() @IsBoolean() isAnonymous?: boolean;
 }
 
@@ -53,7 +61,7 @@ export class ExploreController {
   }
 
   @Patch("identities/:identityId")
-  updateIdentity(@CurrentUser() user: UserPrincipal, @Param("identityId") identityId: string, @Body() dto: Partial<IdentityDto>) {
+  updateIdentity(@CurrentUser() user: UserPrincipal, @Param("identityId") identityId: string, @Body() dto: UpdateIdentityDto) {
     return this.identities.update(identityId, user.id, dto);
   }
 

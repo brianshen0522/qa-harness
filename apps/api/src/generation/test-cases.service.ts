@@ -99,6 +99,7 @@ export class TestCasesService {
     await this.requireEditable(targetId, userId);
     this.validate(input);
     if (input.featureId) await this.assertFeature(targetId, input.featureId);
+    if (input.identityId) await this.assertIdentity(targetId, input.identityId);
 
     const target = await this.prisma.qaTarget.findUniqueOrThrow({
       where: { id: targetId },
@@ -139,6 +140,7 @@ export class TestCasesService {
     const existing = await this.getCase(caseId);
     await this.requireEditable(existing.targetId, userId, caseId);
     if (input.featureId) await this.assertFeature(existing.targetId, input.featureId);
+    if (input.identityId) await this.assertIdentity(existing.targetId, input.identityId);
     if (input.title !== undefined || input.steps !== undefined || input.expected !== undefined) {
       this.validate({
         title: input.title ?? existing.title,
@@ -271,6 +273,11 @@ export class TestCasesService {
   private async assertFeature(targetId: string, featureId: string) {
     const feature = await this.prisma.feature.findUnique({ where: { id: featureId } });
     if (!feature || feature.targetId !== targetId) throw new BadRequestException("功能不屬於這個 Target");
+  }
+
+  private async assertIdentity(targetId: string, identityId: string) {
+    const identity = await this.prisma.targetIdentity.findUnique({ where: { id: identityId }, select: { targetId: true } });
+    if (!identity || identity.targetId !== targetId) throw new BadRequestException("身份不屬於這個 Target");
   }
 
   /**

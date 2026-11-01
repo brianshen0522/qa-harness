@@ -5,6 +5,7 @@ process.env.CREDENTIAL_MASTER_KEY ??= "test";
 import type { Request } from "express";
 import { CookieStateStore } from "./oauth-state.store";
 import { verifiedGithubEmail } from "./github.strategy";
+import { verifiedGoogleEmail } from "./google.strategy";
 
 function fakeReq(cookies: Record<string, string> = {}) {
   const set: Record<string, string> = {};
@@ -46,6 +47,16 @@ describe("CookieStateStore", () => {
     expect(verify(undefined, state)).toBe(false);
     expect(verify(state, issue())).toBe(false);
     expect(verify(undefined, "")).toBe(false);
+  });
+});
+
+describe("verifiedGoogleEmail", () => {
+  it("needs an explicit verified flag", () => {
+    expect(verifiedGoogleEmail({ emails: [{ value: "a@x.test", verified: true }] as never })).toBe("a@x.test");
+    expect(verifiedGoogleEmail({ emails: [{ value: "a@x.test", verified: "true" }] as never })).toBe("a@x.test");
+    expect(verifiedGoogleEmail({ emails: [{ value: "a@x.test", verified: false }] as never })).toBeUndefined();
+    expect(verifiedGoogleEmail({ emails: [{ value: "a@x.test" }] as never })).toBeUndefined();
+    expect(verifiedGoogleEmail({})).toBeUndefined();
   });
 });
 

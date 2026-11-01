@@ -18,7 +18,7 @@ export interface ContainerInspect {
     StartedAt: string;
     Health?: { Status: string; FailingStreak: number };
   };
-  Config: { Image: string; Labels: Record<string, string> };
+  Config: { Image: string; Labels: Record<string, string>; Env?: string[] | null };
   NetworkSettings: { Ports: Record<string, DockerPortBinding[] | null> };
 }
 
@@ -42,7 +42,12 @@ export interface CreateContainerSpec {
   cpus: number;
   memoryMb: number;
   shmSizeMb?: number;
+  /** Network to attach to; see DockerService.ensureIsolatedNetwork. */
+  network?: string;
 }
+
+/** Chromium is thread-heavy, so this bounds a fork bomb rather than normal use. */
+const SANDBOX_PIDS_LIMIT = 4096;
 
 const SOCKET_CANDIDATES = [
   process.env.DOCKER_SOCKET,
@@ -107,6 +112,25 @@ export class DockerService {
     }
   }
 
+  /**
+   * A bridge with inter-container traffic off. Sandboxes run untrusted pages and
+   * model-chosen commands for different projects, so they must not be able to
+   * reach each other's agent or VNC ports. Published ports still work.
+   */
+  async ensureIsolatedNetwork(name: string): Promise<void> {
+    const { status, body } = await this.raw("POST", "/networks/create", {
+      Name: name,
+      Driver: "bridge",
+      CheckDuplicate: true,
+      Labels: { "qa-harness.role": "sandbox-network" },
+      Options: { "com.docker.network.bridge.enable_icc": "false" },
+    });
+    // 409: it already exists, which is the normal case after the first sandbox.
+    if (status >= 400 && status !== 409) {
+      throw new Error(`Docker POST /networks/create -> ${status}: ${body.slice(0, 300)}`);
+    }
+  }
+
   async createContainer(spec: CreateContainerSpec): Promise<string> {
     const exposed: Record<string, object> = {};
     const bindings: Record<string, DockerPortBinding[]> = {};
@@ -134,6 +158,12 @@ export class DockerService {
           ShmSize: (spec.shmSizeMb ?? 1024) * 1024 * 1024,
           AutoRemove: false,
           RestartPolicy: { Name: "no" },
+          // Nothing in the image needs a capability: it runs as an unprivileged
+          // user and Chromium already runs with --no-sandbox.
+          CapDrop: ["ALL"],
+          SecurityOpt: ["no-new-privileges:true"],
+          PidsLimit: SANDBOX_PIDS_LIMIT,
+          ...(spec.network ? { NetworkMode: spec.network } : {}),
         },
       },
     );
@@ -162,7 +192,7 @@ export class DockerService {
   }
 
   inspect(id: string) {
-    return this.call<ContainerInspect>("GET", `/containers/${id}/json`);
+    return this.call<ContainerInspect>("GET", `/containers/${encodeURIComponent(id)}/json`);
   }
 
   list(labelFilter: Record<string, string>): Promise<ContainerSummary[]> {

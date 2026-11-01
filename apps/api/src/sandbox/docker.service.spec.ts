@@ -1,5 +1,19 @@
 import { demultiplexDockerStream, DockerService, type ContainerInspect } from "./docker.service";
-import { parseResolution, toSandboxUrl } from "./sandbox.service";
+import { parseResolution, sandboxStartUrl, toSandboxUrl } from "./sandbox.service";
+
+describe("sandboxStartUrl", () => {
+  it("accepts web pages and the blank page, rewriting loopback", () => {
+    expect(sandboxStartUrl("https://example.com/app")).toBe("https://example.com/app");
+    expect(sandboxStartUrl("http://localhost:3000/")).toBe("http://host.docker.internal:3000/");
+    expect(sandboxStartUrl("about:blank")).toBe("about:blank");
+  });
+
+  it("refuses anything Chromium would not treat as a web page", () => {
+    for (const url of ["--renderer-cmd-prefix=/tmp/x", "file:///etc/passwd", "javascript:alert(1)", "chrome://settings"]) {
+      expect(() => sandboxStartUrl(url)).toThrow();
+    }
+  });
+});
 
 function frame(streamType: number, text: string): Buffer {
   const payload = Buffer.from(text, "utf8");

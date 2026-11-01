@@ -2,6 +2,11 @@
 # Boots the virtual desktop, the VNC bridge and the computer-use agent.
 set -euo pipefail
 
+# Handed to the VNC server and the agent only, never to the desktop's processes.
+SANDBOX_VNC_PASSWORD="${VNC_PASSWORD:-$(head -c 6 /dev/urandom | base64 | tr -d '/+=')}"
+SANDBOX_AGENT_TOKEN="${AGENT_TOKEN:-}"
+unset VNC_PASSWORD AGENT_TOKEN
+
 GEOM="${SCREEN_WIDTH}x${SCREEN_HEIGHT}x${SCREEN_DEPTH}"
 echo "[sandbox] starting Xvfb ${DISPLAY} ${GEOM}"
 Xvfb "${DISPLAY}" -screen 0 "${GEOM}" -ac +extension RANDR >/tmp/xvfb.log 2>&1 &
@@ -15,7 +20,7 @@ echo "[sandbox] starting window manager"
 openbox >/tmp/openbox.log 2>&1 &
 
 echo "[sandbox] starting VNC server"
-x11vnc -display "${DISPLAY}" -forever -shared -nopw -quiet -rfbport 5900 >/tmp/x11vnc.log 2>&1 &
+x11vnc -display "${DISPLAY}" -forever -shared -localhost -passwd "${SANDBOX_VNC_PASSWORD}" -quiet -rfbport 5900 >/tmp/x11vnc.log 2>&1 &
 
 echo "[sandbox] starting noVNC on 6080"
 websockify --web=/usr/share/novnc 6080 localhost:5900 >/tmp/websockify.log 2>&1 &
@@ -39,11 +44,11 @@ PREFS
     --disable-features=TranslateUI,ChromeWhatsNewUI,PasswordLeakDetection,AutofillServerCommunication,PasswordManagerOnboarding \
     --disable-save-password-bubble --password-store=basic \
     --disable-session-crashed-bubble --hide-crash-restore-bubble \
-    --remote-debugging-port=9222 --remote-allow-origins=* \
+    --remote-debugging-port=9222 \
     --start-maximized --window-position=0,0 \
     --window-size="${SCREEN_WIDTH},${SCREEN_HEIGHT}" \
     "${START_URL:-about:blank}" >/tmp/chromium.log 2>&1 &
 fi
 
 echo "[sandbox] starting computer-use agent on 8000"
-exec python3 /opt/agent.py
+AGENT_TOKEN="${SANDBOX_AGENT_TOKEN}" exec python3 /opt/agent.py

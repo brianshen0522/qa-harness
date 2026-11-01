@@ -50,6 +50,18 @@ export const HOST_ACTIONS: ReadonlySet<ActionType> = new Set(["wait", "http_requ
 @Injectable()
 export class ComputerService {
   private readonly log = new Logger(ComputerService.name);
+  /** Agent token per published port. Each sandbox has its own. */
+  private readonly tokens = new Map<number, string>();
+
+  setAgentToken(port: number, token: string | null) {
+    if (token) this.tokens.set(port, token);
+    else this.tokens.delete(port);
+  }
+
+  private authHeaders(port: number): Record<string, string> {
+    const token = this.tokens.get(port);
+    return token ? { "x-agent-token": token } : {};
+  }
 
   async health(port: number, timeoutMs = 3000): Promise<{ ok: boolean; width?: number; height?: number; error?: string }> {
     try {
@@ -125,7 +137,7 @@ export class ComputerService {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
-      const res = await fetch(`http://127.0.0.1:${port}/recording`, { signal: controller.signal });
+      const res = await fetch(`http://127.0.0.1:${port}/recording`, { signal: controller.signal, headers: this.authHeaders(port) });
       if (!res.ok) return null;
       const buf = Buffer.from(await res.arrayBuffer());
       return buf.byteLength ? buf : null;
@@ -176,7 +188,7 @@ export class ComputerService {
         method,
         signal: controller.signal,
         ...(method === "POST"
-          ? { headers: { "content-type": "application/json" }, body: JSON.stringify(params ?? {}) }
+          ? { headers: { "content-type": "application/json", ...this.authHeaders(port) }, body: JSON.stringify(params ?? {}) }
           : {}),
       });
       const text = await res.text();

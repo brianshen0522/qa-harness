@@ -2,7 +2,7 @@ import {
   BadRequestException, Injectable, Logger, NotFoundException,
   OnModuleDestroy, OnModuleInit, ServiceUnavailableException,
 } from "@nestjs/common";
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { PrismaService } from "../prisma/prisma.service";
 import { ComputerService } from "./computer.service";
 import { DockerService, type ContainerInspect } from "./docker.service";
@@ -13,6 +13,9 @@ const PURPOSE_LABEL = "qa-harness.purpose";
 const CREATED_BY_LABEL = "qa-harness.created-by";
 const EXPIRES_LABEL = "qa-harness.expires-at";
 const RESOLUTION_LABEL = "qa-harness.resolution";
+
+/** Bridge with inter-container traffic disabled, shared by every sandbox. */
+export const SANDBOX_NETWORK = "qa-harness-sandbox";
 
 const NOVNC_PORT = "6080/tcp";
 const AGENT_PORT = "8000/tcp";
@@ -93,7 +96,7 @@ export class SandboxService implements OnModuleInit, OnModuleDestroy {
     const inspected = await Promise.all(
       summaries.map((s) => this.docker.inspect(s.Id).catch(() => null)),
     );
-    return inspected.filter((i): i is ContainerInspect => !!i).map((i) => toInstance(i));
+    return inspected.filter((i): i is ContainerInspect => !!i).map((i) => this.describe(i));
   }
 
   async get(id: string): Promise<SandboxInstance> {
@@ -101,7 +104,14 @@ export class SandboxService implements OnModuleInit, OnModuleDestroy {
     if (!inspect || inspect.Config.Labels?.[SANDBOX_LABEL] !== SANDBOX_LABEL_VALUE) {
       throw new NotFoundException("Sandbox 不存在");
     }
-    return toInstance(inspect);
+    return this.describe(inspect);
+  }
+
+  /** Also how the agent client learns a sandbox's token, including after a restart. */
+  private describe(inspect: ContainerInspect): SandboxInstance {
+    const instance = toInstance(inspect);
+    if (instance.agentPort) this.computer.setAgentToken(instance.agentPort, containerEnv(inspect, "AGENT_TOKEN"));
+    return instance;
   }
 
   /** The agent port of a running, healthy sandbox. */
@@ -134,14 +144,19 @@ export class SandboxService implements OnModuleInit, OnModuleDestroy {
     const ttlMinutes = opts.ttlMinutes ?? 60;
     const expiresAt = new Date(Date.now() + ttlMinutes * 60_000).toISOString();
     const name = `qa-sandbox-${(opts.purpose ?? "admin-test").replace(/[^a-z0-9]/gi, "")}-${randomUUID().slice(0, 8)}`;
+    const startUrl = opts.startUrl ? sandboxStartUrl(opts.startUrl) : "about:blank";
 
+    await this.docker.ensureIsolatedNetwork(SANDBOX_NETWORK);
     const id = await this.docker.createContainer({
       name,
       image: settings.image,
       env: {
         SCREEN_WIDTH: String(width),
         SCREEN_HEIGHT: String(height),
-        START_URL: opts.startUrl ? toSandboxUrl(opts.startUrl) : "about:blank",
+        START_URL: startUrl,
+        AGENT_TOKEN: randomBytes(32).toString("hex"),
+        // Classic VNC auth only uses the first 8 characters.
+        VNC_PASSWORD: randomBytes(4).toString("hex"),
       },
       labels: {
         [SANDBOX_LABEL]: SANDBOX_LABEL_VALUE,
@@ -153,6 +168,7 @@ export class SandboxService implements OnModuleInit, OnModuleDestroy {
       publish: [NOVNC_PORT, AGENT_PORT],
       cpus: settings.cpu,
       memoryMb: settings.memoryMb,
+      network: SANDBOX_NETWORK,
     });
 
     try {
@@ -233,12 +249,38 @@ function toInstance(i: ContainerInspect): SandboxInstance {
     expiresAt: labels[EXPIRES_LABEL] ?? null,
     novncPort,
     agentPort,
-    viewUrl: novncPort
-      ? `http://127.0.0.1:${novncPort}/vnc.html?autoconnect=1&resize=scale&reconnect=1&show_dot=1`
-      : null,
+    viewUrl: novncPort ? novncUrl(novncPort, containerEnv(i, "VNC_PASSWORD")) : null,
     createdBy: labels[CREATED_BY_LABEL] ?? null,
     resolution: labels[RESOLUTION_LABEL] ?? null,
   };
+}
+
+function novncUrl(port: number, password: string | null): string {
+  const auth = password ? `&password=${encodeURIComponent(password)}` : "";
+  return `http://127.0.0.1:${port}/vnc.html?autoconnect=1&resize=scale&reconnect=1&show_dot=1${auth}`;
+}
+
+function containerEnv(i: ContainerInspect, name: string): string | null {
+  const entry = i.Config.Env?.find((e) => e.startsWith(`${name}=`));
+  return entry ? entry.slice(name.length + 1) : null;
+}
+
+/**
+ * The boot URL ends up on Chromium's command line, where anything starting with
+ * a dash is a flag rather than a page.
+ */
+export function sandboxStartUrl(url: string): string {
+  const rewritten = toSandboxUrl(url.trim());
+  let protocol = "";
+  try {
+    protocol = new URL(rewritten).protocol;
+  } catch {
+    /* rejected below */
+  }
+  if (protocol !== "http:" && protocol !== "https:" && rewritten !== "about:blank") {
+    throw new BadRequestException("Sandbox 起始網址只支援 http/https");
+  }
+  return rewritten;
 }
 
 /** Loopback on the host, as seen from inside a container. */

@@ -8,6 +8,7 @@ without a package index.
 """
 import base64
 import hashlib
+import hmac
 import json
 import os
 import shlex
@@ -26,7 +27,13 @@ HEIGHT = int(os.environ.get("SCREEN_HEIGHT", "800"))
 PORT = int(os.environ.get("AGENT_PORT", "8000"))
 SETTLE_MS = int(os.environ.get("ACTION_SETTLE_MS", "350"))
 
-ENV = {**os.environ, "DISPLAY": DISPLAY}
+# Shared with the Agent Worker. Every process in here, Chromium included, is a
+# client of 127.0.0.1, so "only reachable on loopback" proves nothing: a page the
+# browser opens can POST to this port. Without a configured token nothing but
+# /health answers.
+AGENT_TOKEN = os.environ.get("AGENT_TOKEN", "")
+
+ENV = {k: v for k, v in {**os.environ, "DISPLAY": DISPLAY}.items() if k not in ("AGENT_TOKEN", "VNC_PASSWORD")}
 _lock = threading.Lock()
 
 RECORDING_PATH = "/tmp/recording.mp4"
@@ -716,8 +723,17 @@ class Handler(BaseHTTPRequestHandler):
                     break
                 self.wfile.write(chunk)
 
+    def _authorized(self):
+        # A browser always labels a cross-origin request; the worker sends no Origin.
+        if self.headers.get("Origin"):
+            return False
+        supplied = self.headers.get("X-Agent-Token") or ""
+        return bool(AGENT_TOKEN) and hmac.compare_digest(supplied.encode(), AGENT_TOKEN.encode())
+
     def do_GET(self):
         if self.path.rstrip("/") == "/recording":
+            if not self._authorized():
+                return self._send(401, {"ok": False, "error": "unauthorized"})
             # Streamed rather than base64'd into JSON: a few minutes of screen is
             # tens of megabytes, and the worker only needs the bytes.
             return self._send_file(RECORDING_PATH, "video/mp4")
@@ -731,6 +747,9 @@ class Handler(BaseHTTPRequestHandler):
         return self._send(404, {"ok": False, "error": "not found"})
 
     def do_POST(self):
+        if not self._authorized():
+            self.close_connection = True
+            return self._send(401, {"ok": False, "error": "unauthorized"})
         name = self.path.strip("/")
         action = ACTIONS.get(name)
         if not action:
